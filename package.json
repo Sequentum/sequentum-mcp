@@ -1,0 +1,63 @@
+{
+  "name": "sequentum-mcp",
+  "version": "1.0.0",
+  "description": "MCP Server for Sequentum Web Scraping API - Enables AI assistants to interact with Sequentum agents",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "bin": {
+    "sequentum-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "clean": "rimraf dist",
+    "prepare": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "sequentum",
+    "web-scraping",
+    "ai",
+    "automation"
+  ],
+  "author": "Sequentum",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sequentum/se4-mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sequentum/se4-mcp-server/issues"
+  },
+  "homepage": "https://github.com/sequentum/se4-mcp-server#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "rimraf": "^5.0.5",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "docs",
+    "CHANGELOG.md"
+  ]
+}
+
+
+
