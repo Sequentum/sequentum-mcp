@@ -196,7 +196,7 @@ describe("create_agent_schedule handler validation", () => {
     it("should accept RunEvery schedule without startTime", () => {
       const scheduleType = 2;
       const runEveryCount = 30;
-      const runEveryPeriod = 0; // minutes
+      const runEveryPeriod = 1; // minutes
       const startTime = undefined;
       
       const hasRequiredFields = scheduleType === 2 && runEveryCount !== undefined && runEveryPeriod !== undefined;
@@ -208,17 +208,17 @@ describe("create_agent_schedule handler validation", () => {
     it("should accept RunEvery schedule with optional startTime", () => {
       const scheduleType = 2;
       const runEveryCount = 30;
-      const runEveryPeriod = 0;
+      const runEveryPeriod = 1; // minutes
       const startTime = "2026-01-20T10:00:00Z";
       
       const hasRequiredFields = scheduleType === 2 && runEveryCount !== undefined && runEveryPeriod !== undefined;
       expect(hasRequiredFields).toBe(true);
     });
 
-    it("should validate all runEveryPeriod values (0=min, 1=hr, 2=day, 3=wk, 4=mo)", () => {
-      const validPeriods = [0, 1, 2, 3, 4];
+    it("should validate all runEveryPeriod values (1=min, 2=hr, 3=day, 4=wk, 5=mo)", () => {
+      const validPeriods = [1, 2, 3, 4, 5];
       validPeriods.forEach(period => {
-        expect(period >= 0 && period <= 4).toBe(true);
+        expect(period >= 1 && period <= 5).toBe(true);
       });
     });
   });

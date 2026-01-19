@@ -437,12 +437,12 @@ const tools: Tool[] = [
       "Create a scheduled task to automatically run an agent. " +
       "Three schedule types available: " +
       "RunOnce (1): Runs once at startTime (required, must be >=1 min in future UTC). " +
-      "RunEvery (2): Repeats every runEveryCount periods (0=min,1=hr,2=day,3=wk,4=mo). Optional startTime for first run (must be in future if provided). " +
+      "RunEvery (2): Repeats every runEveryCount periods (runEveryPeriod: 1=min, 2=hr, 3=day, 4=wk, 5=mo). Optional startTime for first run (must be in future if provided). " +
       "CRON (3): Uses cronExpression for complex schedules (e.g., '0 9 * * 1,4' = Mon/Thu 9am). " +
       "Always specify timezone for local time interpretation. " +
       "Examples: CRON daily at 9am: {scheduleType:3, cronExpression:'0 9 * * *'}. " +
       "RunOnce: {scheduleType:1, startTime:'2026-01-20T14:30:00Z'}. " +
-      "RunEvery 30min: {scheduleType:2, runEveryCount:30, runEveryPeriod:0}.",
+      "RunEvery 30min: {scheduleType:2, runEveryCount:30, runEveryPeriod:1}.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -463,12 +463,12 @@ const tools: Tool[] = [
         },
         runEveryCount: { 
           type: "number", 
-          description: "For scheduleType=2 (RunEvery): The interval count. Example: 30 with runEveryPeriod=0 means every 30 minutes." 
+          description: "For scheduleType=2 (RunEvery): The interval count. Example: 30 with runEveryPeriod=1 means every 30 minutes." 
         },
         runEveryPeriod: { 
           type: "number", 
-          enum: [0, 1, 2, 3, 4],
-          description: "For scheduleType=2 (RunEvery): The time unit. 0=minutes, 1=hours, 2=days, 3=weeks, 4=months." 
+          enum: [1, 2, 3, 4, 5],
+          description: "For scheduleType=2 (RunEvery): The time unit. 1=minutes, 2=hours, 3=days, 4=weeks, 5=months." 
         },
         timezone: { 
           type: "string", 

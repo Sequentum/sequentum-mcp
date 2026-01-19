@@ -412,7 +412,7 @@ export class SequentumApiClient {
           Timezone: request.timezone,
           InputParameters: request.inputParameters,
           IsEnabled: request.isEnabled ?? true,
-
+          Parallelism: request.parallelism ?? 1,
         }),
       }
     );
