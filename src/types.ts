@@ -267,7 +267,7 @@ export interface CreateScheduleRequest {
   scheduleType?: number;
   /** How many periods for RunEvery schedule type */
   runEveryCount?: number;
-  /** Period unit: 0=minutes, 1=hours, 2=days, 3=weeks, 4=months */
+  /** Period unit: 1=minutes, 2=hours, 3=days, 4=weeks, 5=months */
   runEveryPeriod?: number;
 }
 
