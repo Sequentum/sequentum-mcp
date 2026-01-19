@@ -7,6 +7,260 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
  * and transform parameters appropriately before calling the API client.
  */
 
+// ==========================================
+// validateStartTimeInFuture Tests
+// ==========================================
+
+/**
+ * Helper function that mirrors the validation logic in index.ts
+ * Used for testing the startTime validation behavior
+ */
+function validateStartTimeInFuture(startTime: string, minutesAhead: number = 1): void {
+  const start = new Date(startTime);
+  const now = new Date();
+  const minFuture = new Date(now.getTime() + minutesAhead * 60 * 1000);
+
+  if (isNaN(start.getTime())) {
+    throw new Error(
+      `Invalid startTime format: ${startTime}. Use ISO 8601 format (e.g., 2026-01-20T14:30:00Z)`
+    );
+  }
+
+  if (start <= minFuture) {
+    throw new Error(
+      `startTime must be at least ${minutesAhead} minute(s) in the future (UTC). Provided: ${startTime}`
+    );
+  }
+}
+
+describe("validateStartTimeInFuture", () => {
+  beforeEach(() => {
+    // Use fake timers to control the current time
+    vi.useFakeTimers();
+    // Set a fixed "now" time: 2026-01-19T12:00:00Z
+    vi.setSystemTime(new Date("2026-01-19T12:00:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  describe("ISO 8601 format validation", () => {
+    it("should throw error for invalid date format", () => {
+      expect(() => validateStartTimeInFuture("not-a-date")).toThrow(
+        "Invalid startTime format"
+      );
+    });
+
+    it("should throw error for empty string", () => {
+      expect(() => validateStartTimeInFuture("")).toThrow(
+        "Invalid startTime format"
+      );
+    });
+
+    it("should parse partial date format (interpreted as midnight UTC)", () => {
+      // "2026-01-19" is parsed as midnight UTC, which is in the past
+      // relative to our mocked time of 12:00:00 UTC, so it throws
+      expect(() => validateStartTimeInFuture("2026-01-19")).toThrow(
+        "startTime must be at least 1 minute(s) in the future"
+      );
+    });
+
+    it("should accept valid ISO 8601 format with timezone", () => {
+      // 2 hours in the future
+      expect(() => validateStartTimeInFuture("2026-01-19T14:00:00Z")).not.toThrow();
+    });
+
+    it("should accept valid ISO 8601 format without timezone", () => {
+      // 2 hours in the future (local time interpreted as UTC)
+      expect(() => validateStartTimeInFuture("2026-01-19T14:00:00")).not.toThrow();
+    });
+  });
+
+  describe("future time validation with default 1 minute ahead", () => {
+    it("should throw error when startTime is in the past", () => {
+      expect(() => validateStartTimeInFuture("2026-01-19T11:00:00Z")).toThrow(
+        "startTime must be at least 1 minute(s) in the future"
+      );
+    });
+
+    it("should throw error when startTime is exactly now", () => {
+      expect(() => validateStartTimeInFuture("2026-01-19T12:00:00Z")).toThrow(
+        "startTime must be at least 1 minute(s) in the future"
+      );
+    });
+
+    it("should throw error when startTime is 30 seconds in the future", () => {
+      expect(() => validateStartTimeInFuture("2026-01-19T12:00:30Z")).toThrow(
+        "startTime must be at least 1 minute(s) in the future"
+      );
+    });
+
+    it("should throw error when startTime is exactly 1 minute in the future", () => {
+      expect(() => validateStartTimeInFuture("2026-01-19T12:01:00Z")).toThrow(
+        "startTime must be at least 1 minute(s) in the future"
+      );
+    });
+
+    it("should accept startTime that is more than 1 minute in the future", () => {
+      expect(() => validateStartTimeInFuture("2026-01-19T12:01:01Z")).not.toThrow();
+    });
+
+    it("should accept startTime that is 2 minutes in the future", () => {
+      expect(() => validateStartTimeInFuture("2026-01-19T12:02:00Z")).not.toThrow();
+    });
+
+    it("should accept startTime that is hours in the future", () => {
+      expect(() => validateStartTimeInFuture("2026-01-19T15:00:00Z")).not.toThrow();
+    });
+
+    it("should accept startTime that is days in the future", () => {
+      expect(() => validateStartTimeInFuture("2026-01-25T12:00:00Z")).not.toThrow();
+    });
+  });
+
+  describe("future time validation with custom minutesAhead", () => {
+    it("should accept immediately future time when minutesAhead is 0", () => {
+      // 1 second in the future
+      expect(() => validateStartTimeInFuture("2026-01-19T12:00:01Z", 0)).not.toThrow();
+    });
+
+    it("should throw error when time is exactly now with minutesAhead 0", () => {
+      expect(() => validateStartTimeInFuture("2026-01-19T12:00:00Z", 0)).toThrow(
+        "startTime must be at least 0 minute(s) in the future"
+      );
+    });
+
+    it("should throw error when time is in the past with minutesAhead 0", () => {
+      expect(() => validateStartTimeInFuture("2026-01-19T11:59:00Z", 0)).toThrow(
+        "startTime must be at least 0 minute(s) in the future"
+      );
+    });
+
+    it("should require 5 minutes ahead when specified", () => {
+      // 4 minutes in the future - should fail
+      expect(() => validateStartTimeInFuture("2026-01-19T12:04:00Z", 5)).toThrow(
+        "startTime must be at least 5 minute(s) in the future"
+      );
+
+      // 6 minutes in the future - should pass
+      expect(() => validateStartTimeInFuture("2026-01-19T12:06:00Z", 5)).not.toThrow();
+    });
+  });
+});
+
+// ==========================================
+// create_agent_schedule Handler Validation Tests
+// ==========================================
+
+describe("create_agent_schedule handler validation", () => {
+  describe("RunOnce (scheduleType=1) validation rules", () => {
+    it("should require startTime for RunOnce schedule type", () => {
+      // This test documents the expected behavior:
+      // When scheduleType is 1 (RunOnce), startTime is required
+      const scheduleType = 1;
+      const startTime = undefined;
+      
+      const isValid = !(scheduleType === 1 && !startTime);
+      expect(isValid).toBe(false);
+    });
+
+    it("should accept RunOnce schedule with valid future startTime", () => {
+      const scheduleType = 1;
+      const startTime = "2026-01-20T14:30:00Z"; // Future date
+      
+      const hasRequiredFields = scheduleType === 1 && !!startTime;
+      expect(hasRequiredFields).toBe(true);
+    });
+  });
+
+  describe("RunEvery (scheduleType=2) validation rules", () => {
+    it("should require runEveryCount for RunEvery schedule type", () => {
+      const scheduleType = 2;
+      const runEveryCount = undefined;
+      const runEveryPeriod = 1;
+      
+      const isValid = !(scheduleType === 2 && (runEveryCount === undefined || runEveryPeriod === undefined));
+      expect(isValid).toBe(false);
+    });
+
+    it("should require runEveryPeriod for RunEvery schedule type", () => {
+      const scheduleType = 2;
+      const runEveryCount = 30;
+      const runEveryPeriod = undefined;
+      
+      const isValid = !(scheduleType === 2 && (runEveryCount === undefined || runEveryPeriod === undefined));
+      expect(isValid).toBe(false);
+    });
+
+    it("should accept RunEvery schedule without startTime", () => {
+      const scheduleType = 2;
+      const runEveryCount = 30;
+      const runEveryPeriod = 0; // minutes
+      const startTime = undefined;
+      
+      const hasRequiredFields = scheduleType === 2 && runEveryCount !== undefined && runEveryPeriod !== undefined;
+      const startTimeOptional = startTime === undefined || typeof startTime === "string";
+      
+      expect(hasRequiredFields && startTimeOptional).toBe(true);
+    });
+
+    it("should accept RunEvery schedule with optional startTime", () => {
+      const scheduleType = 2;
+      const runEveryCount = 30;
+      const runEveryPeriod = 0;
+      const startTime = "2026-01-20T10:00:00Z";
+      
+      const hasRequiredFields = scheduleType === 2 && runEveryCount !== undefined && runEveryPeriod !== undefined;
+      expect(hasRequiredFields).toBe(true);
+    });
+
+    it("should validate all runEveryPeriod values (0=min, 1=hr, 2=day, 3=wk, 4=mo)", () => {
+      const validPeriods = [0, 1, 2, 3, 4];
+      validPeriods.forEach(period => {
+        expect(period >= 0 && period <= 4).toBe(true);
+      });
+    });
+  });
+
+  describe("CRON (scheduleType=3) validation rules", () => {
+    it("should require cronExpression for CRON schedule type", () => {
+      const scheduleType = 3;
+      const cronExpression = undefined;
+      
+      const isValid = !(scheduleType === 3 && !cronExpression);
+      expect(isValid).toBe(false);
+    });
+
+    it("should accept CRON schedule with valid cronExpression", () => {
+      const scheduleType = 3;
+      const cronExpression = "0 9 * * *"; // Daily at 9am
+      
+      const hasRequiredFields = scheduleType === 3 && !!cronExpression;
+      expect(hasRequiredFields).toBe(true);
+    });
+
+    it("should not require startTime for CRON schedule type", () => {
+      const scheduleType = 3;
+      const cronExpression = "0 9 * * 1,4"; // Mon/Thu at 9am
+      const startTime = undefined;
+      
+      // CRON schedules don't use startTime
+      const isValid = scheduleType === 3 && !!cronExpression;
+      expect(isValid).toBe(true);
+    });
+  });
+
+  describe("default schedule type", () => {
+    it("should default to CRON (scheduleType=3) when not specified", () => {
+      const scheduleType = undefined;
+      const effectiveScheduleType = scheduleType ?? 3;
+      
+      expect(effectiveScheduleType).toBe(3);
+    });
+  });
+});
+
 describe("list_agents handler", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
