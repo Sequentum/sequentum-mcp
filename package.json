@@ -30,12 +30,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sequentum/se4-mcp-server.git"
+    "url": "https://github.com/Sequentum/sequentum-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/sequentum/se4-mcp-server/issues"
+    "url": "https://github.com/Sequentum/sequentum-mcp/issues"
   },
-  "homepage": "https://github.com/sequentum/se4-mcp-server#readme",
+  "homepage": "https://github.com/Sequentum/sequentum-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
