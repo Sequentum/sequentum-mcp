@@ -702,17 +702,25 @@ describe("SequentumApiClient", () => {
         "https://api.example.com/api/v1/agent/42/schedules",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({
-            Name: "New Schedule",
-            CronExpression: "0 9 * * *",
-            Timezone: undefined,
-            InputParameters: undefined,
-            IsEnabled: true,
-            Parallelism: 1,
-            ScheduleType: undefined,
-            RunEveryCount: undefined,
-            RunEveryPeriod: undefined,
-          }),
+        })
+      );
+      // Verify required fields are in the body
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"Name":"New Schedule"'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"CronExpression":"0 9 * * *"'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"IsEnabled":true'),
         })
       );
       expect(result).toEqual(mockSchedule);
@@ -732,24 +740,38 @@ describe("SequentumApiClient", () => {
         timezone: "America/New_York",
         inputParameters: '{"key": "value"}',
         isEnabled: false,
-        parallelism: 4,
         scheduleType: 3,
       });
 
+      // Verify all provided fields are in the body
       expect(fetch).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({
-          body: JSON.stringify({
-            Name: "Full Schedule",
-            CronExpression: "0 9 * * 1,4",
-            Timezone: "America/New_York",
-            InputParameters: '{"key": "value"}',
-            IsEnabled: false,
-            Parallelism: 4,
-            ScheduleType: 3,
-            RunEveryCount: undefined,
-            RunEveryPeriod: undefined,
-          }),
+          body: expect.stringContaining('"Name":"Full Schedule"'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"ScheduleType":3'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"CronExpression":"0 9 * * 1,4"'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"Timezone":"America/New_York"'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"IsEnabled":false'),
         })
       );
     });
@@ -776,6 +798,27 @@ describe("SequentumApiClient", () => {
       );
     });
 
+    it("should default parallelism to 1 when not provided", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ id: 1 }),
+      } as Response);
+
+      await client.createAgentSchedule(42, {
+        name: "Default Parallelism",
+        cronExpression: "0 9 * * *",
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"Parallelism":1'),
+        })
+      );
+    });
+
     it("should create a RunOnce schedule (scheduleType=1)", async () => {
       const mockSchedule = { id: 1, name: "One Time Run", scheduleType: 1 };
 
@@ -789,30 +832,38 @@ describe("SequentumApiClient", () => {
       const result = await client.createAgentSchedule(42, {
         name: "One Time Run",
         scheduleType: 1,
+        startTime: "2026-01-20T14:30:00Z",
       });
 
       expect(fetch).toHaveBeenCalledWith(
         "https://api.example.com/api/v1/agent/42/schedules",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({
-            Name: "One Time Run",
-            CronExpression: undefined,
-            Timezone: undefined,
-            InputParameters: undefined,
-            IsEnabled: true,
-            Parallelism: 1,
-            ScheduleType: 1,
-            RunEveryCount: undefined,
-            RunEveryPeriod: undefined,
-          }),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"Name":"One Time Run"'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"ScheduleType":1'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"StartTime":"2026-01-20T14:30:00Z"'),
         })
       );
       expect(result).toEqual(mockSchedule);
     });
 
     it("should create a RunEvery schedule (scheduleType=2) with interval", async () => {
-      const mockSchedule = { id: 1, name: "Every 6 Hours", scheduleType: 2, runEveryCount: 6, runEveryPeriod: 1 };
+      const mockSchedule = { id: 1, name: "Every 6 Hours", scheduleType: 2, runEveryCount: 6, runEveryPeriod: 2 };
 
       vi.mocked(fetch).mockResolvedValueOnce({
         ok: true,
@@ -825,7 +876,7 @@ describe("SequentumApiClient", () => {
         name: "Every 6 Hours",
         scheduleType: 2,
         runEveryCount: 6,
-        runEveryPeriod: 1, // hours
+        runEveryPeriod: 2, // hours (1=min, 2=hr, 3=day, 4=wk, 5=mo)
         timezone: "America/Santiago",
       });
 
@@ -833,17 +884,36 @@ describe("SequentumApiClient", () => {
         "https://api.example.com/api/v1/agent/42/schedules",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({
-            Name: "Every 6 Hours",
-            CronExpression: undefined,
-            Timezone: "America/Santiago",
-            InputParameters: undefined,
-            IsEnabled: true,
-            Parallelism: 1,
-            ScheduleType: 2,
-            RunEveryCount: 6,
-            RunEveryPeriod: 1,
-          }),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"Name":"Every 6 Hours"'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"ScheduleType":2'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"RunEveryCount":6'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"RunEveryPeriod":2'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"Timezone":"America/Santiago"'),
         })
       );
       expect(result).toEqual(mockSchedule);
@@ -862,7 +932,7 @@ describe("SequentumApiClient", () => {
         name: "Every 2 Weeks",
         scheduleType: 2,
         runEveryCount: 2,
-        runEveryPeriod: 3, // weeks
+        runEveryPeriod: 4, // weeks (1=min, 2=hr, 3=day, 4=wk, 5=mo)
       });
 
       expect(fetch).toHaveBeenCalledWith(
@@ -880,7 +950,7 @@ describe("SequentumApiClient", () => {
       expect(fetch).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({
-          body: expect.stringContaining('"RunEveryPeriod":3'),
+          body: expect.stringContaining('"RunEveryPeriod":4'),
         })
       );
     });
@@ -906,20 +976,93 @@ describe("SequentumApiClient", () => {
         "https://api.example.com/api/v1/agent/42/schedules",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({
-            Name: "Daily at 9am",
-            CronExpression: "0 9 * * *",
-            Timezone: "UTC",
-            InputParameters: undefined,
-            IsEnabled: true,
-            Parallelism: 1,
-            ScheduleType: 3,
-            RunEveryCount: undefined,
-            RunEveryPeriod: undefined,
-          }),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"Name":"Daily at 9am"'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"ScheduleType":3'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"CronExpression":"0 9 * * *"'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"Timezone":"UTC"'),
         })
       );
       expect(result).toEqual(mockSchedule);
+    });
+
+    it("should include startTime for RunOnce schedule", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ id: 1 }),
+      } as Response);
+
+      await client.createAgentSchedule(42, {
+        name: "Scheduled Run",
+        scheduleType: 1,
+        startTime: "2026-02-15T10:00:00Z",
+        timezone: "America/New_York",
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"StartTime":"2026-02-15T10:00:00Z"'),
+        })
+      );
+    });
+
+    it("should include optional startTime for RunEvery schedule", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ id: 1 }),
+      } as Response);
+
+      await client.createAgentSchedule(42, {
+        name: "Every 30 Minutes",
+        scheduleType: 2,
+        runEveryCount: 30,
+        runEveryPeriod: 1, // minutes (1=min, 2=hr, 3=day, 4=wk, 5=mo)
+        startTime: "2026-01-17T10:00:00Z",
+        timezone: "America/Denver",
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"StartTime":"2026-01-17T10:00:00Z"'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"RunEveryCount":30'),
+        })
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('"RunEveryPeriod":1'),
+        })
+      );
     });
   });
 

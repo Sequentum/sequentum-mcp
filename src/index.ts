@@ -21,6 +21,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { SequentumApiClient } from "./api-client.js";
 import { AgentApiModel, AgentRunStatus, ConfigType, ListAgentsRequest } from "./types.js";
+import { validateStartTimeInFuture } from "./validation.js";
 
 // Import version from package.json
 const require = createRequire(import.meta.url);
@@ -410,33 +411,49 @@ const tools: Tool[] = [
   {
     name: "create_agent_schedule",
     description:
-      "Create a schedule for an agent. Use scheduleType: 1=RunOnce, 2=RunEvery, 3=CRON. " +
-      "RunOnce: requires startTime (ISO 8601 UTC, >=1min in future). " +
-      "RunEvery: uses runEveryCount + runEveryPeriod (0=min,1=hr,2=day,3=wk,4=mo); optional startTime for first run. " +
-      "CRON: uses cronExpression ('min hr day mo wkday'). " +
-      "TIP: Specify timezone for local time.",
+      "Create a scheduled task to automatically run an agent. " +
+      "Three schedule types available: " +
+      "RunOnce (1): Runs once at startTime (required, must be >=1 min in future UTC). " +
+      "RunEvery (2): Repeats every runEveryCount periods (runEveryPeriod: 1=min, 2=hr, 3=day, 4=wk, 5=mo). Optional startTime for first run (must be in future if provided). " +
+      "CRON (3): Uses cronExpression for complex schedules (e.g., '0 9 * * 1,4' = Mon/Thu 9am). " +
+      "Always specify timezone for local time interpretation. " +
+      "Examples: CRON daily at 9am: {scheduleType:3, cronExpression:'0 9 * * *'}. " +
+      "RunOnce: {scheduleType:1, startTime:'2026-01-20T14:30:00Z'}. " +
+      "RunEvery 30min: {scheduleType:2, runEveryCount:30, runEveryPeriod:1}.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        agentId: { type: "number", description: "Agent ID to schedule." },
-        name: { type: "string", description: "Schedule name." },
+        agentId: { type: "number", description: "The unique ID of the agent to schedule. Get this from list_agents or search_agents." },
+        name: { type: "string", description: "A descriptive name for the schedule (e.g., 'Daily Morning Run')." },
         scheduleType: { 
           type: "number", 
           enum: [1, 2, 3],
-          description: "1=RunOnce, 2=RunEvery, 3=CRON (default)." 
+          description: "Schedule type: 1=RunOnce (single execution), 2=RunEvery (recurring interval), 3=CRON (cron expression). Default: 3 (CRON)." 
         },
-        startTime: { type: "string", description: "ISO 8601 UTC datetime. Required for RunOnce (>=1min future). Optional for RunEvery (first run time). Not used for CRON." },
-        cronExpression: { type: "string", description: "For CRON: 'min hr day mo wkday'. Example: '0 9 * * 1,4' = Mon/Thu 9am." },
-        runEveryCount: { type: "number", description: "For RunEvery: interval count." },
+        startTime: { 
+          type: "string", 
+          description: "ISO 8601 UTC datetime (e.g., '2026-01-20T14:30:00Z'). Required for RunOnce (must be >=1 min in future). Optional for RunEvery (sets first run time, must be in future). Not used for CRON." 
+        },
+        cronExpression: { 
+          type: "string", 
+          description: "CRON expression for scheduleType=3. Format: 'minute hour day month weekday'. Examples: '0 9 * * *' (daily 9am), '0 9 * * 1,4' (Mon/Thu 9am), '*/30 * * * *' (every 30 min)." 
+        },
+        runEveryCount: { 
+          type: "number", 
+          description: "For scheduleType=2 (RunEvery): The interval count. Example: 30 with runEveryPeriod=1 means every 30 minutes." 
+        },
         runEveryPeriod: { 
           type: "number", 
-          enum: [0, 1, 2, 3, 4],
-          description: "For RunEvery: 0=min, 1=hr, 2=day, 3=wk, 4=mo." 
+          enum: [1, 2, 3, 4, 5],
+          description: "For scheduleType=2 (RunEvery): The time unit. 1=minutes, 2=hours, 3=days, 4=weeks, 5=months." 
         },
-        timezone: { type: "string", description: "Timezone (e.g., 'America/New_York'). Default: UTC." },
-        inputParameters: { type: "string", description: "JSON input parameters for runs." },
-        isEnabled: { type: "boolean", description: "Active schedule. Default: true." },
-        parallelism: { type: "number", description: "Parallel instances. Default: 1." },
+        timezone: { 
+          type: "string", 
+          description: "Timezone for schedule interpretation (e.g., 'America/New_York', 'America/Denver', 'Europe/London'). Default: UTC." 
+        },
+        inputParameters: { type: "string", description: "Optional JSON string of input parameters to pass to each scheduled run." },
+        isEnabled: { type: "boolean", description: "Whether the schedule is active. Default: true." },
+        parallelism: { type: "number", description: "Number of parallel instances to run. Default: 1." },
       },
       required: ["agentId", "name"],
     },
@@ -1024,12 +1041,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         // Validate schedule type specific parameters
         const effectiveScheduleType = scheduleType ?? 3; // Default to CRON
-        if (effectiveScheduleType === 1 && !startTime) {
-          throw new Error("startTime is required when scheduleType is 1 (RunOnce)");
+
+        // RunOnce (1): startTime is required and must be at least 1 minute in the future
+        if (effectiveScheduleType === 1) {
+          if (!startTime) {
+            throw new Error("startTime is required when scheduleType is 1 (RunOnce)");
+          }
+          validateStartTimeInFuture(startTime, 1);
         }
-        if (effectiveScheduleType === 2 && (runEveryCount === undefined || runEveryPeriod === undefined)) {
-          throw new Error("runEveryCount and runEveryPeriod are required when scheduleType is 2 (RunEvery)");
+
+        // RunEvery (2): runEveryCount and runEveryPeriod are required, startTime is optional but must be in the future if provided
+        if (effectiveScheduleType === 2) {
+          if (runEveryCount === undefined || runEveryPeriod === undefined) {
+            throw new Error("runEveryCount and runEveryPeriod are required when scheduleType is 2 (RunEvery)");
+          }
+          if (startTime) {
+            validateStartTimeInFuture(startTime, 0);
+          }
         }
+
+        // CRON (3): cronExpression is required, startTime is not used
         if (effectiveScheduleType === 3 && !cronExpression) {
           throw new Error("cronExpression is required when scheduleType is 3 (CRON)");
         }

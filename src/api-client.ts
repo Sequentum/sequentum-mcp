@@ -392,6 +392,7 @@ export class SequentumApiClient {
    * Create a new schedule for an agent
    * @param agentId - The ID of the agent
    * @param request - The schedule configuration
+   * @returns The created schedule
    */
   async createAgentSchedule(
     agentId: number,
@@ -403,15 +404,15 @@ export class SequentumApiClient {
         method: "POST",
         body: JSON.stringify({
           Name: request.name,
+          ScheduleType: request.scheduleType,
           CronExpression: request.cronExpression,
-          Timezone: request.timezone,
           StartTime: request.startTime,
+          RunEveryCount: request.runEveryCount,
+          RunEveryPeriod: request.runEveryPeriod,
+          Timezone: request.timezone,
           InputParameters: request.inputParameters,
           IsEnabled: request.isEnabled ?? true,
           Parallelism: request.parallelism ?? 1,
-          ScheduleType: request.scheduleType,
-          RunEveryCount: request.runEveryCount,
-          RunEveryPeriod: request.runEveryPeriod,
         }),
       }
     );
