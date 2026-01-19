@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { validateStartTimeInFuture } from "./validation.js";
 
 /**
  * Tests for MCP handler behavior in index.ts
@@ -10,28 +11,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // ==========================================
 // validateStartTimeInFuture Tests
 // ==========================================
-
-/**
- * Helper function that mirrors the validation logic in index.ts
- * Used for testing the startTime validation behavior
- */
-function validateStartTimeInFuture(startTime: string, minutesAhead: number = 1): void {
-  const start = new Date(startTime);
-  const now = new Date();
-  const minFuture = new Date(now.getTime() + minutesAhead * 60 * 1000);
-
-  if (isNaN(start.getTime())) {
-    throw new Error(
-      `Invalid startTime format: ${startTime}. Use ISO 8601 format (e.g., 2026-01-20T14:30:00Z)`
-    );
-  }
-
-  if (start <= minFuture) {
-    throw new Error(
-      `startTime must be at least ${minutesAhead} minute(s) in the future (UTC). Provided: ${startTime}`
-    );
-  }
-}
 
 describe("validateStartTimeInFuture", () => {
   beforeEach(() => {
