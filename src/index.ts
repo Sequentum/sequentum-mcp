@@ -320,6 +320,24 @@ const tools: Tool[] = [
       required: ["agentId", "runId"],
     },
   },
+  {
+    name: "kill_agent",
+    description:
+      "Forcefully kill a running agent instance. " +
+      "First call initiates graceful stop (same as stop_agent). " +
+      "Second call forces immediate termination if agent is still stopping. " +
+      "Use when normal stop is not responding or to force-terminate a stuck agent. " +
+      "Answers: 'Force kill agent', 'Terminate stuck agent', 'Force stop the run'. " +
+      "REQUIRED: You need both agentId and runId.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agentId: { type: "number", description: "The unique ID of the agent." },
+        runId: { type: "number", description: "The run ID to kill." },
+      },
+      required: ["agentId", "runId"],
+    },
+  },
 
   // File Tools
   {
@@ -922,6 +940,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: "text",
               text: `Successfully stopped run ${runId} for agent ${agentId}`,
+            },
+          ],
+        };
+      }
+
+      case "kill_agent": {
+        const params = args as Record<string, unknown>;
+        const agentId = validateNumber(params, "agentId")!;
+        const runId = validateNumber(params, "runId")!;
+        await client.killAgent(agentId, runId);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Kill command sent for run ${runId} of agent ${agentId}. If the agent was running, it will initiate graceful stop. If already stopping, it will force immediate termination.`,
             },
           ],
         };
