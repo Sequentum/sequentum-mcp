@@ -3,6 +3,21 @@
  * These types match the API models from the Sequentum Control Center
  */
 
+// ==========================================
+// Custom Error Classes
+// ==========================================
+
+/**
+ * Error thrown when authentication is not configured or has failed.
+ * Allows downstream code to handle auth errors specifically.
+ */
+export class AuthenticationError extends Error {
+  constructor(message: string = "No authentication configured") {
+    super(message);
+    this.name = "AuthenticationError";
+  }
+}
+
 /**
  * Represents a web scraping agent configuration
  */
@@ -462,3 +477,13 @@ export interface RunStatsApiModel {
   traffic?: number;
 }
 
+// ==========================================
+// Authentication Types
+// ==========================================
+
+/**
+ * Authentication mode for the MCP server
+ * - apikey: Uses API key from SEQUENTUM_API_KEY environment variable (stdio mode)
+ * - oauth2: Receives Bearer tokens via Authorization header (HTTP mode)
+ */
+export type AuthMode = "apikey" | "oauth2";

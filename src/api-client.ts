@@ -24,23 +24,53 @@ import {
   RunDiagnosticsApiModel,
   ListAgentsRequest,
   PaginatedAgentsResponse,
+  AuthenticationError,
 } from "./types.js";
 
 export class SequentumApiClient {
   private baseUrl: string;
-  private apiKey: string;
+  private apiKey: string | null;
+  private accessToken: string | null = null;
   private requestTimeoutMs: number;
 
   /**
    * Create a new Sequentum API client
    * @param baseUrl - The base URL of the Sequentum API (e.g., https://dashboard.sequentum.com)
-   * @param apiKey - The API key (sk-...) for authentication
+   * @param apiKey - The API key (sk-...) for authentication (optional if using OAuth2)
    * @param requestTimeoutMs - Request timeout in milliseconds (default: 30000)
    */
-  constructor(baseUrl: string, apiKey: string, requestTimeoutMs: number = 30000) {
+  constructor(baseUrl: string, apiKey: string | null = null, requestTimeoutMs: number = 30000) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.apiKey = apiKey;
     this.requestTimeoutMs = requestTimeoutMs;
+  }
+
+  /**
+   * Set the OAuth2 access token for Bearer authentication
+   * @param token - The access token
+   */
+  setAccessToken(token: string | null): void {
+    this.accessToken = token;
+  }
+
+  /**
+   * Get the current access token
+   */
+  getAccessToken(): string | null {
+    return this.accessToken;
+  }
+
+  /**
+   * Build the Authorization header based on available credentials
+   */
+  private getAuthorizationHeader(): string {
+    if (this.accessToken) {
+      return `Bearer ${this.accessToken}`;
+    }
+    if (this.apiKey) {
+      return `ApiKey ${this.apiKey}`;
+    }
+    throw new AuthenticationError("No authentication configured. Set either an API key or OAuth2 access token.");
   }
 
   /**
@@ -52,7 +82,7 @@ export class SequentumApiClient {
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
     const headers: Record<string, string> = {
-      Authorization: `ApiKey ${this.apiKey}`,
+      Authorization: this.getAuthorizationHeader(),
       "Content-Type": "application/json",
       Accept: "application/json",
       ...(options.headers as Record<string, string>),
@@ -121,7 +151,7 @@ export class SequentumApiClient {
   ): Promise<void> {
     const url = `${this.baseUrl}${endpoint}`;
     const headers: Record<string, string> = {
-      Authorization: `ApiKey ${this.apiKey}`,
+      Authorization: this.getAuthorizationHeader(),
       "Content-Type": "application/json",
       Accept: "application/json",
       ...(options.headers as Record<string, string>),
