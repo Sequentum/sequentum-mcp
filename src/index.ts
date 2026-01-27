@@ -323,17 +323,15 @@ const tools: Tool[] = [
   {
     name: "kill_agent",
     description:
-      "Forcefully kill a running agent instance. " +
-      "First call initiates graceful stop (same as stop_agent). " +
-      "Second call forces immediate termination if agent is still stopping. " +
-      "Use when normal stop is not responding or to force-terminate a stuck agent. " +
-      "Answers: 'Force kill agent', 'Terminate stuck agent', 'Force stop the run'. " +
-      "REQUIRED: You need both agentId and runId.",
+      "Force-terminate an agent when stop_agent is not working. " +
+      "Only use if stop_agent was called but agent is still running/stopping. " +
+      "Answers: 'Force kill stuck agent', 'Agent won't stop', 'Terminate unresponsive run'. " +
+      "REQUIRED: agentId and runId. Get runId from start_agent or get_agent_runs.",
     inputSchema: {
       type: "object" as const,
       properties: {
         agentId: { type: "number", description: "The unique ID of the agent." },
-        runId: { type: "number", description: "The run ID to kill." },
+        runId: { type: "number", description: "The run ID to kill. Get from start_agent or get_agent_runs." },
       },
       required: ["agentId", "runId"],
     },

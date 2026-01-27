@@ -13,6 +13,7 @@ This document provides detailed documentation for all tools available in the Seq
   - [get_run_status](#get_run_status)
   - [start_agent](#start_agent)
   - [stop_agent](#stop_agent)
+  - [kill_agent](#kill_agent)
 - [File Management](#file-management)
   - [get_run_files](#get_run_files)
   - [get_file_download_url](#get_file_download_url)
@@ -231,6 +232,33 @@ Confirmation message that the run was stopped.
 Stop run 123 for agent 456
 Cancel the scraper
 Abort that running job
+```
+
+---
+
+### kill_agent
+
+Force-terminate an agent when `stop_agent` is not working. **Only use this if you already called `stop_agent` but the agent is still running or stuck in "Stopping" state.**
+
+This is a last-resort tool for unresponsive agents. In normal operation, use `stop_agent` instead.
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `agentId` | number | Yes | The unique ID of the agent. |
+| `runId` | number | Yes | The run ID to kill. Get this from `start_agent` response or `get_agent_runs`. |
+
+#### Returns
+
+Confirmation message that the kill command was sent.
+
+#### Example Prompts
+
+```
+Force kill agent 123, stop_agent didn't work
+The agent is stuck stopping, force terminate it
+Kill the unresponsive run
 ```
 
 ---
