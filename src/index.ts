@@ -1581,6 +1581,8 @@ async function startHttpServer() {
     scopes_supported: ["agents:read", "runs:read", "spaces:read", "agents:write", "offline_access"],
     code_challenge_methods_supported: ["S256"], // PKCE support
     service_documentation: "https://docs.sequentum.com/api",
+    // RFC 8707: Resource Indicators - required for correct audience in tokens
+    resource: `${API_BASE_URL}/api/v1`,
     // MCP extension: provide client_id for servers without dynamic registration
     client_id: OAUTH_CLIENT_ID,
   };
