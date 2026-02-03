@@ -1569,32 +1569,87 @@ async function startHttpServer() {
   // OAuth2 Authorization Server Metadata (RFC 8414)
   // This enables MCP clients to discover OAuth2 endpoints automatically
   // OAuth URLs are derived from the API base URL (same server hosts both API and OAuth)
-  const OAUTH_CLIENT_ID = process.env.OAUTH_CLIENT_ID || "sequentum-mcp";
   
-  const oauthMetadata = {
-    issuer: API_BASE_URL,
-    authorization_endpoint: `${API_BASE_URL}/api/oauth/authorize`,
-    token_endpoint: `${API_BASE_URL}/api/oauth/token`,
-    token_endpoint_auth_methods_supported: ["none"], // Public client (PKCE)
-    grant_types_supported: ["authorization_code", "refresh_token"],
-    response_types_supported: ["code"],
-    scopes_supported: ["agents:read", "runs:read", "spaces:read", "agents:write", "offline_access"],
-    code_challenge_methods_supported: ["S256"], // PKCE support
-    service_documentation: "https://docs.sequentum.com/api",
-    // RFC 8707: Resource Indicators - required for correct audience in tokens
-    resource: `${API_BASE_URL}/api/v1`,
-    // MCP extension: provide client_id for servers without dynamic registration
-    client_id: OAUTH_CLIENT_ID,
-  };
+  // Cache for backend OAuth metadata (specifically client_id)
+  let cachedBackendMetadata: { client_id?: string; fetchedAt?: number } | null = null;
+  const METADATA_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+  /**
+   * Fetch OAuth metadata from the backend to get the client_id
+   * Results are cached for 5 minutes to avoid repeated requests
+   */
+  async function fetchBackendOAuthMetadata(): Promise<{ client_id?: string }> {
+    // Return cached data if still valid
+    if (cachedBackendMetadata?.fetchedAt && 
+        Date.now() - cachedBackendMetadata.fetchedAt < METADATA_CACHE_TTL_MS) {
+      return cachedBackendMetadata;
+    }
+
+    try {
+      const metadataUrl = `${API_BASE_URL}/.well-known/oauth-authorization-server`;
+      if (DEBUG) {
+        console.error(`[DEBUG] Fetching OAuth metadata from backend: ${metadataUrl}`);
+      }
+      
+      const response = await fetch(metadataUrl);
+      if (response.ok) {
+        const metadata = await response.json();
+        cachedBackendMetadata = {
+          client_id: metadata.client_id,
+          fetchedAt: Date.now(),
+        };
+        if (DEBUG) {
+          console.error(`[DEBUG] Fetched client_id from backend: ${metadata.client_id}`);
+        }
+        return cachedBackendMetadata;
+      } else {
+        console.error(`[WARN] Backend OAuth metadata returned ${response.status}`);
+      }
+    } catch (error) {
+      console.error(`[WARN] Failed to fetch OAuth metadata from backend:`, error);
+    }
+
+    return {};
+  }
+
+  /**
+   * Build OAuth metadata, fetching client_id from backend
+   */
+  async function buildOAuthMetadata(): Promise<Record<string, unknown>> {
+    const backendMetadata = await fetchBackendOAuthMetadata();
+    
+    const metadata: Record<string, unknown> = {
+      issuer: API_BASE_URL,
+      authorization_endpoint: `${API_BASE_URL}/api/oauth/authorize`,
+      token_endpoint: `${API_BASE_URL}/api/oauth/token`,
+      token_endpoint_auth_methods_supported: ["none"], // Public client (PKCE)
+      grant_types_supported: ["authorization_code", "refresh_token"],
+      response_types_supported: ["code"],
+      scopes_supported: ["agents:read", "runs:read", "spaces:read", "agents:write", "offline_access"],
+      code_challenge_methods_supported: ["S256"], // PKCE support
+      service_documentation: "https://docs.sequentum.com/api",
+      // RFC 8707: Resource Indicators - required for correct audience in tokens
+      resource: `${API_BASE_URL}/api/v1`,
+    };
+
+    // Include client_id only if available from backend
+    if (backendMetadata.client_id) {
+      metadata.client_id = backendMetadata.client_id;
+    }
+
+    return metadata;
+  }
 
   // RFC 8414 standard path
-  app.get("/.well-known/oauth-authorization-server", (_req: Request, res: Response) => {
-    res.json(oauthMetadata);
+  app.get("/.well-known/oauth-authorization-server", async (_req: Request, res: Response) => {
+    const metadata = await buildOAuthMetadata();
+    res.json(metadata);
   });
 
   // MCP-specific compatibility path
-  app.get("/oauth/metadata", (_req: Request, res: Response) => {
-    res.json(oauthMetadata);
+  app.get("/oauth/metadata", async (_req: Request, res: Response) => {
+    const metadata = await buildOAuthMetadata();
+    res.json(metadata);
   });
 
   // Log all incoming requests for debugging
