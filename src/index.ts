@@ -21,6 +21,9 @@
  *      HOST - HTTP server host (default: 0.0.0.0)
  *      SEQUENTUM_API_URL - Base URL of the Sequentum API (default: https://dashboard.sequentum.com)
  *      DEBUG - Set to '1' for debug logging
+ *      MCP_CLIENT_ID - Fallback OAuth client_id if backend metadata is unavailable
+ *      REQUIRE_AUTH - Set to 'false' to bypass OAuth for testing (limited use: allows
+ *                     connecting to MCP server but tools will fail without valid tokens)
  *    
  *    Authentication: OAuth2 tokens are provided by Claude's infrastructure
  *    via the Authorization header on each request.
@@ -38,7 +41,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import express, { Request, Response } from "express";
 import { SequentumApiClient } from "./api-client.js";
-import { AgentApiModel, AgentRunStatus, AuthMode, ConfigType, ListAgentsRequest } from "./types.js";
+import { AgentApiModel, AgentRunFileApiModel, AgentRunStatus, AuthMode, ConfigType, ListAgentsRequest } from "./types.js";
 import { validateStartTimeInFuture } from "./validation.js";
 
 // Import version from package.json
@@ -1089,7 +1092,7 @@ function createMcpServer(apiClient: SequentumApiClient): Server {
           };
         }
 
-        const summary = files.map((f: { id: number; name: string; fileType: string; fileSize?: number; created: string }) => ({
+        const summary = files.map((f: AgentRunFileApiModel) => ({
           id: f.id,
           name: f.name,
           fileType: f.fileType,
@@ -1576,7 +1579,8 @@ async function startHttpServer() {
 
   /**
    * Fetch OAuth metadata from the backend to get the client_id
-   * Results are cached for 5 minutes to avoid repeated requests
+   * Results are cached for 5 minutes to avoid repeated requests.
+   * Falls back to MCP_CLIENT_ID environment variable if backend is unavailable.
    */
   async function fetchBackendOAuthMetadata(): Promise<{ client_id?: string }> {
     // Return cached data if still valid
@@ -1607,6 +1611,15 @@ async function startHttpServer() {
       }
     } catch (error) {
       console.error(`[WARN] Failed to fetch OAuth metadata from backend:`, error);
+    }
+
+    // Fallback to environment variable if backend fetch failed
+    const fallbackClientId = process.env.MCP_CLIENT_ID;
+    if (fallbackClientId) {
+      if (DEBUG) {
+        console.error(`[DEBUG] Using fallback MCP_CLIENT_ID from environment: ${fallbackClientId}`);
+      }
+      return { client_id: fallbackClientId };
     }
 
     return {};
@@ -1652,15 +1665,27 @@ async function startHttpServer() {
     res.json(metadata);
   });
 
-  // Log all incoming requests for debugging
-  app.use("/mcp", (req: Request, _res: Response, next) => {
-    console.error(`[MCP] ${req.method} ${req.url}`);
-    console.error(`[MCP] Headers: ${JSON.stringify(req.headers)}`);
-    if (req.body && Object.keys(req.body).length > 0) {
-      console.error(`[MCP] Body: ${JSON.stringify(req.body)}`);
-    }
-    next();
-  });
+  // Log incoming requests for debugging (only when DEBUG is enabled)
+  if (DEBUG) {
+    app.use("/mcp", (req: Request, _res: Response, next) => {
+      console.error(`[MCP] ${req.method} ${req.url}`);
+      
+      // Redact sensitive headers before logging
+      const safeHeaders = { ...req.headers };
+      const sensitiveHeaders = ['authorization', 'cookie', 'x-api-key'];
+      for (const header of sensitiveHeaders) {
+        if (safeHeaders[header]) {
+          safeHeaders[header] = '[REDACTED]';
+        }
+      }
+      console.error(`[MCP] Headers: ${JSON.stringify(safeHeaders)}`);
+      
+      if (req.body && Object.keys(req.body).length > 0) {
+        console.error(`[MCP] Body: ${JSON.stringify(req.body)}`);
+      }
+      next();
+    });
+  }
 
   // Handle POST requests for client-to-server messages
   app.post("/mcp", async (req: Request, res: Response) => {
@@ -1735,17 +1760,30 @@ async function startHttpServer() {
         if (newSessionId && !sessions.has(newSessionId)) {
           sessions.set(newSessionId, session);
           console.error(`[MCP] Session stored: ${newSessionId}`);
+        } else if (!newSessionId) {
+          // Cleanup orphaned session to prevent memory leaks
+          // This can happen if handleRequest fails to set a session ID
+          console.error(`[MCP] Warning: No session ID returned, cleaning up orphaned session`);
+          try {
+            await session.server.close();
+          } catch (closeError) {
+            console.error(`[MCP] Error closing orphaned session:`, closeError);
+          }
         }
       }
 
     } catch (error) {
       console.error("Error handling MCP POST request:", error);
       if (!res.headersSent) {
+        // Sanitize error messages in production to avoid exposing internal details
+        const errorMessage = DEBUG 
+          ? (error instanceof Error ? error.message : "Internal server error")
+          : "Internal server error";
         res.status(500).json({ 
           jsonrpc: "2.0",
           error: { 
             code: -32603, 
-            message: error instanceof Error ? error.message : "Internal server error"
+            message: errorMessage
           },
           id: null
         });
