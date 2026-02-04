@@ -306,6 +306,19 @@ export class SequentumApiClient {
     });
   }
 
+  /**
+   * Forcefully kill a running agent instance
+   * First call: Initiates graceful stop (same as Stop)
+   * Second call: Forces immediate termination if still stopping
+   * @param agentId - The ID of the agent
+   * @param runId - The ID of the run to kill
+   */
+  async killAgent(agentId: number, runId: number): Promise<void> {
+    await this.requestVoid(`/api/v1/agent/${agentId}/run/${runId}/kill`, {
+      method: "POST",
+    });
+  }
+
   // ==========================================
   // File Operations
   // ==========================================

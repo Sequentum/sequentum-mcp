@@ -474,6 +474,44 @@ describe("SequentumApiClient", () => {
     });
   });
 
+  describe("killAgent", () => {
+    it("should kill agent run with POST request", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+      } as Response);
+
+      await client.killAgent(42, 123);
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent/42/run/123/kill",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+
+    it("should handle unauthorized error when killing", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        text: async () => '{"message": "No run access"}',
+      } as Response);
+
+      await expect(client.killAgent(42, 123)).rejects.toThrow("No run access");
+    });
+
+    it("should handle 404 error when run not found", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        text: async () => '{"message": "Run not found"}',
+      } as Response);
+
+      await expect(client.killAgent(42, 999)).rejects.toThrow("Run not found");
+    });
+  });
+
   describe("getRunFiles", () => {
     it("should fetch run files", async () => {
       const mockFiles = [
