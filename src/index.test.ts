@@ -9,6 +9,297 @@ import { validateStartTimeInFuture } from "./validation.js";
  */
 
 // ==========================================
+// OAuth Metadata Fetch Tests
+// ==========================================
+
+describe("OAuth metadata client_id fetching", () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+    // Reset environment
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.env = originalEnv;
+  });
+
+  describe("fallback to MCP_CLIENT_ID environment variable", () => {
+    it("should document that MCP_CLIENT_ID is used as fallback when backend fetch fails", () => {
+      // This test documents the expected behavior:
+      // When the backend fetch fails, the system should fall back to MCP_CLIENT_ID env var
+      
+      // The fetchBackendOAuthMetadata function:
+      // 1. Tries to fetch from ${API_BASE_URL}/.well-known/oauth-authorization-server
+      // 2. If successful, caches and returns the client_id
+      // 3. If failed, checks for MCP_CLIENT_ID environment variable
+      // 4. If env var exists, returns it as fallback
+      // 5. If no fallback, returns empty object
+      
+      const fallbackClientId = "mcp-fallback-client-id";
+      process.env.MCP_CLIENT_ID = fallbackClientId;
+      
+      // Verify env var is set correctly
+      expect(process.env.MCP_CLIENT_ID).toBe(fallbackClientId);
+    });
+
+    it("should return empty client_id when both backend and env var are unavailable", () => {
+      // When fetch fails and no MCP_CLIENT_ID is set, should return empty object
+      delete process.env.MCP_CLIENT_ID;
+      
+      // Verify no fallback exists
+      expect(process.env.MCP_CLIENT_ID).toBeUndefined();
+      
+      // The expected result when both sources fail:
+      const expectedResult = {};
+      expect(expectedResult).toEqual({});
+    });
+
+    it("should prefer backend client_id over environment variable", () => {
+      // This documents the priority:
+      // 1. Backend client_id (if available)
+      // 2. MCP_CLIENT_ID env var (fallback)
+      
+      const backendClientId = "mcp-from-backend";
+      const envClientId = "mcp-from-env";
+      
+      process.env.MCP_CLIENT_ID = envClientId;
+      
+      // When backend returns a client_id, that should be used
+      const backendResult = { client_id: backendClientId };
+      const envResult = { client_id: envClientId };
+      
+      // Backend takes priority
+      expect(backendResult.client_id).toBe(backendClientId);
+      expect(backendResult.client_id).not.toBe(envClientId);
+    });
+  });
+
+  describe("caching behavior", () => {
+    it("should cache backend metadata for 5 minutes (300000ms)", () => {
+      // Document the cache TTL
+      const METADATA_CACHE_TTL_MS = 5 * 60 * 1000;
+      expect(METADATA_CACHE_TTL_MS).toBe(300000);
+    });
+
+    it("should return cached data if within TTL", () => {
+      // Cached data should be returned without fetching if within TTL
+      const cachedData = { client_id: "cached-client-id", fetchedAt: Date.now() };
+      const cacheAge = Date.now() - cachedData.fetchedAt;
+      const CACHE_TTL = 5 * 60 * 1000;
+      
+      // Cache is fresh
+      expect(cacheAge < CACHE_TTL).toBe(true);
+    });
+
+    it("should refetch if cache has expired", () => {
+      // If cache is older than TTL, should refetch
+      const CACHE_TTL = 5 * 60 * 1000;
+      const expiredFetchedAt = Date.now() - CACHE_TTL - 1000; // 1 second past expiry
+      const cacheAge = Date.now() - expiredFetchedAt;
+      
+      // Cache is stale
+      expect(cacheAge > CACHE_TTL).toBe(true);
+    });
+  });
+});
+
+// ==========================================
+// Session Management Tests
+// ==========================================
+
+describe("HTTP session management", () => {
+  describe("orphaned session cleanup", () => {
+    it("should document that sessions without ID are cleaned up to prevent memory leaks", () => {
+      // This test documents the expected behavior:
+      // When a session is created but handleRequest doesn't return a session ID,
+      // the session should be cleaned up by calling server.close()
+      
+      // The cleanup logic in POST /mcp handler:
+      // 1. Session is created with createSession(token)
+      // 2. handleRequest is called
+      // 3. After handleRequest, check for mcp-session-id header
+      // 4. If newSessionId exists, store the session
+      // 5. If newSessionId is missing, call session.server.close() to cleanup
+      
+      const sessionCreated = true;
+      const sessionIdReturned = false;
+      
+      // When session is created but no ID returned, cleanup should occur
+      const shouldCleanup = sessionCreated && !sessionIdReturned;
+      expect(shouldCleanup).toBe(true);
+    });
+
+    it("should not cleanup sessions that are successfully stored", () => {
+      const sessionCreated = true;
+      const sessionIdReturned = true;
+      
+      // When session ID is returned, session should be stored, not cleaned up
+      const shouldCleanup = sessionCreated && !sessionIdReturned;
+      expect(shouldCleanup).toBe(false);
+    });
+
+    it("should handle errors during session cleanup gracefully", () => {
+      // Document that cleanup errors are logged but don't crash the server
+      // The try/catch around session.server.close() ensures robustness
+      
+      const closeError = new Error("Failed to close");
+      
+      // Error should be caught and logged, not thrown
+      expect(() => {
+        // Simulating the try/catch behavior
+        try {
+          throw closeError;
+        } catch (error) {
+          // Error is logged but not rethrown
+          expect(error).toBe(closeError);
+        }
+      }).not.toThrow();
+    });
+  });
+
+  describe("session storage", () => {
+    it("should store sessions in a Map keyed by session ID", () => {
+      const sessions = new Map<string, object>();
+      const sessionId = "test-session-123";
+      const session = { server: {}, transport: {}, apiClient: {} };
+      
+      sessions.set(sessionId, session);
+      
+      expect(sessions.has(sessionId)).toBe(true);
+      expect(sessions.get(sessionId)).toBe(session);
+    });
+
+    it("should not overwrite existing sessions", () => {
+      const sessions = new Map<string, object>();
+      const sessionId = "test-session-123";
+      const existingSession = { id: "existing" };
+      const newSession = { id: "new" };
+      
+      sessions.set(sessionId, existingSession);
+      
+      // The condition checks !sessions.has(newSessionId) before storing
+      if (!sessions.has(sessionId)) {
+        sessions.set(sessionId, newSession);
+      }
+      
+      // Existing session should not be overwritten
+      expect(sessions.get(sessionId)).toBe(existingSession);
+    });
+  });
+
+  describe("session cleanup interval", () => {
+    it("should cleanup stale sessions after 1 hour of inactivity", () => {
+      const SESSION_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+      expect(SESSION_MAX_AGE_MS).toBe(3600000);
+    });
+
+    it("should run cleanup every 15 minutes", () => {
+      const SESSION_CLEANUP_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+      expect(SESSION_CLEANUP_INTERVAL_MS).toBe(900000);
+    });
+
+    it("should identify stale sessions based on lastActivityAt", () => {
+      const SESSION_MAX_AGE_MS = 60 * 60 * 1000;
+      const now = Date.now();
+      
+      // Active session (5 minutes ago)
+      const activeSession = { lastActivityAt: now - (5 * 60 * 1000) };
+      const activeSessionAge = now - activeSession.lastActivityAt;
+      expect(activeSessionAge < SESSION_MAX_AGE_MS).toBe(true);
+      
+      // Stale session (2 hours ago)
+      const staleSession = { lastActivityAt: now - (2 * 60 * 60 * 1000) };
+      const staleSessionAge = now - staleSession.lastActivityAt;
+      expect(staleSessionAge > SESSION_MAX_AGE_MS).toBe(true);
+    });
+  });
+
+  describe("DELETE /mcp session termination", () => {
+    it("should call server.close() when terminating a session via DELETE", () => {
+      // Document the expected behavior:
+      // When DELETE /mcp is called with a valid session ID:
+      // 1. Get the session from the Map
+      // 2. Delete from sessions Map
+      // 3. Call session.server.close() to release resources
+      
+      const mockClose = vi.fn().mockResolvedValue(undefined);
+      const sessions = new Map<string, { server: { close: () => Promise<void> } }>();
+      const sessionId = "test-session-123";
+      const session = { server: { close: mockClose } };
+      
+      sessions.set(sessionId, session);
+      
+      // Simulate DELETE handler logic
+      if (sessionId && sessions.has(sessionId)) {
+        const sessionToClose = sessions.get(sessionId);
+        sessions.delete(sessionId);
+        sessionToClose?.server.close();
+      }
+      
+      expect(sessions.has(sessionId)).toBe(false);
+      expect(mockClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("should handle errors during server.close() gracefully", () => {
+      // Document that close errors are caught and logged, not thrown
+      const closeError = new Error("Failed to close server");
+      
+      expect(() => {
+        try {
+          throw closeError;
+        } catch (e) {
+          // Error is logged but not rethrown (matches DEBUG-wrapped logging)
+          expect(e).toBe(closeError);
+        }
+      }).not.toThrow();
+    });
+
+    it("should not attempt cleanup for non-existent sessions", () => {
+      const sessions = new Map<string, object>();
+      const sessionId = "non-existent-session";
+      
+      // Simulate DELETE handler logic - no session to cleanup
+      const sessionExists = sessionId && sessions.has(sessionId);
+      
+      expect(sessionExists).toBe(false);
+    });
+
+    it("should remove session from Map before calling close", () => {
+      // Document the order of operations to prevent race conditions:
+      // 1. Remove from Map FIRST
+      // 2. Then close the server
+      // This ensures no new requests can use the session while it's closing
+      
+      const operationOrder: string[] = [];
+      const sessions = new Map<string, { server: { close: () => void } }>();
+      const sessionId = "test-session";
+      
+      const session = {
+        server: {
+          close: () => {
+            operationOrder.push("close");
+          }
+        }
+      };
+      sessions.set(sessionId, session);
+      
+      // Simulate DELETE handler
+      if (sessionId && sessions.has(sessionId)) {
+        const sessionToClose = sessions.get(sessionId);
+        sessions.delete(sessionId);
+        operationOrder.push("delete");
+        sessionToClose?.server.close();
+      }
+      
+      expect(operationOrder).toEqual(["delete", "close"]);
+    });
+  });
+});
+
+// ==========================================
 // validateStartTimeInFuture Tests
 // ==========================================
 

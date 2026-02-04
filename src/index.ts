@@ -6,21 +6,42 @@
  * A Model Context Protocol (MCP) server that enables AI assistants to interact
  * with the Sequentum web scraping platform.
  * 
- * Environment Variables:
- *   SEQUENTUM_API_URL - The base URL of the Sequentum API (required)
- *   SEQUENTUM_API_KEY - Your API key (required, format: sk-...)
+ * Supports two transport modes:
+ * 
+ * 1. STDIO MODE (default) - For Claude Code and local development
+ *    Environment Variables:
+ *      SEQUENTUM_API_URL - Base URL of the Sequentum API (default: https://dashboard.sequentum.com)
+ *      SEQUENTUM_API_KEY - Your API key (required, format: sk-...)
+ *      DEBUG - Set to '1' for debug logging
+ * 
+ * 2. HTTP MODE - For Claude Connectors (claude.ai, Claude Desktop)
+ *    Environment Variables:
+ *      TRANSPORT_MODE - Set to 'http' to enable HTTP mode
+ *      PORT - HTTP server port (default: 3000)
+ *      HOST - HTTP server host (default: 0.0.0.0)
+ *      SEQUENTUM_API_URL - Base URL of the Sequentum API (default: https://dashboard.sequentum.com)
+ *      DEBUG - Set to '1' for debug logging
+ *      MCP_CLIENT_ID - Fallback OAuth client_id if backend metadata is unavailable
+ *      REQUIRE_AUTH - Set to 'false' to bypass OAuth for testing (limited use: allows
+ *                     connecting to MCP server but tools will fail without valid tokens)
+ *    
+ *    Authentication: OAuth2 tokens are provided by Claude's infrastructure
+ *    via the Authorization header on each request.
  */
 
 import { createRequire } from "module";
+import { randomUUID } from "crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import express, { Request, Response } from "express";
 import { SequentumApiClient } from "./api-client.js";
-import { AgentApiModel, AgentRunStatus, ConfigType, ListAgentsRequest } from "./types.js";
+import { AgentApiModel, AgentRunFileApiModel, AgentRunStatus, AuthMode, ConfigType, ListAgentsRequest } from "./types.js";
 import { validateStartTimeInFuture } from "./validation.js";
 
 // Import version from package.json
@@ -33,20 +54,55 @@ const API_BASE_URL = process.env.SEQUENTUM_API_URL || DEFAULT_API_URL;
 const API_KEY = process.env.SEQUENTUM_API_KEY;
 const DEBUG = process.env.DEBUG === '1';
 
+// Transport configuration
+// - "stdio": For Claude Code and local development (default)
+// - "http": For Claude Connectors (claude.ai, Claude Desktop)
+const TRANSPORT_MODE = process.env.TRANSPORT_MODE || "stdio";
+const HTTP_PORT = parseInt(process.env.PORT || "3000", 10);
+const HTTP_HOST = process.env.HOST || "0.0.0.0";
+
+// Determine authentication mode based on transport
+// - stdio mode: Uses API Key (for local development and Claude Code)
+// - HTTP mode: Uses OAuth2 via Claude's infrastructure (for Claude Connectors)
+let authMode: AuthMode;
+
+if (TRANSPORT_MODE === "http") {
+  // HTTP mode: OAuth2 is required and handled by Claude's infrastructure
+  // Tokens will be passed in Authorization header of each request
+  authMode = "oauth2";
+  if (DEBUG) {
+    console.error(`[DEBUG] HTTP mode: OAuth2 tokens will be received via request headers`);
+  }
+} else {
+  // stdio mode: API Key is required
+  if (!API_KEY) {
+    console.error("Error: API Key required for stdio mode");
+    console.error('Set SEQUENTUM_API_KEY="sk-your-api-key-here"');
+    console.error("\nFor Claude Connectors (OAuth2), use HTTP mode:");
+    console.error('Set TRANSPORT_MODE="http"');
+    process.exit(1);
+  }
+  authMode = "apikey";
+  if (DEBUG) {
+    console.error(`[DEBUG] Using API Key authentication`);
+  }
+}
+
 // Debug: Log environment configuration (only when DEBUG=1)
 if (DEBUG) {
+  console.error(`[DEBUG] TRANSPORT_MODE = ${TRANSPORT_MODE}`);
   console.error(`[DEBUG] API_BASE_URL = ${API_BASE_URL}${!process.env.SEQUENTUM_API_URL ? ' (default)' : ''}`);
+  console.error(`[DEBUG] Auth Mode = ${authMode}`);
+  if (TRANSPORT_MODE === "http") {
+    console.error(`[DEBUG] HTTP_PORT = ${HTTP_PORT}`);
+    console.error(`[DEBUG] HTTP_HOST = ${HTTP_HOST}`);
+  }
 }
 
-if (!API_KEY) {
-  console.error("Error: SEQUENTUM_API_KEY environment variable is required");
-  console.error("Please set your API key (format: sk-...)");
-  console.error("\nExample:");
-  console.error('  export SEQUENTUM_API_KEY="sk-your-api-key-here"');
-  process.exit(1);
-}
-
-const client = new SequentumApiClient(API_BASE_URL, API_KEY);
+// Create API client
+// - stdio mode: initialized with API key
+// - HTTP mode: initialized without auth (tokens come via request headers)
+const client = new SequentumApiClient(API_BASE_URL, authMode === "apikey" ? API_KEY : null);
 
 // ==========================================
 // Input Validation Helpers
@@ -213,6 +269,9 @@ const tools: Tool[] = [
       },
       required: [],
     },
+    annotations: {
+      readOnlyHint: true,
+    },
   },
   {
     name: "get_agent",
@@ -228,6 +287,9 @@ const tools: Tool[] = [
         agentId: { type: "number", description: "The unique ID of the agent. Get this from list_agents or search_agents." },
       },
       required: ["agentId"],
+    },
+    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -245,6 +307,9 @@ const tools: Tool[] = [
         maxRecords: { type: "number", description: "Maximum results to return. Default: 50, Max: 1000." },
       },
       required: ["query"],
+    },
+    annotations: {
+      readOnlyHint: true,
     },
   },
 
@@ -265,6 +330,9 @@ const tools: Tool[] = [
       },
       required: ["agentId"],
     },
+    annotations: {
+      readOnlyHint: true,
+    },
   },
   {
     name: "get_run_status",
@@ -281,6 +349,9 @@ const tools: Tool[] = [
         runId: { type: "number", description: "The run ID returned by start_agent or found in get_agent_runs." },
       },
       required: ["agentId", "runId"],
+    },
+    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -304,6 +375,10 @@ const tools: Tool[] = [
       },
       required: ["agentId"],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+    },
   },
   {
     name: "stop_agent",
@@ -318,6 +393,10 @@ const tools: Tool[] = [
         runId: { type: "number", description: "The run ID to stop. Get this from start_agent response or get_agent_runs." },
       },
       required: ["agentId", "runId"],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
     },
   },
   {
@@ -354,6 +433,9 @@ const tools: Tool[] = [
       },
       required: ["agentId", "runId"],
     },
+    annotations: {
+      readOnlyHint: true,
+    },
   },
   {
     name: "get_file_download_url",
@@ -372,6 +454,9 @@ const tools: Tool[] = [
       },
       required: ["agentId", "runId", "fileId"],
     },
+    annotations: {
+      readOnlyHint: true,
+    },
   },
 
   // Version Tools
@@ -388,6 +473,9 @@ const tools: Tool[] = [
         agentId: { type: "number", description: "The unique ID of the agent." },
       },
       required: ["agentId"],
+    },
+    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -406,6 +494,10 @@ const tools: Tool[] = [
       },
       required: ["agentId", "versionNumber", "comments"],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+    },
   },
 
   // Schedule Tools
@@ -422,6 +514,9 @@ const tools: Tool[] = [
         agentId: { type: "number", description: "The unique ID of the agent." },
       },
       required: ["agentId"],
+    },
+    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -473,6 +568,10 @@ const tools: Tool[] = [
       },
       required: ["agentId", "name"],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+    },
   },
   {
     name: "delete_agent_schedule",
@@ -487,6 +586,10 @@ const tools: Tool[] = [
         scheduleId: { type: "number", description: "The schedule ID to delete. Get this from list_agent_schedules." },
       },
       required: ["agentId", "scheduleId"],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
     },
   },
   {
@@ -504,6 +607,9 @@ const tools: Tool[] = [
       },
       required: [],
     },
+    annotations: {
+      readOnlyHint: true,
+    },
   },
 
   // Billing/Credits Tools
@@ -514,6 +620,9 @@ const tools: Tool[] = [
       "Answers: 'How many credits do I have?', 'What's my balance?', 'Check credits'. " +
       "Returns: availableCredits, organizationId, retrievedAt timestamp.",
     inputSchema: { type: "object" as const, properties: {}, required: [] },
+    annotations: {
+      readOnlyHint: true,
+    },
   },
   {
     name: "get_spending_summary",
@@ -530,6 +639,9 @@ const tools: Tool[] = [
       },
       required: [],
     },
+    annotations: {
+      readOnlyHint: true,
+    },
   },
   {
     name: "get_credit_history",
@@ -545,6 +657,9 @@ const tools: Tool[] = [
       },
       required: [],
     },
+    annotations: {
+      readOnlyHint: true,
+    },
   },
 
   // Space Tools
@@ -556,6 +671,9 @@ const tools: Tool[] = [
       "Returns: Array of spaces with id, name, description. " +
       "USE THIS to find spaceId before using get_space_agents or filtering list_agents by space.",
     inputSchema: { type: "object" as const, properties: {}, required: [] },
+    annotations: {
+      readOnlyHint: true,
+    },
   },
   {
     name: "get_space",
@@ -569,6 +687,9 @@ const tools: Tool[] = [
         spaceId: { type: "number", description: "The unique ID of the space. Get this from list_spaces." },
       },
       required: ["spaceId"],
+    },
+    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -585,6 +706,9 @@ const tools: Tool[] = [
       },
       required: ["spaceId"],
     },
+    annotations: {
+      readOnlyHint: true,
+    },
   },
   {
     name: "search_space_by_name",
@@ -599,6 +723,9 @@ const tools: Tool[] = [
         name: { type: "string", description: "The space name to search for. Case-insensitive." },
       },
       required: ["name"],
+    },
+    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -615,6 +742,10 @@ const tools: Tool[] = [
         inputParameters: { type: "string", description: "Optional JSON string of input parameters to pass to ALL agents in the space." },
       },
       required: ["spaceId"],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
     },
   },
 
@@ -637,6 +768,9 @@ const tools: Tool[] = [
       },
       required: [],
     },
+    annotations: {
+      readOnlyHint: true,
+    },
   },
   {
     name: "get_records_summary",
@@ -654,6 +788,9 @@ const tools: Tool[] = [
       },
       required: [],
     },
+    annotations: {
+      readOnlyHint: true,
+    },
   },
   {
     name: "get_run_diagnostics",
@@ -669,6 +806,9 @@ const tools: Tool[] = [
         runId: { type: "number", description: "The run ID to diagnose. Get this from get_agent_runs." },
       },
       required: ["agentId", "runId"],
+    },
+    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -686,36 +826,43 @@ const tools: Tool[] = [
       },
       required: ["agentId"],
     },
+    annotations: {
+      readOnlyHint: true,
+    },
   },
 ];
 
 // ==========================================
-// Server Setup
+// Server Factory
 // ==========================================
 
-const server = new Server(
-  {
-    name: "sequentum-mcp-server",
-    version,
-  },
-  {
-    capabilities: {
-      tools: {},
+/**
+ * Create a new MCP Server instance with all handlers registered.
+ * Each session in HTTP mode needs its own Server instance.
+ * 
+ * @param apiClient - The API client to use for this server instance
+ * @returns Configured MCP Server instance
+ */
+function createMcpServer(apiClient: SequentumApiClient): Server {
+  const server = new Server(
+    {
+      name: "sequentum-mcp-server",
+      version,
     },
-  }
-);
+    {
+      capabilities: {
+        tools: {},
+      },
+    }
+  );
 
-// ==========================================
-// Request Handlers
-// ==========================================
+  // Handle tool listing
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools,
+  }));
 
-// Handle tool listing
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools,
-}));
-
-// Handle tool execution
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  // Handle tool execution
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   
   if (DEBUG) {
@@ -769,7 +916,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (DEBUG) {
           console.error(`[DEBUG] Calling getAllAgents with filters: ${JSON.stringify(filters)}`);
         }
-        const response = await client.getAllAgents(filters);
+        const response = await apiClient.getAllAgents(filters);
         
         if (DEBUG) {
           console.error(`[DEBUG] Response type: ${typeof response}, isArray: ${Array.isArray(response)}`);
@@ -830,7 +977,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "get_agent": {
         const params = args as Record<string, unknown>;
         const agentId = validateNumber(params, "agentId")!;
-        const agent = await client.getAgent(agentId);
+        const agent = await apiClient.getAgent(agentId);
         return {
           content: [
             {
@@ -848,7 +995,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error("Search query cannot be empty");
         }
         const maxRecords = validateNumber(params, "maxRecords", false);
-        const agents = await client.searchAgents(query, maxRecords);
+        const agents = await apiClient.searchAgents(query, maxRecords);
         return {
           content: [
             {
@@ -864,7 +1011,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const params = args as Record<string, unknown>;
         const agentId = validateNumber(params, "agentId")!;
         const maxRecords = validateNumber(params, "maxRecords", false);
-        const runs = await client.getAgentRuns(agentId, maxRecords);
+        const runs = await apiClient.getAgentRuns(agentId, maxRecords);
         return {
           content: [
             {
@@ -879,7 +1026,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const params = args as Record<string, unknown>;
         const agentId = validateNumber(params, "agentId")!;
         const runId = validateNumber(params, "runId")!;
-        const status = await client.getRunStatus(agentId, runId);
+        const status = await apiClient.getRunStatus(agentId, runId);
         return {
           content: [
             {
@@ -898,7 +1045,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const timeout = validateNumber(params, "timeout", false);
         const parallelism = validateNumber(params, "parallelism", false);
 
-        const result = await client.startAgent(agentId, {
+        const result = await apiClient.startAgent(agentId, {
           inputParameters,
           isRunSynchronously: isRunSynchronously ?? false,
           timeout: timeout ?? 60,
@@ -932,7 +1079,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const params = args as Record<string, unknown>;
         const agentId = validateNumber(params, "agentId")!;
         const runId = validateNumber(params, "runId")!;
-        await client.stopAgent(agentId, runId);
+        await apiClient.stopAgent(agentId, runId);
         return {
           content: [
             {
@@ -963,7 +1110,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const params = args as Record<string, unknown>;
         const agentId = validateNumber(params, "agentId")!;
         const runId = validateNumber(params, "runId")!;
-        const files = await client.getRunFiles(agentId, runId);
+        const files = await apiClient.getRunFiles(agentId, runId);
         
         if (files.length === 0) {
           return {
@@ -976,7 +1123,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         }
 
-        const summary = files.map((f) => ({
+        const summary = files.map((f: AgentRunFileApiModel) => ({
           id: f.id,
           name: f.name,
           fileType: f.fileType,
@@ -999,7 +1146,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const agentId = validateNumber(params, "agentId")!;
         const runId = validateNumber(params, "runId")!;
         const fileId = validateNumber(params, "fileId")!;
-        const result = await client.downloadRunFile(agentId, runId, fileId);
+        const result = await apiClient.downloadRunFile(agentId, runId, fileId);
         return {
           content: [
             {
@@ -1014,7 +1161,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "get_agent_versions": {
         const params = args as Record<string, unknown>;
         const agentId = validateNumber(params, "agentId")!;
-        const versions = await client.getAgentVersions(agentId);
+        const versions = await apiClient.getAgentVersions(agentId);
         return {
           content: [
             {
@@ -1030,7 +1177,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const agentId = validateNumber(params, "agentId")!;
         const versionNumber = validateNumber(params, "versionNumber")!;
         const comments = validateString(params, "comments")!;
-        await client.restoreAgentVersion(agentId, versionNumber, comments);
+        await apiClient.restoreAgentVersion(agentId, versionNumber, comments);
         return {
           content: [
             {
@@ -1045,7 +1192,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "list_agent_schedules": {
         const params = args as Record<string, unknown>;
         const agentId = validateNumber(params, "agentId")!;
-        const schedules = await client.getAgentSchedules(agentId);
+        const schedules = await apiClient.getAgentSchedules(agentId);
         return {
           content: [
             {
@@ -1096,7 +1243,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error("cronExpression is required when scheduleType is 3 (CRON)");
         }
 
-        const schedule = await client.createAgentSchedule(agentId, {
+        const schedule = await apiClient.createAgentSchedule(agentId, {
           name,
           scheduleType: effectiveScheduleType,
           startTime,
@@ -1122,7 +1269,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const params = args as Record<string, unknown>;
         const agentId = validateNumber(params, "agentId")!;
         const scheduleId = validateNumber(params, "scheduleId")!;
-        await client.deleteAgentSchedule(agentId, scheduleId);
+        await apiClient.deleteAgentSchedule(agentId, scheduleId);
         return {
           content: [
             {
@@ -1137,7 +1284,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const params = args as Record<string, unknown>;
         const startDate = validateString(params, "startDate", false);
         const endDate = validateString(params, "endDate", false);
-        const schedules = await client.getUpcomingSchedules(startDate, endDate);
+        const schedules = await apiClient.getUpcomingSchedules(startDate, endDate);
         return {
           content: [
             {
@@ -1150,7 +1297,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       // Billing/Credits Tools
       case "get_credits_balance": {
-        const balance = await client.getCreditsBalance();
+        const balance = await apiClient.getCreditsBalance();
         return {
           content: [
             {
@@ -1165,7 +1312,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const params = args as Record<string, unknown>;
         const startDate = validateString(params, "startDate", false);
         const endDate = validateString(params, "endDate", false);
-        const spending = await client.getSpendingSummary(startDate, endDate);
+        const spending = await apiClient.getSpendingSummary(startDate, endDate);
         return {
           content: [
             {
@@ -1180,7 +1327,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const params = args as Record<string, unknown>;
         const pageIndex = validateNumber(params, "pageIndex", false);
         const recordsPerPage = validateNumber(params, "recordsPerPage", false);
-        const history = await client.getCreditHistory(pageIndex, recordsPerPage);
+        const history = await apiClient.getCreditHistory(pageIndex, recordsPerPage);
         return {
           content: [
             {
@@ -1193,7 +1340,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       // Space Tools
       case "list_spaces": {
-        const spaces = await client.getAllSpaces();
+        const spaces = await apiClient.getAllSpaces();
         return {
           content: [
             {
@@ -1207,7 +1354,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "get_space": {
         const params = args as Record<string, unknown>;
         const spaceId = validateNumber(params, "spaceId")!;
-        const space = await client.getSpace(spaceId);
+        const space = await apiClient.getSpace(spaceId);
         return {
           content: [
             {
@@ -1221,7 +1368,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "get_space_agents": {
         const params = args as Record<string, unknown>;
         const spaceId = validateNumber(params, "spaceId")!;
-        const agents = await client.getSpaceAgents(spaceId);
+        const agents = await apiClient.getSpaceAgents(spaceId);
         return {
           content: [
             {
@@ -1235,7 +1382,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "search_space_by_name": {
         const params = args as Record<string, unknown>;
         const name = validateString(params, "name")!;
-        const space = await client.searchSpaceByName(name);
+        const space = await apiClient.searchSpaceByName(name);
         return {
           content: [
             {
@@ -1250,7 +1397,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const params = args as Record<string, unknown>;
         const spaceId = validateNumber(params, "spaceId")!;
         const inputParameters = validateString(params, "inputParameters", false);
-        const result = await client.runSpaceAgents(spaceId, inputParameters);
+        const result = await apiClient.runSpaceAgents(spaceId, inputParameters);
         return {
           content: [
             {
@@ -1268,7 +1415,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const endDate = validateString(params, "endDate", false);
         const status = validateString(params, "status", false);
         const includeDetails = validateBoolean(params, "includeDetails", false);
-        const summary = await client.getRunsSummary(startDate, endDate, status, includeDetails);
+        const summary = await apiClient.getRunsSummary(startDate, endDate, status, includeDetails);
         return {
           content: [
             {
@@ -1284,7 +1431,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const startDate = validateString(params, "startDate", false);
         const endDate = validateString(params, "endDate", false);
         const agentId = validateNumber(params, "agentId", false);
-        const summary = await client.getRecordsSummary(startDate, endDate, agentId);
+        const summary = await apiClient.getRecordsSummary(startDate, endDate, agentId);
         return {
           content: [
             {
@@ -1299,7 +1446,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const params = args as Record<string, unknown>;
         const agentId = validateNumber(params, "agentId")!;
         const runId = validateNumber(params, "runId")!;
-        const diagnostics = await client.getRunDiagnostics(agentId, runId);
+        const diagnostics = await apiClient.getRunDiagnostics(agentId, runId);
         return {
           content: [
             {
@@ -1313,7 +1460,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "get_latest_failure": {
         const params = args as Record<string, unknown>;
         const agentId = validateNumber(params, "agentId")!;
-        const diagnostics = await client.getLatestFailure(agentId);
+        const diagnostics = await apiClient.getLatestFailure(agentId);
         return {
           content: [
             {
@@ -1340,17 +1487,419 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
     };
   }
-});
+  });
+
+  return server;
+}
 
 // ==========================================
 // Main Entry Point
 // ==========================================
 
-async function main() {
+/**
+ * Start the MCP server in stdio mode (for Claude Code and local development)
+ */
+async function startStdioServer() {
+  console.error(`Authentication: API Key`);
+
+  // Create server instance and connect to stdio transport
+  const server = createMcpServer(client);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Sequentum MCP Server running on stdio");
   console.error(`Connected to: ${API_BASE_URL}`);
+}
+
+/**
+ * Session data for HTTP mode - stores server and transport per session
+ */
+interface HttpSession {
+  server: Server;
+  transport: StreamableHTTPServerTransport;
+  apiClient: SequentumApiClient;
+  createdAt: number;
+  lastActivityAt: number;
+}
+
+/**
+ * Start the MCP server in HTTP mode (for Claude Connectors)
+ * Uses Streamable HTTP transport as required by Claude Connectors Directory
+ * Creates a new Server instance per session for proper isolation.
+ */
+async function startHttpServer() {
+  const app = express();
+  
+  // Parse JSON bodies
+  app.use(express.json());
+
+  // CORS middleware - required for browser-based clients like MCP Inspector
+  app.use((req: Request, res: Response, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, mcp-session-id");
+    res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
+    
+    // Handle preflight requests
+    if (req.method === "OPTIONS") {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
+
+  // Store sessions by session ID - each session has its own server, transport, and API client
+  const sessions = new Map<string, HttpSession>();
+
+  // Clean up stale sessions every 15 minutes
+  // Sessions are removed if they haven't had activity in over 1 hour
+  const SESSION_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+  const SESSION_CLEANUP_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+  
+  setInterval(() => {
+    const now = Date.now();
+    let cleanedCount = 0;
+    for (const [sessionId, session] of sessions) {
+      if (now - session.lastActivityAt > SESSION_MAX_AGE_MS) {
+        sessions.delete(sessionId);
+        cleanedCount++;
+      }
+    }
+    if (cleanedCount > 0 || DEBUG) {
+      console.error(`[MCP] Session cleanup: removed ${cleanedCount} stale sessions, ${sessions.size} active`);
+    }
+  }, SESSION_CLEANUP_INTERVAL_MS);
+
+  /**
+   * Create a new HTTP session with MCP server, transport, and API client
+   */
+  async function createSession(token: string | null): Promise<HttpSession> {
+    const sessionApiClient = new SequentumApiClient(API_BASE_URL, null);
+    if (token) {
+      sessionApiClient.setAccessToken(token);
+    }
+    
+    const server = createMcpServer(sessionApiClient);
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+    });
+    
+    await server.connect(transport);
+    
+    const now = Date.now();
+    return { 
+      server, 
+      transport, 
+      apiClient: sessionApiClient, 
+      createdAt: now, 
+      lastActivityAt: now 
+    };
+  }
+
+  // Health check endpoint
+  app.get("/health", (_req: Request, res: Response) => {
+    res.json({ status: "ok", version, transport: "streamable-http" });
+  });
+
+  // OAuth2 Authorization Server Metadata (RFC 8414)
+  // This enables MCP clients to discover OAuth2 endpoints automatically
+  // OAuth URLs are derived from the API base URL (same server hosts both API and OAuth)
+  
+  // Cache for backend OAuth metadata (specifically client_id)
+  let cachedBackendMetadata: { client_id?: string; fetchedAt?: number } | null = null;
+  const METADATA_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+  /**
+   * Fetch OAuth metadata from the backend to get the client_id
+   * Results are cached for 5 minutes to avoid repeated requests.
+   * Falls back to MCP_CLIENT_ID environment variable if backend is unavailable.
+   */
+  async function fetchBackendOAuthMetadata(): Promise<{ client_id?: string }> {
+    // Return cached data if still valid
+    if (cachedBackendMetadata?.fetchedAt && 
+        Date.now() - cachedBackendMetadata.fetchedAt < METADATA_CACHE_TTL_MS) {
+      return cachedBackendMetadata;
+    }
+
+    try {
+      const metadataUrl = `${API_BASE_URL}/.well-known/oauth-authorization-server`;
+      if (DEBUG) {
+        console.error(`[DEBUG] Fetching OAuth metadata from backend: ${metadataUrl}`);
+      }
+      
+      const response = await fetch(metadataUrl);
+      if (response.ok) {
+        const metadata = await response.json();
+        cachedBackendMetadata = {
+          client_id: metadata.client_id,
+          fetchedAt: Date.now(),
+        };
+        if (DEBUG) {
+          console.error(`[DEBUG] Fetched client_id from backend: ${metadata.client_id}`);
+        }
+        return cachedBackendMetadata;
+      } else {
+        console.error(`[WARN] Backend OAuth metadata returned ${response.status}`);
+      }
+    } catch (error) {
+      console.error(`[WARN] Failed to fetch OAuth metadata from backend:`, error);
+    }
+
+    // Fallback to environment variable if backend fetch failed
+    const fallbackClientId = process.env.MCP_CLIENT_ID;
+    if (fallbackClientId) {
+      if (DEBUG) {
+        console.error(`[DEBUG] Using fallback MCP_CLIENT_ID from environment: ${fallbackClientId}`);
+      }
+      return { client_id: fallbackClientId };
+    }
+
+    return {};
+  }
+
+  /**
+   * Build OAuth metadata, fetching client_id from backend
+   */
+  async function buildOAuthMetadata(): Promise<Record<string, unknown>> {
+    const backendMetadata = await fetchBackendOAuthMetadata();
+    
+    const metadata: Record<string, unknown> = {
+      issuer: API_BASE_URL,
+      authorization_endpoint: `${API_BASE_URL}/api/oauth/authorize`,
+      token_endpoint: `${API_BASE_URL}/api/oauth/token`,
+      token_endpoint_auth_methods_supported: ["none"], // Public client (PKCE)
+      grant_types_supported: ["authorization_code", "refresh_token"],
+      response_types_supported: ["code"],
+      scopes_supported: ["agents:read", "runs:read", "spaces:read", "agents:write", "offline_access"],
+      code_challenge_methods_supported: ["S256"], // PKCE support
+      service_documentation: "https://docs.sequentum.com/api",
+      // RFC 8707: Resource Indicators - required for correct audience in tokens
+      resource: `${API_BASE_URL}/api/v1`,
+    };
+
+    // Include client_id only if available from backend
+    if (backendMetadata.client_id) {
+      metadata.client_id = backendMetadata.client_id;
+    }
+
+    return metadata;
+  }
+
+  // RFC 8414 standard path
+  app.get("/.well-known/oauth-authorization-server", async (_req: Request, res: Response) => {
+    const metadata = await buildOAuthMetadata();
+    res.json(metadata);
+  });
+
+  // MCP-specific compatibility path
+  app.get("/oauth/metadata", async (_req: Request, res: Response) => {
+    const metadata = await buildOAuthMetadata();
+    res.json(metadata);
+  });
+
+  // Log incoming requests for debugging (only when DEBUG is enabled)
+  if (DEBUG) {
+    app.use("/mcp", (req: Request, _res: Response, next) => {
+      console.error(`[MCP] ${req.method} ${req.url}`);
+      
+      // Redact sensitive headers before logging
+      const safeHeaders = { ...req.headers };
+      const sensitiveHeaders = ['authorization', 'cookie', 'x-api-key'];
+      for (const header of sensitiveHeaders) {
+        if (safeHeaders[header]) {
+          safeHeaders[header] = '[REDACTED]';
+        }
+      }
+      console.error(`[MCP] Headers: ${JSON.stringify(safeHeaders)}`);
+      
+      if (req.body && Object.keys(req.body).length > 0) {
+        console.error(`[MCP] Body: ${JSON.stringify(req.body)}`);
+      }
+      next();
+    });
+  }
+
+  // Handle POST requests for client-to-server messages
+  app.post("/mcp", async (req: Request, res: Response) => {
+    try {
+      // Get session ID from header
+      const sessionId = req.headers["mcp-session-id"] as string | undefined;
+      let session: HttpSession | undefined;
+
+      if (sessionId) {
+        session = sessions.get(sessionId);
+      }
+
+      // If no existing session, create a new one
+      if (!session) {
+        // Extract Bearer token from Authorization header
+        const authHeader = req.headers.authorization;
+        let token: string | null = null;
+        if (authHeader && authHeader.startsWith("Bearer ")) {
+          token = authHeader.substring(7);
+          if (DEBUG) {
+            console.error("[DEBUG] Bearer token received for new session");
+          }
+        }
+
+        // Require authentication for new sessions (unless REQUIRE_AUTH=false for testing)
+        const requireAuth = process.env.REQUIRE_AUTH !== "false";
+        if (requireAuth && !token) {
+          // Return 401 with WWW-Authenticate header pointing to OAuth metadata
+          // This triggers the OAuth flow in MCP clients
+          const authServerUrl = `${req.protocol}://${req.get("host")}/.well-known/oauth-authorization-server`;
+          res.setHeader("WWW-Authenticate", `Bearer resource="${authServerUrl}"`);
+          res.status(401).json({
+            jsonrpc: "2.0",
+            error: {
+              code: -32001,
+              message: "Authentication required",
+              data: {
+                authorizationServerMetadata: authServerUrl,
+              },
+            },
+            id: null,
+          });
+          console.error("[MCP] 401 - Authentication required, no Bearer token provided");
+          return;
+        }
+
+        // Create session with MCP server, transport, and API client
+        session = await createSession(token);
+        
+        // We'll store the session after handleRequest sets the session ID
+      }
+
+      // Update last activity timestamp for session keep-alive
+      session.lastActivityAt = Date.now();
+
+      // Update token if provided (in case of token refresh)
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.substring(7);
+        session.apiClient.setAccessToken(token);
+      }
+
+      // Handle the request
+      console.error(`[MCP] Processing request for session: ${sessionId || "new"}`);
+      await session.transport.handleRequest(req, res, req.body);
+      console.error(`[MCP] Request handled successfully`);
+      
+      // Store session if it's new (get session ID from response header)
+      if (!sessionId) {
+        const newSessionId = res.getHeader("mcp-session-id") as string;
+        console.error(`[MCP] New session ID from response: ${newSessionId}`);
+        if (newSessionId && !sessions.has(newSessionId)) {
+          sessions.set(newSessionId, session);
+          console.error(`[MCP] Session stored: ${newSessionId}`);
+        } else if (!newSessionId) {
+          // Cleanup orphaned session to prevent memory leaks
+          // This can happen if handleRequest fails to set a session ID
+          console.error(`[MCP] Warning: No session ID returned, cleaning up orphaned session`);
+          try {
+            await session.server.close();
+          } catch (closeError) {
+            console.error(`[MCP] Error closing orphaned session:`, closeError);
+          }
+        }
+      }
+
+    } catch (error) {
+      console.error("Error handling MCP POST request:", error);
+      if (!res.headersSent) {
+        // Sanitize error messages in production to avoid exposing internal details
+        const errorMessage = DEBUG 
+          ? (error instanceof Error ? error.message : "Internal server error")
+          : "Internal server error";
+        res.status(500).json({ 
+          jsonrpc: "2.0",
+          error: { 
+            code: -32603, 
+            message: errorMessage
+          },
+          id: null
+        });
+      }
+    }
+  });
+
+  // Handle GET requests for SSE streams
+  app.get("/mcp", async (req: Request, res: Response) => {
+    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+    
+    if (!sessionId) {
+      res.status(400).json({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Missing session ID for SSE stream" },
+        id: null
+      });
+      return;
+    }
+
+    const session = sessions.get(sessionId);
+    if (!session) {
+      res.status(400).json({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Invalid or expired session" },
+        id: null
+      });
+      return;
+    }
+
+    // Update last activity timestamp for session keep-alive
+    session.lastActivityAt = Date.now();
+
+    try {
+      await session.transport.handleRequest(req, res);
+    } catch (error) {
+      console.error("Error handling MCP GET request:", error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: "2.0",
+          error: { code: -32603, message: "SSE stream error" },
+          id: null
+        });
+      }
+    }
+  });
+
+  // Handle DELETE requests for session termination
+  app.delete("/mcp", async (req: Request, res: Response) => {
+    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+    
+    if (sessionId && sessions.has(sessionId)) {
+      const session = sessions.get(sessionId);
+      sessions.delete(sessionId);
+      try {
+        await session?.server.close();
+      } catch (e) {
+        if (DEBUG) {
+          console.error(`[DEBUG] Error closing session on DELETE:`, e);
+        }
+      }
+      if (DEBUG) {
+        console.error(`[DEBUG] Session terminated: ${sessionId}`);
+      }
+    }
+    
+    res.status(200).json({ message: "Session terminated" });
+  });
+
+  // Start the HTTP server
+  app.listen(HTTP_PORT, HTTP_HOST, () => {
+    console.error(`Sequentum MCP Server running on HTTP`);
+    console.error(`  URL: http://${HTTP_HOST}:${HTTP_PORT}/mcp`);
+    console.error(`  Transport: Streamable HTTP`);
+    console.error(`  Connected to: ${API_BASE_URL}`);
+    console.error(`  Health check: http://${HTTP_HOST}:${HTTP_PORT}/health`);
+  });
+}
+
+async function main() {
+  if (TRANSPORT_MODE === "http") {
+    await startHttpServer();
+  } else {
+    await startStdioServer();
+  }
 }
 
 main().catch((error) => {

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SequentumApiClient } from "./api-client.js";
+import { AuthenticationError } from "./types.js";
 
 describe("SequentumApiClient", () => {
   let client: SequentumApiClient;
@@ -1492,5 +1493,93 @@ describe("SequentumApiClient", () => {
         "No failures found for this agent"
       );
     });
+  });
+
+  describe("authentication error handling", () => {
+    it("should throw AuthenticationError when no auth configured", async () => {
+      const clientNoAuth = new SequentumApiClient(mockBaseUrl, null);
+      // No access token set either
+
+      await expect(clientNoAuth.getAllAgents()).rejects.toThrow(AuthenticationError);
+    });
+
+    it("should throw AuthenticationError with descriptive message", async () => {
+      const clientNoAuth = new SequentumApiClient(mockBaseUrl, null);
+
+      await expect(clientNoAuth.getAllAgents()).rejects.toThrow(
+        "No authentication configured"
+      );
+    });
+
+    it("should not throw AuthenticationError when API key is provided", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => [],
+      } as Response);
+
+      // Client with API key should work
+      await expect(client.getAllAgents()).resolves.not.toThrow();
+    });
+
+    it("should not throw AuthenticationError when access token is set", async () => {
+      const clientWithToken = new SequentumApiClient(mockBaseUrl, null);
+      clientWithToken.setAccessToken("test-bearer-token");
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => [],
+      } as Response);
+
+      await expect(clientWithToken.getAllAgents()).resolves.not.toThrow();
+    });
+  });
+});
+
+// ==========================================
+// AuthenticationError Class Tests
+// ==========================================
+
+describe("AuthenticationError", () => {
+  it("should be an instance of Error", () => {
+    const error = new AuthenticationError("Test message");
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(AuthenticationError);
+  });
+
+  it("should have correct name property", () => {
+    const error = new AuthenticationError();
+    expect(error.name).toBe("AuthenticationError");
+  });
+
+  it("should use default message when none provided", () => {
+    const error = new AuthenticationError();
+    expect(error.message).toBe("No authentication configured");
+  });
+
+  it("should use custom message when provided", () => {
+    const error = new AuthenticationError("Custom auth error");
+    expect(error.message).toBe("Custom auth error");
+  });
+
+  it("should be catchable as Error", () => {
+    const error = new AuthenticationError("Test");
+    
+    try {
+      throw error;
+    } catch (e) {
+      expect(e).toBeInstanceOf(Error);
+    }
+  });
+
+  it("should be distinguishable from generic Error", () => {
+    const authError = new AuthenticationError("Auth failed");
+    const genericError = new Error("Generic error");
+
+    expect(authError instanceof AuthenticationError).toBe(true);
+    expect(genericError instanceof AuthenticationError).toBe(false);
   });
 });
