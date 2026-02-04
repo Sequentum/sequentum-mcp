@@ -1832,11 +1832,19 @@ async function startHttpServer() {
   });
 
   // Handle DELETE requests for session termination
-  app.delete("/mcp", (req: Request, res: Response) => {
+  app.delete("/mcp", async (req: Request, res: Response) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     
     if (sessionId && sessions.has(sessionId)) {
+      const session = sessions.get(sessionId);
       sessions.delete(sessionId);
+      try {
+        await session?.server.close();
+      } catch (e) {
+        if (DEBUG) {
+          console.error(`[DEBUG] Error closing session on DELETE:`, e);
+        }
+      }
       if (DEBUG) {
         console.error(`[DEBUG] Session terminated: ${sessionId}`);
       }

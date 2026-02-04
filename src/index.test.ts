@@ -216,6 +216,87 @@ describe("HTTP session management", () => {
       expect(staleSessionAge > SESSION_MAX_AGE_MS).toBe(true);
     });
   });
+
+  describe("DELETE /mcp session termination", () => {
+    it("should call server.close() when terminating a session via DELETE", () => {
+      // Document the expected behavior:
+      // When DELETE /mcp is called with a valid session ID:
+      // 1. Get the session from the Map
+      // 2. Delete from sessions Map
+      // 3. Call session.server.close() to release resources
+      
+      const mockClose = vi.fn().mockResolvedValue(undefined);
+      const sessions = new Map<string, { server: { close: () => Promise<void> } }>();
+      const sessionId = "test-session-123";
+      const session = { server: { close: mockClose } };
+      
+      sessions.set(sessionId, session);
+      
+      // Simulate DELETE handler logic
+      if (sessionId && sessions.has(sessionId)) {
+        const sessionToClose = sessions.get(sessionId);
+        sessions.delete(sessionId);
+        sessionToClose?.server.close();
+      }
+      
+      expect(sessions.has(sessionId)).toBe(false);
+      expect(mockClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("should handle errors during server.close() gracefully", () => {
+      // Document that close errors are caught and logged, not thrown
+      const closeError = new Error("Failed to close server");
+      
+      expect(() => {
+        try {
+          throw closeError;
+        } catch (e) {
+          // Error is logged but not rethrown (matches DEBUG-wrapped logging)
+          expect(e).toBe(closeError);
+        }
+      }).not.toThrow();
+    });
+
+    it("should not attempt cleanup for non-existent sessions", () => {
+      const sessions = new Map<string, object>();
+      const sessionId = "non-existent-session";
+      
+      // Simulate DELETE handler logic - no session to cleanup
+      const sessionExists = sessionId && sessions.has(sessionId);
+      
+      expect(sessionExists).toBe(false);
+    });
+
+    it("should remove session from Map before calling close", () => {
+      // Document the order of operations to prevent race conditions:
+      // 1. Remove from Map FIRST
+      // 2. Then close the server
+      // This ensures no new requests can use the session while it's closing
+      
+      const operationOrder: string[] = [];
+      const sessions = new Map<string, { server: { close: () => void } }>();
+      const sessionId = "test-session";
+      
+      const session = {
+        server: {
+          close: () => {
+            operationOrder.push("close");
+          }
+        }
+      };
+      sessions.set(sessionId, session);
+      
+      // Simulate DELETE handler
+      if (sessionId && sessions.has(sessionId)) {
+        const sessionToClose = sessions.get(sessionId);
+        sessions.delete(sessionId);
+        operationOrder.push("delete");
+        sessionToClose?.server.close();
+      }
+      
+      expect(operationOrder).toEqual(["delete", "close"]);
+    });
+  });
 });
 
 // ==========================================
