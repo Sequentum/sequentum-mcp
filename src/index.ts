@@ -169,28 +169,30 @@ function validateBoolean(
 }
 
 function validateISODate(dateStr: string, field: string): void {
-  // Check for ISO 8601 format patterns (with or without time component)
-  const iso8601Regex =
-    /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:?\d{2})?)?$/;
-  if (!iso8601Regex.test(dateStr)) {
-    throw new Error(
-      `Invalid date format for '${field}': expected ISO 8601 format (e.g., '2026-01-01' or '2026-01-01T00:00:00Z')`
-    );
+  // Basic sanity check - ensure it's a non-empty string
+  if (!dateStr || typeof dateStr !== 'string' || dateStr.trim().length === 0) {
+    throw new Error(`Missing or invalid ${field}`);
   }
+  
+  // Let JavaScript's Date constructor handle the validation
   const date = new Date(dateStr);
   if (isNaN(date.getTime())) {
     throw new Error(
-      `Invalid date value for '${field}': the date could not be parsed`
+      `Invalid date format for '${field}': expected ISO 8601 format (e.g., '2026-01-01' or '2026-01-01T00:00:00Z')`
     );
   }
 }
 
 /**
  * Get default date range for billing queries (start of current month to now)
+ * Uses UTC to ensure consistent behavior across different server timezones
  */
 function getDefaultDateRange(): { startDate: string; endDate: string } {
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  // Use UTC methods to avoid timezone-dependent calculations
+  const startOfMonth = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
+  );
   return {
     startDate: startOfMonth.toISOString(),
     endDate: now.toISOString(),
