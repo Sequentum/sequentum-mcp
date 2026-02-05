@@ -1222,6 +1222,247 @@ describe("SequentumApiClient", () => {
     });
   });
 
+  describe("getAgentsUsage", () => {
+    it("should fetch agents usage with required parameters", async () => {
+      const mockResponse = {
+        agents: [
+          { agentId: 1, agentName: "Agent 1", cost: 100.5, spaceId: null },
+          { agentId: 2, agentName: "Agent 2", cost: 250.75, spaceId: 5 },
+        ],
+        totalRecordCount: 2,
+        totalCost: 351.25,
+        startDate: "2024-01-01T00:00:00Z",
+        endDate: "2024-01-31T23:59:59Z",
+      };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockResponse,
+      } as Response);
+
+      const result = await client.getAgentsUsage(
+        "2024-01-01T00:00:00Z",
+        "2024-01-31T23:59:59Z"
+      );
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/billing/agents?startDate=2024-01-01T00%3A00%3A00Z&endDate=2024-01-31T23%3A59%3A59Z",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockResponse);
+    });
+
+    it("should include optional parameters when provided", async () => {
+      const mockResponse = {
+        agents: [{ agentId: 1, agentName: "Test Agent", cost: 100, spaceId: null }],
+        totalRecordCount: 1,
+        totalCost: 100,
+        startDate: "2024-01-01T00:00:00Z",
+        endDate: "2024-01-31T23:59:59Z",
+      };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockResponse,
+      } as Response);
+
+      const result = await client.getAgentsUsage(
+        "2024-01-01T00:00:00Z",
+        "2024-01-31T23:59:59Z",
+        2, // pageIndex
+        100, // recordsPerPage
+        "cost", // sortColumn
+        1, // sortOrder
+        "Test", // name
+        "Server Time,Export GB" // usageTypes
+      );
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/billing/agents?startDate=2024-01-01T00%3A00%3A00Z&endDate=2024-01-31T23%3A59%3A59Z&pageIndex=2&recordsPerPage=100&sortColumn=cost&sortOrder=1&name=Test&usageTypes=Server+Time%2CExport+GB",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockResponse);
+    });
+  });
+
+  describe("getAgentCostBreakdown", () => {
+    it("should fetch agent cost breakdown with required parameters", async () => {
+      const mockResponse = {
+        agentId: 123,
+        agentName: "Test Agent",
+        labels: ["2024-01-01", "2024-01-02", "2024-01-03"],
+        usageTypes: [
+          {
+            type: "Server Time",
+            data: [10.5, 15.2, 12.8],
+            totalCost: 38.5,
+          },
+          {
+            type: "Export GB",
+            data: [5.0, 8.0, 6.5],
+            totalCost: 19.5,
+          },
+        ],
+        totalCost: 58.0,
+        startDate: "2024-01-01T00:00:00Z",
+        endDate: "2024-01-03T23:59:59Z",
+      };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockResponse,
+      } as Response);
+
+      const result = await client.getAgentCostBreakdown(
+        123,
+        "2024-01-01T00:00:00Z",
+        "2024-01-03T23:59:59Z"
+      );
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/billing/agents/123?startDate=2024-01-01T00%3A00%3A00Z&endDate=2024-01-03T23%3A59%3A59Z",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockResponse);
+    });
+
+    it("should include optional parameters when provided", async () => {
+      const mockResponse = {
+        agentId: 123,
+        agentName: "Test Agent",
+        labels: ["2024-01", "2024-02"],
+        usageTypes: [
+          {
+            type: "Server Time",
+            data: [150.5, 200.2],
+            totalCost: 350.7,
+          },
+        ],
+        totalCost: 350.7,
+        startDate: "2024-01-01T00:00:00Z",
+        endDate: "2024-02-28T23:59:59Z",
+      };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockResponse,
+      } as Response);
+
+      const result = await client.getAgentCostBreakdown(
+        123,
+        "2024-01-01T00:00:00Z",
+        "2024-02-28T23:59:59Z",
+        "month",
+        "Server Time"
+      );
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/billing/agents/123?startDate=2024-01-01T00%3A00%3A00Z&endDate=2024-02-28T23%3A59%3A59Z&timeUnit=month&usageTypes=Server+Time",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockResponse);
+    });
+  });
+
+  describe("getAgentRunsCost", () => {
+    it("should fetch agent runs cost with required parameters", async () => {
+      const mockResponse = {
+        runs: [
+          {
+            runId: 1001,
+            date: "2024-01-15T10:30:00Z",
+            startTime: "2024-01-15T10:30:00Z",
+            endTime: "2024-01-15T11:45:00Z",
+            cost: 25.5,
+            billingType: "Standard",
+          },
+          {
+            runId: 1002,
+            date: "2024-01-16T14:00:00Z",
+            startTime: "2024-01-16T14:00:00Z",
+            endTime: "2024-01-16T14:30:00Z",
+            cost: 10.2,
+            billingType: "Standard",
+          },
+        ],
+        totalRecordCount: 2,
+        totalCost: 35.7,
+        agentId: 123,
+        agentName: "Test Agent",
+      };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockResponse,
+      } as Response);
+
+      const result = await client.getAgentRunsCost(
+        123,
+        "2024-01-01T00:00:00Z",
+        "2024-01-31T23:59:59Z"
+      );
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/billing/agents/123/runs?startDate=2024-01-01T00%3A00%3A00Z&endDate=2024-01-31T23%3A59%3A59Z",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockResponse);
+    });
+
+    it("should include optional parameters when provided", async () => {
+      const mockResponse = {
+        runs: [
+          {
+            runId: 1003,
+            date: "2024-01-20T09:00:00Z",
+            startTime: "2024-01-20T09:00:00Z",
+            endTime: "2024-01-20T10:00:00Z",
+            cost: 50.0,
+            billingType: "Premium",
+          },
+        ],
+        totalRecordCount: 1,
+        totalCost: 50.0,
+        agentId: 123,
+        agentName: "Test Agent",
+      };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockResponse,
+      } as Response);
+
+      const result = await client.getAgentRunsCost(
+        123,
+        "2024-01-01T00:00:00Z",
+        "2024-01-31T23:59:59Z",
+        1, // pageIndex
+        50, // recordsPerPage
+        "cost", // sortColumn
+        1, // sortOrder
+        "Proxy Data" // usageTypes
+      );
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/billing/agents/123/runs?startDate=2024-01-01T00%3A00%3A00Z&endDate=2024-01-31T23%3A59%3A59Z&pageIndex=1&recordsPerPage=50&sortColumn=cost&sortOrder=1&usageTypes=Proxy+Data",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockResponse);
+    });
+  });
+
   // ==========================================
   // Space Operations Tests
   // ==========================================
