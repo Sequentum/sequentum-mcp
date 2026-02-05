@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Billing & Cost Analysis** tools for detailed agent cost tracking:
+  - `get_agents_usage` - Get all agents with their costs for a date range, with filtering and sorting options
+  - `get_agent_cost_breakdown` - Get cost breakdown by usage type for a specific agent over time (for charting)
+  - `get_agent_runs_cost` - Get individual run costs for a specific agent with detailed run information
+
 ## [1.0.2] - 2026-01-20
 
 ### Fixed

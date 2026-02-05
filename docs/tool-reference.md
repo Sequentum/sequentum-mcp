@@ -29,6 +29,9 @@ This document provides detailed documentation for all tools available in the Seq
   - [get_credits_balance](#get_credits_balance)
   - [get_spending_summary](#get_spending_summary)
   - [get_credit_history](#get_credit_history)
+  - [get_agents_usage](#get_agents_usage)
+  - [get_agent_cost_breakdown](#get_agent_cost_breakdown)
+  - [get_agent_runs_cost](#get_agent_runs_cost)
 - [Space Management](#space-management)
   - [list_spaces](#list_spaces)
   - [get_space](#get_space)
@@ -558,6 +561,109 @@ Array of transactions with `transactionType`, `amount`, `balance`, `created` dat
 Show credit history
 What were my credit transactions?
 When were credits added?
+```
+
+---
+
+### get_agents_usage
+
+Get all agents with their total costs for a date range, with filtering and sorting options.
+
+**Use this** to analyze which agents are costing the most, compare agent costs, or track spending by agent.
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `startDate` | string | No | Start date in ISO 8601 format. Defaults to start of current month. Example: `'2026-01-01'` or `'2026-01-01T00:00:00Z'`. |
+| `endDate` | string | No | End date in ISO 8601 format. Defaults to now. Example: `'2026-01-31'` or `'2026-01-31T23:59:59Z'`. |
+| `pageIndex` | number | No | Page number (1-based). Default: 1. |
+| `recordsPerPage` | number | No | Records per page. Default: 50, Max: 1000. |
+| `sortColumn` | string | No | Column to sort by: `'name'` or `'cost'`. Default: `'name'`. |
+| `sortOrder` | number | No | Sort order: 0 = ascending, 1 = descending. Default: 0. |
+| `name` | string | No | Filter by agent name (case-insensitive contains match). |
+| `usageTypes` | string | No | Filter by usage types (comma-separated). Example: `'Server Time,Export GB'`. |
+
+#### Returns
+
+Paginated list of agents with `agentId`, `agentName`, `cost`, `spaceId`, plus `totalRecordCount` and `totalCost`.
+
+**Usage types** available for filtering: `Server Time`, `Export GB`, `Agent Inputs`, `Proxy Data`, `Export CPM`.
+
+#### Example Prompts
+
+```
+Which agents cost the most?
+Show agent costs this month
+What did agent X cost in January?
+List agents by cost for last week
+```
+
+---
+
+### get_agent_cost_breakdown
+
+Get detailed cost breakdown by usage type for a specific agent over time, useful for visualizing costs in charts.
+
+**Use this** to understand what's driving costs for an agent (server time vs exports vs proxies), or to chart agent costs over time.
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `agentId` | number | Yes | The unique ID of the agent. |
+| `startDate` | string | No | Start date in ISO 8601 format. Defaults to start of current month. Example: `'2026-01-01'` or `'2026-01-01T00:00:00Z'`. |
+| `endDate` | string | No | End date in ISO 8601 format. Defaults to now. Example: `'2026-01-31'` or `'2026-01-31T23:59:59Z'`. |
+| `timeUnit` | string | No | Time unit for grouping: `'day'` or `'month'`. Default: `'day'`. |
+| `usageTypes` | string | No | Filter by usage types (comma-separated). Example: `'Server Time,Export GB'`. |
+
+#### Returns
+
+Cost data with `agentId`, `agentName`, date `labels` array, `usageTypes` array (each with type name, data points, totalCost), `totalCost`, `startDate`, `endDate`.
+
+The `labels` array corresponds to data points in each `usageTypes.data` array, making it ideal for charting.
+
+#### Example Prompts
+
+```
+What's causing agent X's costs?
+Show me cost breakdown for agent 123
+Chart agent costs by day
+What usage types cost the most for agent X?
+```
+
+---
+
+### get_agent_runs_cost
+
+Get individual run costs for a specific agent with detailed run information and filtering options.
+
+**Use this** to drill down into specific runs, identify expensive runs, or analyze run costs over time.
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `agentId` | number | Yes | The unique ID of the agent. |
+| `startDate` | string | No | Start date in ISO 8601 format. Defaults to start of current month. Example: `'2026-01-01'` or `'2026-01-01T00:00:00Z'`. |
+| `endDate` | string | No | End date in ISO 8601 format. Defaults to now. Example: `'2026-01-31'` or `'2026-01-31T23:59:59Z'`. |
+| `pageIndex` | number | No | Page number (1-based). Default: 1. |
+| `recordsPerPage` | number | No | Records per page. Default: 50, Max: 1000. |
+| `sortColumn` | string | No | Column to sort by: `'date'`, `'cost'`, or `'duration'`. Default: `'date'`. |
+| `sortOrder` | number | No | Sort order: 0 = ascending, 1 = descending. Default: 0. |
+| `usageTypes` | string | No | Filter by usage types (comma-separated). Example: `'Server Time,Proxy Data'`. |
+
+#### Returns
+
+Paginated list of runs with `runId`, `date`, `startTime`, `endTime`, `cost`, `billingType`, plus `agentId`, `agentName`, `totalRecordCount`, `totalCost`.
+
+#### Example Prompts
+
+```
+Which runs were most expensive?
+Show run costs for agent X
+What did run Y cost?
+List the 10 most expensive runs for agent X this month
 ```
 
 ---
