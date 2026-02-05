@@ -403,9 +403,11 @@ const tools: Tool[] = [
     name: "kill_agent",
     description:
       "Force-terminate an agent when stop_agent is not working. " +
-      "Only use if stop_agent was called but agent is still running/stopping. " +
+      "BEHAVIOR: First call initiates graceful stop (same as stop_agent). Second call forces immediate process termination if still stopping. " +
+      "USE WHEN: stop_agent was called but agent is still running/stopping and not responding. " +
       "Answers: 'Force kill stuck agent', 'Agent won't stop', 'Terminate unresponsive run'. " +
-      "REQUIRED: agentId and runId. Get runId from start_agent or get_agent_runs.",
+      "REQUIRED: agentId and runId. Get runId from start_agent or get_agent_runs. " +
+      "WARNING: This is a destructive operation that can forcefully terminate server processes.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -413,6 +415,10 @@ const tools: Tool[] = [
         runId: { type: "number", description: "The run ID to kill. Get from start_agent or get_agent_runs." },
       },
       required: ["agentId", "runId"],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
     },
   },
 
