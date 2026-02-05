@@ -24,7 +24,6 @@ vitest.config.ts
 # Documentation
 docs/
 *.md
-!package.json
 !package-lock.json
 CHANGELOG.md
 LICENSE
