@@ -1537,7 +1537,10 @@ async function startHttpServer() {
   
   // Trust X-Forwarded-Proto from reverse proxies (cloudflared, ngrok, etc.)
   // This ensures req.protocol returns 'https' when behind a TLS-terminating proxy
-  app.set('trust proxy', true);
+  // Trust X-Forwarded-Proto from reverse proxies (cloudflared, ngrok, etc.)
+  // This ensures req.protocol returns 'https' when behind a TLS-terminating proxy
+  // WARNING: Only safe if direct access to this server is blocked at the network level
+  app.set('trust proxy', process.env.TRUST_PROXY !== 'false');
   
   // Parse JSON bodies
   app.use(express.json());
