@@ -1707,11 +1707,9 @@ async function startHttpServer() {
   // Per MCP spec, the resource MUST be the MCP server's own canonical URL,
   // as MCP clients compute the expected resource from the URL they connect to.
   app.get("/.well-known/oauth-protected-resource", async (req: Request, res: Response) => {
-    const backendMetadata = await fetchBackendOAuthMetadata();
-    
     // The resource is this MCP server's own URL (origin)
     // MCP clients (e.g., Cursor) validate this matches the URL they connected to
-    const resourceUrl = `${req.protocol}://${req.get("host")}`;
+    const resourceUrl = new URL(`${req.protocol}://${req.get("host")}`).origin;
     
     const protectedResourceMetadata = {
       // The canonical URI of this MCP server (the protected resource)
@@ -1722,8 +1720,6 @@ async function startHttpServer() {
       scopes_supported: ["agents:read", "runs:read", "spaces:read", "agents:write", "offline_access"],
       // Bearer token is required
       bearer_methods_supported: ["header"],
-      // Include client_id if available from backend
-      ...(backendMetadata.client_id && { client_id: backendMetadata.client_id }),
     };
 
     res.json(protectedResourceMetadata);
@@ -1785,7 +1781,7 @@ async function startHttpServer() {
         if (requireAuth && !token) {
           // Return 401 with WWW-Authenticate header per RFC 9728 Section 5.1
           // The resource is this MCP server's own URL (the protected resource)
-          const mcpServerUrl = `${req.protocol}://${req.get("host")}`;
+          const mcpServerUrl = new URL(`${req.protocol}://${req.get("host")}`).origin;
           const wwwAuth = `Bearer resource="${mcpServerUrl}"`;
           const prmUrl = `${mcpServerUrl}/.well-known/oauth-protected-resource`;
           res.setHeader("WWW-Authenticate", wwwAuth);
