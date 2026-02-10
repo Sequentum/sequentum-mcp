@@ -1535,6 +1535,10 @@ interface HttpSession {
 async function startHttpServer() {
   const app = express();
   
+  // Trust X-Forwarded-Proto from reverse proxies (cloudflared, ngrok, etc.)
+  // This ensures req.protocol returns 'https' when behind a TLS-terminating proxy
+  app.set('trust proxy', true);
+  
   // Parse JSON bodies
   app.use(express.json());
 
@@ -1678,8 +1682,7 @@ async function startHttpServer() {
       scopes_supported: ["agents:read", "runs:read", "spaces:read", "agents:write", "offline_access"],
       code_challenge_methods_supported: ["S256"], // PKCE support
       service_documentation: "https://docs.sequentum.com/api",
-      // RFC 8707: Resource Indicators - required for correct audience in tokens
-      resource: `${API_BASE_URL}/api/v1`,
+      resource_indicators_supported: true,
     };
 
     // Include client_id only if available from backend
@@ -1690,10 +1693,37 @@ async function startHttpServer() {
     return metadata;
   }
 
-  // RFC 8414 standard path
+  // RFC 8414 standard path - Authorization Server Metadata
   app.get("/.well-known/oauth-authorization-server", async (_req: Request, res: Response) => {
     const metadata = await buildOAuthMetadata();
     res.json(metadata);
+  });
+
+  // RFC 9728 - Protected Resource Metadata (required by MCP spec 2025-06-18)
+  // This tells MCP clients which authorization server to use for this resource.
+  // Per MCP spec, the resource MUST be the MCP server's own canonical URL,
+  // as MCP clients compute the expected resource from the URL they connect to.
+  app.get("/.well-known/oauth-protected-resource", async (req: Request, res: Response) => {
+    const backendMetadata = await fetchBackendOAuthMetadata();
+    
+    // The resource is this MCP server's own URL (origin)
+    // MCP clients (e.g., Cursor) validate this matches the URL they connected to
+    const resourceUrl = `${req.protocol}://${req.get("host")}`;
+    
+    const protectedResourceMetadata = {
+      // The canonical URI of this MCP server (the protected resource)
+      resource: resourceUrl,
+      // Authorization servers that can issue tokens for this resource
+      authorization_servers: [API_BASE_URL],
+      // Scopes supported by this resource
+      scopes_supported: ["agents:read", "runs:read", "spaces:read", "agents:write", "offline_access"],
+      // Bearer token is required
+      bearer_methods_supported: ["header"],
+      // Include client_id if available from backend
+      ...(backendMetadata.client_id && { client_id: backendMetadata.client_id }),
+    };
+
+    res.json(protectedResourceMetadata);
   });
 
   // MCP-specific compatibility path
@@ -1750,21 +1780,25 @@ async function startHttpServer() {
         // Require authentication for new sessions (unless REQUIRE_AUTH=false for testing)
         const requireAuth = process.env.REQUIRE_AUTH !== "false";
         if (requireAuth && !token) {
-          // Return 401 with WWW-Authenticate header pointing to OAuth metadata
-          // This triggers the OAuth flow in MCP clients
-          const authServerUrl = `${req.protocol}://${req.get("host")}/.well-known/oauth-authorization-server`;
-          res.setHeader("WWW-Authenticate", `Bearer resource="${authServerUrl}"`);
-          res.status(401).json({
+          // Return 401 with WWW-Authenticate header per RFC 9728 Section 5.1
+          // The resource is this MCP server's own URL (the protected resource)
+          const mcpServerUrl = `${req.protocol}://${req.get("host")}`;
+          const wwwAuth = `Bearer resource="${mcpServerUrl}"`;
+          const prmUrl = `${mcpServerUrl}/.well-known/oauth-protected-resource`;
+          res.setHeader("WWW-Authenticate", wwwAuth);
+          const responseBody = {
             jsonrpc: "2.0",
             error: {
               code: -32001,
               message: "Authentication required",
               data: {
-                authorizationServerMetadata: authServerUrl,
+                // Point to Protected Resource Metadata on this MCP server
+                protectedResourceMetadata: prmUrl,
               },
             },
             id: null,
-          });
+          };
+          res.status(401).json(responseBody);
           console.error("[MCP] 401 - Authentication required, no Bearer token provided");
           return;
         }
@@ -1786,17 +1820,13 @@ async function startHttpServer() {
       }
 
       // Handle the request
-      console.error(`[MCP] Processing request for session: ${sessionId || "new"}`);
       await session.transport.handleRequest(req, res, req.body);
-      console.error(`[MCP] Request handled successfully`);
       
       // Store session if it's new (get session ID from response header)
       if (!sessionId) {
         const newSessionId = res.getHeader("mcp-session-id") as string;
-        console.error(`[MCP] New session ID from response: ${newSessionId}`);
         if (newSessionId && !sessions.has(newSessionId)) {
           sessions.set(newSessionId, session);
-          console.error(`[MCP] Session stored: ${newSessionId}`);
         } else if (!newSessionId) {
           // Cleanup orphaned session to prevent memory leaks
           // This can happen if handleRequest fails to set a session ID
