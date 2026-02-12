@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { validateStartTimeInFuture } from "./validation.js";
+import { buildOAuthMetadata } from "./oauth-metadata.js";
 
 /**
  * Tests for MCP handler behavior in index.ts
@@ -9,100 +10,47 @@ import { validateStartTimeInFuture } from "./validation.js";
  */
 
 // ==========================================
-// OAuth Metadata Fetch Tests
+// OAuth Authorization Server Metadata Tests
 // ==========================================
 
-describe("OAuth metadata client_id fetching", () => {
-  const originalEnv = process.env;
+describe("OAuth Authorization Server metadata (RFC 8414)", () => {
+  const API_BASE_URL = "https://dashboard.sequentum.com";
+  const metadata = buildOAuthMetadata(API_BASE_URL);
 
-  beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn());
-    // Reset environment
-    process.env = { ...originalEnv };
+  it("should advertise CIMD support (draft-ietf-oauth-client-id-metadata-document)", () => {
+    // Per MCP spec 2025-11-25, CIMD is the preferred dynamic client identification method.
+    // The authorization server signals support via client_id_metadata_document_supported: true.
+    // MCP clients check this flag to decide whether to use a URL as their client_id.
+    expect(metadata.client_id_metadata_document_supported).toBe(true);
   });
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-    process.env = originalEnv;
+  it("should include registration_endpoint as DCR fallback (RFC 7591)", () => {
+    // Dynamic Client Registration is kept as a fallback for clients that don't support CIMD.
+    // Per MCP spec priority: 1) Pre-registration 2) CIMD 3) DCR 4) Manual
+    expect(metadata.registration_endpoint).toBe(`${API_BASE_URL}/api/oauth/register`);
   });
 
-  describe("fallback to MCP_CLIENT_ID environment variable", () => {
-    it("should document that MCP_CLIENT_ID is used as fallback when backend fetch fails", () => {
-      // This test documents the expected behavior:
-      // When the backend fetch fails, the system should fall back to MCP_CLIENT_ID env var
-      
-      // The fetchBackendOAuthMetadata function:
-      // 1. Tries to fetch from ${API_BASE_URL}/.well-known/oauth-authorization-server
-      // 2. If successful, caches and returns the client_id
-      // 3. If failed, checks for MCP_CLIENT_ID environment variable
-      // 4. If env var exists, returns it as fallback
-      // 5. If no fallback, returns empty object
-      
-      const fallbackClientId = "mcp-fallback-client-id";
-      process.env.MCP_CLIENT_ID = fallbackClientId;
-      
-      // Verify env var is set correctly
-      expect(process.env.MCP_CLIENT_ID).toBe(fallbackClientId);
-    });
-
-    it("should return empty client_id when both backend and env var are unavailable", () => {
-      // When fetch fails and no MCP_CLIENT_ID is set, should return empty object
-      delete process.env.MCP_CLIENT_ID;
-      
-      // Verify no fallback exists
-      expect(process.env.MCP_CLIENT_ID).toBeUndefined();
-      
-      // The expected result when both sources fail:
-      const expectedResult = {};
-      expect(expectedResult).toEqual({});
-    });
-
-    it("should prefer backend client_id over environment variable", () => {
-      // This documents the priority:
-      // 1. Backend client_id (if available)
-      // 2. MCP_CLIENT_ID env var (fallback)
-      
-      const backendClientId = "mcp-from-backend";
-      const envClientId = "mcp-from-env";
-      
-      process.env.MCP_CLIENT_ID = envClientId;
-      
-      // When backend returns a client_id, that should be used
-      const backendResult = { client_id: backendClientId };
-      const envResult = { client_id: envClientId };
-      
-      // Backend takes priority
-      expect(backendResult.client_id).toBe(backendClientId);
-      expect(backendResult.client_id).not.toBe(envClientId);
-    });
+  it("should declare public client auth (PKCE) with token_endpoint_auth_methods_supported: ['none']", () => {
+    // All clients are public (no client_secret), protected by PKCE (S256)
+    expect(metadata.token_endpoint_auth_methods_supported).toEqual(["none"]);
+    expect(metadata.code_challenge_methods_supported).toEqual(["S256"]);
   });
 
-  describe("caching behavior", () => {
-    it("should cache backend metadata for 5 minutes (300000ms)", () => {
-      // Document the cache TTL
-      const METADATA_CACHE_TTL_MS = 5 * 60 * 1000;
-      expect(METADATA_CACHE_TTL_MS).toBe(300000);
-    });
+  it("should not include a static client_id in the metadata", () => {
+    // With CIMD/DCR, there is no pre-assigned client_id in server metadata.
+    // CIMD clients use their own URL; DCR clients register to get one.
+    expect(metadata).not.toHaveProperty("client_id");
+  });
 
-    it("should return cached data if within TTL", () => {
-      // Cached data should be returned without fetching if within TTL
-      const cachedData = { client_id: "cached-client-id", fetchedAt: Date.now() };
-      const cacheAge = Date.now() - cachedData.fetchedAt;
-      const CACHE_TTL = 5 * 60 * 1000;
-      
-      // Cache is fresh
-      expect(cacheAge < CACHE_TTL).toBe(true);
-    });
+  it("should support authorization_code and refresh_token grant types", () => {
+    expect(metadata.grant_types_supported).toContain("authorization_code");
+    expect(metadata.grant_types_supported).toContain("refresh_token");
+  });
 
-    it("should refetch if cache has expired", () => {
-      // If cache is older than TTL, should refetch
-      const CACHE_TTL = 5 * 60 * 1000;
-      const expiredFetchedAt = Date.now() - CACHE_TTL - 1000; // 1 second past expiry
-      const cacheAge = Date.now() - expiredFetchedAt;
-      
-      // Cache is stale
-      expect(cacheAge > CACHE_TTL).toBe(true);
-    });
+  it("should advertise resource indicator support (RFC 8707)", () => {
+    // Resource indicators allow clients to specify which resource they're requesting a token for.
+    // This is required by the MCP spec for proper token scoping.
+    expect(metadata.resource_indicators_supported).toBe(true);
   });
 });
 
