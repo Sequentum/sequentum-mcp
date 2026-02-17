@@ -21,7 +21,6 @@
  *      HOST - HTTP server host (default: 0.0.0.0)
  *      SEQUENTUM_API_URL - Base URL of the Sequentum API (default: https://dashboard.sequentum.com)
  *      DEBUG - Set to '1' for debug logging
- *      MCP_CLIENT_ID - Fallback OAuth client_id if backend metadata is unavailable
  *      REQUIRE_AUTH - Set to 'false' to bypass OAuth for testing (limited use: allows
  *                     connecting to MCP server but tools will fail without valid tokens)
  *    
@@ -43,6 +42,7 @@ import express, { Request, Response } from "express";
 import { SequentumApiClient } from "./api-client.js";
 import { AgentApiModel, AgentRunFileApiModel, AgentRunStatus, AuthMode, ConfigType, ListAgentsRequest } from "./types.js";
 import { validateStartTimeInFuture } from "./validation.js";
+import { buildOAuthMetadata, SUPPORTED_SCOPES } from "./oauth-metadata.js";
 
 // Import version from package.json
 const require = createRequire(import.meta.url);
@@ -166,6 +166,37 @@ function validateBoolean(
     );
   }
   return value;
+}
+
+function validateISODate(dateStr: string, field: string): void {
+  // Basic sanity check - ensure it's a non-empty string
+  if (!dateStr || typeof dateStr !== 'string' || dateStr.trim().length === 0) {
+    throw new Error(`Missing or invalid ${field}`);
+  }
+  
+  // Let JavaScript's Date constructor handle the validation
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) {
+    throw new Error(
+      `Invalid date format for '${field}': expected ISO 8601 format (e.g., '2026-01-01' or '2026-01-01T00:00:00Z')`
+    );
+  }
+}
+
+/**
+ * Get default date range for billing queries (start of current month to now)
+ * Uses UTC to ensure consistent behavior across different server timezones
+ */
+function getDefaultDateRange(): { startDate: string; endDate: string } {
+  const now = new Date();
+  // Use UTC methods to avoid timezone-dependent calculations
+  const startOfMonth = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
+  );
+  return {
+    startDate: startOfMonth.toISOString(),
+    endDate: now.toISOString(),
+  };
 }
 
 // ==========================================
@@ -662,6 +693,81 @@ const tools: Tool[] = [
         recordsPerPage: { type: "number", description: "Records per page. Default: 50, Max: 100." },
       },
       required: [],
+    },
+    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "get_agents_usage",
+    description:
+      "Get all agents with their total costs for a date range, with filtering and sorting options. " +
+      "USE THIS to analyze which agents are costing the most, compare agent costs, or track spending by agent. " +
+      "Answers: 'Which agents cost the most?', 'Show agent costs this month', 'What did agent X cost in January?'. " +
+      "Returns: Paginated list of agents with agentId, agentName, cost, spaceId, plus totalRecordCount and totalCost. " +
+      "TIP: Use sortColumn='cost' and sortOrder=1 to see most expensive agents first. Filter by name to find specific agents. Usage types: 'Server Time,Export GB,Agent Inputs,Proxy Data,Export CPM'.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        startDate: { type: "string", description: "Start date in ISO 8601 format. Defaults to start of current month. Example: '2026-01-01' or '2026-01-01T00:00:00Z'." },
+        endDate: { type: "string", description: "End date in ISO 8601 format. Defaults to now. Example: '2026-01-31' or '2026-01-31T23:59:59Z'." },
+        pageIndex: { type: "number", description: "Page number (1-based). Default: 1." },
+        recordsPerPage: { type: "number", description: "Records per page. Default: 50, Max: 1000." },
+        sortColumn: { type: "string", description: "Column to sort by: 'name' or 'cost'. Default: 'name'." },
+        sortOrder: { type: "number", description: "Sort order: 0 = ascending, 1 = descending. Default: 0." },
+        name: { type: "string", description: "Filter by agent name (case-insensitive contains match)." },
+        usageTypes: { type: "string", description: "Filter by usage types (comma-separated). Example: 'Server Time,Export GB'." },
+      },
+      required: [],
+    },
+    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "get_agent_cost_breakdown",
+    description:
+      "Get detailed cost breakdown by usage type for a specific agent over time, useful for visualizing costs in charts. " +
+      "USE THIS to understand what's driving costs for an agent (server time vs exports vs proxies), or to chart agent costs over time. " +
+      "Answers: 'What's causing agent X's costs?', 'Show me cost breakdown for agent 123', 'Chart agent costs by day'. " +
+      "Returns: Cost data with agentId, agentName, date labels array, usageTypes array (each with type name, data points, totalCost), totalCost, startDate, endDate. " +
+      "TIP: Use timeUnit='day' for daily granularity or 'month' for monthly. The labels array corresponds to data points in each usageTypes.data array.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agentId: { type: "number", description: "The unique ID of the agent." },
+        startDate: { type: "string", description: "Start date in ISO 8601 format. Defaults to start of current month. Example: '2026-01-01' or '2026-01-01T00:00:00Z'." },
+        endDate: { type: "string", description: "End date in ISO 8601 format. Defaults to now. Example: '2026-01-31' or '2026-01-31T23:59:59Z'." },
+        timeUnit: { type: "string", description: "Time unit for grouping: 'day' or 'month'. Default: 'day'." },
+        usageTypes: { type: "string", description: "Filter by usage types (comma-separated). Example: 'Server Time,Export GB'." },
+      },
+      required: ["agentId"],
+    },
+    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "get_agent_runs_cost",
+    description:
+      "Get individual run costs for a specific agent with detailed run information and filtering options. " +
+      "USE THIS to drill down into specific runs, identify expensive runs, or analyze run costs over time. " +
+      "Answers: 'Which runs were most expensive?', 'Show run costs for agent X', 'What did run Y cost?'. " +
+      "Returns: Paginated list of runs with runId, date, startTime, endTime, cost, billingType, plus agentId, agentName, totalRecordCount, totalCost. " +
+      "TIP: Sort by cost (sortColumn='cost', sortOrder=1) to find most expensive runs. Filter by usageTypes to see specific cost categories.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agentId: { type: "number", description: "The unique ID of the agent." },
+        startDate: { type: "string", description: "Start date in ISO 8601 format. Defaults to start of current month. Example: '2026-01-01' or '2026-01-01T00:00:00Z'." },
+        endDate: { type: "string", description: "End date in ISO 8601 format. Defaults to now. Example: '2026-01-31' or '2026-01-31T23:59:59Z'." },
+        pageIndex: { type: "number", description: "Page number (1-based). Default: 1." },
+        recordsPerPage: { type: "number", description: "Records per page. Default: 50, Max: 1000." },
+        sortColumn: { type: "string", description: "Column to sort by: 'date', 'cost', or 'duration'. Default: 'date'." },
+        sortOrder: { type: "number", description: "Sort order: 0 = ascending, 1 = descending. Default: 0." },
+        usageTypes: { type: "string", description: "Filter by usage types (comma-separated). Example: 'Server Time,Proxy Data'." },
+      },
+      required: ["agentId"],
     },
     annotations: {
       readOnlyHint: true,
@@ -1344,6 +1450,99 @@ function createMcpServer(apiClient: SequentumApiClient): Server {
         };
       }
 
+      case "get_agents_usage": {
+        const params = args as Record<string, unknown>;
+        const defaults = getDefaultDateRange();
+        const startDate = validateString(params, "startDate", false) ?? defaults.startDate;
+        const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
+        validateISODate(startDate, "startDate");
+        validateISODate(endDate, "endDate");
+        const pageIndex = validateNumber(params, "pageIndex", false);
+        const recordsPerPage = validateNumber(params, "recordsPerPage", false);
+        const sortColumn = validateString(params, "sortColumn", false);
+        const sortOrder = validateNumber(params, "sortOrder", false);
+        const name = validateString(params, "name", false);
+        const usageTypes = validateString(params, "usageTypes", false);
+        const result = await apiClient.getAgentsUsage(
+          startDate,
+          endDate,
+          pageIndex,
+          recordsPerPage,
+          sortColumn,
+          sortOrder,
+          name,
+          usageTypes
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "get_agent_cost_breakdown": {
+        const params = args as Record<string, unknown>;
+        const agentId = validateNumber(params, "agentId")!;
+        const defaults = getDefaultDateRange();
+        const startDate = validateString(params, "startDate", false) ?? defaults.startDate;
+        const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
+        validateISODate(startDate, "startDate");
+        validateISODate(endDate, "endDate");
+        const timeUnit = validateString(params, "timeUnit", false);
+        const usageTypes = validateString(params, "usageTypes", false);
+        const result = await apiClient.getAgentCostBreakdown(
+          agentId,
+          startDate,
+          endDate,
+          timeUnit,
+          usageTypes
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "get_agent_runs_cost": {
+        const params = args as Record<string, unknown>;
+        const agentId = validateNumber(params, "agentId")!;
+        const defaults = getDefaultDateRange();
+        const startDate = validateString(params, "startDate", false) ?? defaults.startDate;
+        const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
+        validateISODate(startDate, "startDate");
+        validateISODate(endDate, "endDate");
+        const pageIndex = validateNumber(params, "pageIndex", false);
+        const recordsPerPage = validateNumber(params, "recordsPerPage", false);
+        const sortColumn = validateString(params, "sortColumn", false);
+        const sortOrder = validateNumber(params, "sortOrder", false);
+        const usageTypes = validateString(params, "usageTypes", false);
+        const result = await apiClient.getAgentRunsCost(
+          agentId,
+          startDate,
+          endDate,
+          pageIndex,
+          recordsPerPage,
+          sortColumn,
+          sortOrder,
+          usageTypes
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
       // Space Tools
       case "list_spaces": {
         const spaces = await apiClient.getAllSpaces();
@@ -1615,88 +1814,9 @@ async function startHttpServer() {
   // This enables MCP clients to discover OAuth2 endpoints automatically
   // OAuth URLs are derived from the API base URL (same server hosts both API and OAuth)
   
-  // Cache for backend OAuth metadata (specifically client_id)
-  let cachedBackendMetadata: { client_id?: string; fetchedAt?: number } | null = null;
-  const METADATA_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-  /**
-   * Fetch OAuth metadata from the backend to get the client_id
-   * Results are cached for 5 minutes to avoid repeated requests.
-   * Falls back to MCP_CLIENT_ID environment variable if backend is unavailable.
-   */
-  async function fetchBackendOAuthMetadata(): Promise<{ client_id?: string }> {
-    // Return cached data if still valid
-    if (cachedBackendMetadata?.fetchedAt && 
-        Date.now() - cachedBackendMetadata.fetchedAt < METADATA_CACHE_TTL_MS) {
-      return cachedBackendMetadata;
-    }
-
-    try {
-      const metadataUrl = `${API_BASE_URL}/.well-known/oauth-authorization-server`;
-      if (DEBUG) {
-        console.error(`[DEBUG] Fetching OAuth metadata from backend: ${metadataUrl}`);
-      }
-      
-      const response = await fetch(metadataUrl);
-      if (response.ok) {
-        const metadata = await response.json();
-        cachedBackendMetadata = {
-          client_id: metadata.client_id,
-          fetchedAt: Date.now(),
-        };
-        if (DEBUG) {
-          console.error(`[DEBUG] Fetched client_id from backend: ${metadata.client_id}`);
-        }
-        return cachedBackendMetadata;
-      } else {
-        console.error(`[WARN] Backend OAuth metadata returned ${response.status}`);
-      }
-    } catch (error) {
-      console.error(`[WARN] Failed to fetch OAuth metadata from backend:`, error);
-    }
-
-    // Fallback to environment variable if backend fetch failed
-    const fallbackClientId = process.env.MCP_CLIENT_ID;
-    if (fallbackClientId) {
-      if (DEBUG) {
-        console.error(`[DEBUG] Using fallback MCP_CLIENT_ID from environment: ${fallbackClientId}`);
-      }
-      return { client_id: fallbackClientId };
-    }
-
-    return {};
-  }
-
-  /**
-   * Build OAuth metadata, fetching client_id from backend
-   */
-  async function buildOAuthMetadata(): Promise<Record<string, unknown>> {
-    const backendMetadata = await fetchBackendOAuthMetadata();
-    
-    const metadata: Record<string, unknown> = {
-      issuer: API_BASE_URL,
-      authorization_endpoint: `${API_BASE_URL}/api/oauth/authorize`,
-      token_endpoint: `${API_BASE_URL}/api/oauth/token`,
-      token_endpoint_auth_methods_supported: ["none"], // Public client (PKCE)
-      grant_types_supported: ["authorization_code", "refresh_token"],
-      response_types_supported: ["code"],
-      scopes_supported: ["agents:read", "runs:read", "spaces:read", "agents:write", "offline_access"],
-      code_challenge_methods_supported: ["S256"], // PKCE support
-      service_documentation: "https://docs.sequentum.com/api",
-      resource_indicators_supported: true,
-    };
-
-    // Include client_id only if available from backend
-    if (backendMetadata.client_id) {
-      metadata.client_id = backendMetadata.client_id;
-    }
-
-    return metadata;
-  }
-
   // RFC 8414 standard path - Authorization Server Metadata
-  app.get("/.well-known/oauth-authorization-server", async (_req: Request, res: Response) => {
-    const metadata = await buildOAuthMetadata();
+  app.get("/.well-known/oauth-authorization-server", (_req: Request, res: Response) => {
+    const metadata = buildOAuthMetadata(API_BASE_URL);
     res.json(metadata);
   });
 
@@ -1715,18 +1835,12 @@ async function startHttpServer() {
       // Authorization servers that can issue tokens for this resource
       authorization_servers: [API_BASE_URL],
       // Scopes supported by this resource
-      scopes_supported: ["agents:read", "runs:read", "spaces:read", "agents:write", "offline_access"],
+      scopes_supported: [...SUPPORTED_SCOPES],
       // Bearer token is required
       bearer_methods_supported: ["header"],
     };
 
     res.json(protectedResourceMetadata);
-  });
-
-  // MCP-specific compatibility path
-  app.get("/oauth/metadata", async (_req: Request, res: Response) => {
-    const metadata = await buildOAuthMetadata();
-    res.json(metadata);
   });
 
   // Log incoming requests for debugging (only when DEBUG is enabled)
