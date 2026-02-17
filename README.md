@@ -41,7 +41,7 @@ Add the Sequentum MCP server to your client with this configuration:
 2. Accept the OAuth authorization
 3. Grant access to the necessary permissions
 
-Once authenticated, all tools become available in your client. See the [full tool list](#available-tools) below.
+Once authenticated, all tools become available in your client. For client-specific setup details, see [Set Up Your Client](#set-up-your-client) below.
 
 ## Set Up Your Client
 
