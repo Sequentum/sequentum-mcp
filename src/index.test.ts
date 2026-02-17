@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { validateStartTimeInFuture } from "./validation.js";
-import { buildOAuthMetadata } from "./oauth-metadata.js";
+import { validateStartTimeInFuture } from "./utils/validation.js";
+import { buildOAuthMetadata } from "./utils/oauth-metadata.js";
 
 /**
  * Tests for MCP handler behavior in index.ts
@@ -499,7 +499,7 @@ describe("list_agents handler", () => {
       } as Response);
 
       // Import and use the API client directly to simulate handler behavior
-      const { SequentumApiClient } = await import("./api-client.js");
+      const { SequentumApiClient } = await import("./api/api-client.js");
       const client = new SequentumApiClient("https://test.example.com", "sk-test-key");
 
       // Call with default pagination (simulating handler behavior)
@@ -527,7 +527,7 @@ describe("list_agents handler", () => {
         json: async () => [],
       } as Response);
 
-      const { SequentumApiClient } = await import("./api-client.js");
+      const { SequentumApiClient } = await import("./api/api-client.js");
       const client = new SequentumApiClient("https://test.example.com", "sk-test-key");
 
       // Simulating handler always passing pagination defaults
@@ -551,7 +551,7 @@ describe("list_agents handler", () => {
         json: async () => [],
       } as Response);
 
-      const { SequentumApiClient } = await import("./api-client.js");
+      const { SequentumApiClient } = await import("./api/api-client.js");
       const client = new SequentumApiClient("https://test.example.com", "sk-test-key");
 
       // User provides explicit page 3
@@ -574,7 +574,7 @@ describe("list_agents handler", () => {
         json: async () => [],
       } as Response);
 
-      const { SequentumApiClient } = await import("./api-client.js");
+      const { SequentumApiClient } = await import("./api/api-client.js");
       const client = new SequentumApiClient("https://test.example.com", "sk-test-key");
 
       // User provides explicit 25 records per page
@@ -597,7 +597,7 @@ describe("list_agents handler", () => {
         json: async () => [],
       } as Response);
 
-      const { SequentumApiClient } = await import("./api-client.js");
+      const { SequentumApiClient } = await import("./api/api-client.js");
       const client = new SequentumApiClient("https://test.example.com", "sk-test-key");
 
       // Simulating handler with defaults + user-provided filters

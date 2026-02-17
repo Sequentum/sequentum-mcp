@@ -9,7 +9,7 @@ import {
   AgentRunFileApiModel,
   AgentVersionModel,
   StartAgentRequest,
-  ApiError,
+  ApiErrorBody,
   AgentScheduleApiModel,
   CreateScheduleRequest,
   UpcomingScheduleApiModel,
@@ -25,24 +25,46 @@ import {
   ListAgentsRequest,
   PaginatedAgentsResponse,
   AuthenticationError,
+  ApiRequestError,
+  RateLimitError,
 } from "./types.js";
+
+/** Default retry configuration for transient failures */
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_BASE_DELAY_MS = 1000;
+const DEFAULT_MAX_DELAY_MS = 30000;
+
+/** HTTP status codes that are safe to retry on idempotent requests */
+const RETRYABLE_STATUS_CODES = new Set([429, 502, 503, 504]);
 
 export class SequentumApiClient {
   private baseUrl: string;
   private apiKey: string | null;
   private accessToken: string | null = null;
   private requestTimeoutMs: number;
+  private maxRetries: number;
+  private baseDelayMs: number;
+  private maxDelayMs: number;
 
   /**
    * Create a new Sequentum API client
    * @param baseUrl - The base URL of the Sequentum API (e.g., https://dashboard.sequentum.com)
    * @param apiKey - The API key (sk-...) for authentication (optional if using OAuth2)
    * @param requestTimeoutMs - Request timeout in milliseconds (default: 30000)
+   * @param maxRetries - Maximum number of retries for transient failures (default: 3)
    */
-  constructor(baseUrl: string, apiKey: string | null = null, requestTimeoutMs: number = 30000) {
+  constructor(
+    baseUrl: string,
+    apiKey: string | null = null,
+    requestTimeoutMs: number = 30000,
+    maxRetries: number = DEFAULT_MAX_RETRIES
+  ) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.apiKey = apiKey;
     this.requestTimeoutMs = requestTimeoutMs;
+    this.maxRetries = maxRetries;
+    this.baseDelayMs = DEFAULT_BASE_DELAY_MS;
+    this.maxDelayMs = DEFAULT_MAX_DELAY_MS;
   }
 
   /**
@@ -73,130 +95,251 @@ export class SequentumApiClient {
     throw new AuthenticationError("No authentication configured. Set either an API key or OAuth2 access token.");
   }
 
+  // ==========================================
+  // Error Parsing
+  // ==========================================
+
   /**
-   * Make an authenticated request to the API
+   * Parse an error response body from the Sequentum API.
+   *
+   * The API returns errors in two formats:
+   *   - BadRequestError / InternalServerError: { statusCode, statusDescription, message, severity }
+   *   - ProblemDetails (RFC 7807):             { type, title, status, detail, instance }
+   *
+   * This method tries both formats and returns a human-readable message.
+   */
+  private parseErrorBody(body: ApiErrorBody): string {
+    // Try BadRequestError / InternalServerError format first (has 'message')
+    if (body.message) {
+      return body.message;
+    }
+    // Try ProblemDetails (RFC 7807) format (has 'detail' or 'title')
+    if (body.detail) {
+      return body.title ? `${body.title}: ${body.detail}` : body.detail;
+    }
+    if (body.title) {
+      return body.title;
+    }
+    // Try statusDescription as last resort
+    if (body.statusDescription) {
+      return body.statusDescription;
+    }
+    return "";
+  }
+
+  /**
+   * Parse the Retry-After header value into seconds.
+   * Supports both delta-seconds (e.g. "120") and HTTP-date formats.
+   * @returns seconds to wait, or null if header is missing/unparseable
+   */
+  private parseRetryAfter(response: Response): number | null {
+    const header = response.headers.get("retry-after");
+    if (!header) return null;
+
+    // Try numeric (delta-seconds)
+    const seconds = Number(header);
+    if (!isNaN(seconds) && seconds >= 0) {
+      return seconds;
+    }
+
+    // Try HTTP-date
+    const date = new Date(header);
+    if (!isNaN(date.getTime())) {
+      const delayMs = date.getTime() - Date.now();
+      return Math.max(0, Math.ceil(delayMs / 1000));
+    }
+
+    return null;
+  }
+
+  /**
+   * Build a typed error from an HTTP error response.
+   * Reads the response body, parses it as JSON (handling both API error formats),
+   * and returns the appropriate error class.
+   */
+  private async buildErrorFromResponse(response: Response, endpoint: string): Promise<ApiRequestError> {
+    let errorMessage = `API Error ${response.status}: ${response.statusText}`;
+
+    try {
+      const errorText = await response.text();
+      if (errorText) {
+        try {
+          const errorJson = JSON.parse(errorText) as ApiErrorBody;
+          const parsed = this.parseErrorBody(errorJson);
+          if (parsed) {
+            errorMessage = parsed;
+          }
+        } catch {
+          // Not JSON — use raw text (but cap length to avoid huge HTML error pages)
+          errorMessage = errorText.length > 500 ? errorText.substring(0, 500) + "..." : errorText;
+        }
+      }
+    } catch {
+      // Could not read body at all — use default message
+    }
+
+    // Return specialised subclass for 429
+    if (response.status === 429) {
+      const retryAfter = this.parseRetryAfter(response);
+      return new RateLimitError(errorMessage, endpoint, retryAfter);
+    }
+
+    return new ApiRequestError(response.status, response.statusText, errorMessage, endpoint);
+  }
+
+  // ==========================================
+  // Core HTTP Methods
+  // ==========================================
+
+  /**
+   * Calculate delay for exponential backoff with jitter.
+   * @param attempt - 0-based attempt number
+   * @param retryAfterSeconds - Optional Retry-After hint from the server
+   */
+  private getRetryDelay(attempt: number, retryAfterSeconds: number | null): number {
+    if (retryAfterSeconds !== null && retryAfterSeconds > 0) {
+      // Respect Retry-After from server, capped at maxDelayMs
+      return Math.min(retryAfterSeconds * 1000, this.maxDelayMs);
+    }
+    // Exponential backoff: base * 2^attempt, with ±25% jitter
+    const exponential = this.baseDelayMs * Math.pow(2, attempt);
+    const jitter = exponential * (0.75 + Math.random() * 0.5);
+    return Math.min(jitter, this.maxDelayMs);
+  }
+
+  /**
+   * Sleep for the given number of milliseconds.
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Core HTTP method used by both request<T>() and requestVoid().
+   * Handles authentication, timeout, error parsing, and automatic retry
+   * for transient failures (429, 502, 503, 504).
+   *
+   * @param endpoint - API path (e.g. "/api/v1/agent/all")
+   * @param options - fetch() options (method, body, etc.)
+   * @returns The raw Response object on success
+   * @throws ApiRequestError (or subclass) on HTTP errors after retries are exhausted
+   * @throws AuthenticationError if no credentials are configured
+   * @throws Error on timeout or network failure
+   */
+  private async fetchWithRetry(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<Response> {
+    const url = `${this.baseUrl}${endpoint}`;
+    const headers: Record<string, string> = {
+      Authorization: this.getAuthorizationHeader(),
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...(options.headers as Record<string, string>),
+    };
+
+    const method = (options.method || "GET").toUpperCase();
+    // Only retry on idempotent methods (GET, HEAD, PUT, DELETE, OPTIONS)
+    // POST is NOT retried to avoid duplicate side effects (e.g. starting an agent twice)
+    const isIdempotent = method !== "POST";
+    const maxAttempts = isIdempotent ? this.maxRetries + 1 : 1;
+
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+
+      try {
+        const response = await fetch(url, {
+          ...options,
+          headers,
+          signal: controller.signal,
+        });
+
+        if (response.ok) {
+          return response;
+        }
+
+        // Build typed error from response
+        const error = await this.buildErrorFromResponse(response, endpoint);
+
+        // Don't retry auth errors (401/403) — they won't resolve with retries
+        if (error.isUnauthorized || error.isForbidden) {
+          throw error;
+        }
+
+        // Check if this status code is retryable
+        if (RETRYABLE_STATUS_CODES.has(response.status) && attempt < maxAttempts - 1) {
+          const retryAfter = error instanceof RateLimitError ? error.retryAfterSeconds : null;
+          const delay = this.getRetryDelay(attempt, retryAfter);
+          lastError = error;
+          await this.sleep(delay);
+          continue;
+        }
+
+        // Non-retryable error — throw immediately
+        throw error;
+      } catch (error) {
+        if (error instanceof ApiRequestError || error instanceof AuthenticationError) {
+          throw error;
+        }
+        if (error instanceof Error && error.name === "AbortError") {
+          const timeoutError = new Error(`Request timeout after ${this.requestTimeoutMs}ms: ${endpoint}`);
+          // Retry timeouts on idempotent requests
+          if (attempt < maxAttempts - 1) {
+            lastError = timeoutError;
+            const delay = this.getRetryDelay(attempt, null);
+            await this.sleep(delay);
+            continue;
+          }
+          throw timeoutError;
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    // Should not reach here, but just in case
+    throw lastError || new Error(`Request failed after ${maxAttempts} attempts: ${endpoint}`);
+  }
+
+  /**
+   * Make an authenticated request to the API and parse the JSON response.
+   * Includes automatic retry for transient failures (429, 502, 503, 504) on
+   * idempotent methods.
    */
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`;
-    const headers: Record<string, string> = {
-      Authorization: this.getAuthorizationHeader(),
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      ...(options.headers as Record<string, string>),
-    };
+    const response = await this.fetchWithRetry(endpoint, options);
 
-    // Setup timeout using AbortController
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs);
-
-    try {
-      const response = await fetch(url, {
-        ...options,
-        headers,
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        let errorMessage = `API Error ${response.status}: ${response.statusText}`;
-        
-        try {
-          const errorText = await response.text();
-          if (errorText) {
-            try {
-              const errorJson = JSON.parse(errorText) as ApiError;
-              if (errorJson.message) {
-                errorMessage = errorJson.message;
-              }
-            } catch {
-              errorMessage = errorText;
-            }
-          }
-        } catch {
-          // Use default error message
-        }
-
-        throw new Error(errorMessage);
-      }
-
-      // Handle redirect for file downloads
-      if (response.redirected) {
-        return { redirectUrl: response.url } as T;
-      }
-
-      const contentType = response.headers.get("content-type");
-      if (contentType?.includes("application/json")) {
-        return response.json() as Promise<T>;
-      }
-
-      return response.text() as unknown as T;
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new Error(`Request timeout after ${this.requestTimeoutMs}ms: ${endpoint}`);
-      }
-      throw error;
-    } finally {
-      clearTimeout(timeoutId);
+    // Handle redirect for file downloads
+    if (response.redirected) {
+      return { redirectUrl: response.url } as T;
     }
+
+    const contentType = response.headers.get("content-type");
+    if (contentType?.includes("application/json")) {
+      return response.json() as Promise<T>;
+    }
+
+    return response.text() as unknown as T;
   }
 
   /**
-   * Make an authenticated request that doesn't expect a response body
+   * Make an authenticated request that doesn't expect a response body.
+   * Includes automatic retry for transient failures (429, 502, 503, 504) on
+   * idempotent methods.
    */
   private async requestVoid(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<void> {
-    const url = `${this.baseUrl}${endpoint}`;
-    const headers: Record<string, string> = {
-      Authorization: this.getAuthorizationHeader(),
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      ...(options.headers as Record<string, string>),
-    };
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs);
-
-    try {
-      const response = await fetch(url, {
-        ...options,
-        headers,
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        let errorMessage = `API Error ${response.status}: ${response.statusText}`;
-
-        try {
-          const errorText = await response.text();
-          if (errorText) {
-            try {
-              const errorJson = JSON.parse(errorText) as ApiError;
-              if (errorJson.message) {
-                errorMessage = errorJson.message;
-              }
-            } catch {
-              errorMessage = errorText;
-            }
-          }
-        } catch {
-          // Use default error message
-        }
-
-        throw new Error(errorMessage);
-      }
-      // 204 No Content or any success status - just return
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new Error(`Request timeout after ${this.requestTimeoutMs}ms: ${endpoint}`);
-      }
-      throw error;
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    await this.fetchWithRetry(endpoint, options);
+    // 204 No Content or any success status — just return
   }
 
   // ==========================================
@@ -640,7 +783,7 @@ export class SequentumApiClient {
     const params = new URLSearchParams();
     if (startDate) params.append("startDate", startDate);
     if (endDate) params.append("endDate", endDate);
-    if (agentId) params.append("agentId", String(agentId));
+    if (agentId !== undefined) params.append("agentId", String(agentId));
     const query = params.toString() ? `?${params.toString()}` : "";
     return this.request<RecordsSummaryApiModel>(
       `/api/v1/analytics/records/summary${query}`
@@ -671,6 +814,3 @@ export class SequentumApiClient {
     );
   }
 }
-
-
-
