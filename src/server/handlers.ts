@@ -9,11 +9,18 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { SequentumApiClient } from "../api/api-client.js";
 import { AgentApiModel, AgentRunFileApiModel, AgentRunStatus, ConfigType, ListAgentsRequest, PaginatedAgentsResponse, ApiRequestError, RateLimitError, AuthenticationError } from "../api/types.js";
 import { validateStartTimeInFuture } from "../utils/validation.js";
 import { tools } from "./tools.js";
+import { resources, resourceTemplates, readResource } from "./resources.js";
+import { prompts, getPromptMessages } from "./prompts.js";
 
 // ==========================================
 // Input Validation Helpers
@@ -206,6 +213,8 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
     {
       capabilities: {
         tools: {},
+        resources: {},
+        prompts: {},
       },
     }
   );
@@ -867,6 +876,56 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
         isError: true,
       };
     }
+  });
+
+  // ==========================================
+  // Resource Handlers
+  // ==========================================
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources,
+  }));
+
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+    resourceTemplates,
+  }));
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const { uri } = request.params;
+
+    if (DEBUG) {
+      console.error(`[DEBUG] Resource read: ${uri}`);
+    }
+
+    try {
+      const content = await readResource(uri, apiClient);
+      return {
+        contents: [content],
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
+      throw new Error(`Failed to read resource ${uri}: ${errorMessage}`);
+    }
+  });
+
+  // ==========================================
+  // Prompt Handlers
+  // ==========================================
+
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts,
+  }));
+
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+
+    if (DEBUG) {
+      console.error(`[DEBUG] Prompt requested: ${name}`);
+      console.error(`[DEBUG] Args: ${JSON.stringify(args)}`);
+    }
+
+    const messages = getPromptMessages(name, args);
+    return { messages };
   });
 
   return server;
