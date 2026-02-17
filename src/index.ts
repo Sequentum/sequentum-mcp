@@ -21,7 +21,6 @@
  *      HOST - HTTP server host (default: 0.0.0.0)
  *      SEQUENTUM_API_URL - Base URL of the Sequentum API (default: https://dashboard.sequentum.com)
  *      DEBUG - Set to '1' for debug logging
- *      MCP_CLIENT_ID - Fallback OAuth client_id if backend metadata is unavailable
  *      REQUIRE_AUTH - Set to 'false' to bypass OAuth for testing (limited use: allows
  *                     connecting to MCP server but tools will fail without valid tokens)
  *    
@@ -43,6 +42,7 @@ import express, { Request, Response } from "express";
 import { SequentumApiClient } from "./api-client.js";
 import { AgentApiModel, AgentRunFileApiModel, AgentRunStatus, AuthMode, ConfigType, ListAgentsRequest } from "./types.js";
 import { validateStartTimeInFuture } from "./validation.js";
+import { buildOAuthMetadata, SUPPORTED_SCOPES } from "./oauth-metadata.js";
 
 // Import version from package.json
 const require = createRequire(import.meta.url);
@@ -434,9 +434,11 @@ const tools: Tool[] = [
     name: "kill_agent",
     description:
       "Force-terminate an agent when stop_agent is not working. " +
-      "Only use if stop_agent was called but agent is still running/stopping. " +
+      "BEHAVIOR: First call initiates graceful stop (same as stop_agent). Second call forces immediate process termination if still stopping. " +
+      "USE WHEN: stop_agent was called but agent is still running/stopping and not responding. " +
       "Answers: 'Force kill stuck agent', 'Agent won't stop', 'Terminate unresponsive run'. " +
-      "REQUIRED: agentId and runId. Get runId from start_agent or get_agent_runs.",
+      "REQUIRED: agentId and runId. Get runId from start_agent or get_agent_runs. " +
+      "WARNING: This is a destructive operation that can forcefully terminate server processes.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -444,6 +446,10 @@ const tools: Tool[] = [
         runId: { type: "number", description: "The run ID to kill. Get from start_agent or get_agent_runs." },
       },
       required: ["agentId", "runId"],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
     },
   },
 
@@ -1728,6 +1734,11 @@ interface HttpSession {
 async function startHttpServer() {
   const app = express();
   
+  // Trust X-Forwarded-Proto from reverse proxies (cloudflared, ngrok, etc.)
+  // This ensures req.protocol returns 'https' when behind a TLS-terminating proxy
+  // WARNING: Only safe if direct access to this server is blocked at the network level
+  app.set('trust proxy', process.env.TRUST_PROXY !== 'false');
+  
   // Parse JSON bodies
   app.use(express.json());
 
@@ -1803,96 +1814,33 @@ async function startHttpServer() {
   // This enables MCP clients to discover OAuth2 endpoints automatically
   // OAuth URLs are derived from the API base URL (same server hosts both API and OAuth)
   
-  // Cache for backend OAuth metadata (specifically client_id)
-  let cachedBackendMetadata: { client_id?: string; fetchedAt?: number } | null = null;
-  const METADATA_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-  /**
-   * Fetch OAuth metadata from the backend to get the client_id
-   * Results are cached for 5 minutes to avoid repeated requests.
-   * Falls back to MCP_CLIENT_ID environment variable if backend is unavailable.
-   */
-  async function fetchBackendOAuthMetadata(): Promise<{ client_id?: string }> {
-    // Return cached data if still valid
-    if (cachedBackendMetadata?.fetchedAt && 
-        Date.now() - cachedBackendMetadata.fetchedAt < METADATA_CACHE_TTL_MS) {
-      return cachedBackendMetadata;
-    }
-
-    try {
-      const metadataUrl = `${API_BASE_URL}/.well-known/oauth-authorization-server`;
-      if (DEBUG) {
-        console.error(`[DEBUG] Fetching OAuth metadata from backend: ${metadataUrl}`);
-      }
-      
-      const response = await fetch(metadataUrl);
-      if (response.ok) {
-        const metadata = await response.json();
-        cachedBackendMetadata = {
-          client_id: metadata.client_id,
-          fetchedAt: Date.now(),
-        };
-        if (DEBUG) {
-          console.error(`[DEBUG] Fetched client_id from backend: ${metadata.client_id}`);
-        }
-        return cachedBackendMetadata;
-      } else {
-        console.error(`[WARN] Backend OAuth metadata returned ${response.status}`);
-      }
-    } catch (error) {
-      console.error(`[WARN] Failed to fetch OAuth metadata from backend:`, error);
-    }
-
-    // Fallback to environment variable if backend fetch failed
-    const fallbackClientId = process.env.MCP_CLIENT_ID;
-    if (fallbackClientId) {
-      if (DEBUG) {
-        console.error(`[DEBUG] Using fallback MCP_CLIENT_ID from environment: ${fallbackClientId}`);
-      }
-      return { client_id: fallbackClientId };
-    }
-
-    return {};
-  }
-
-  /**
-   * Build OAuth metadata, fetching client_id from backend
-   */
-  async function buildOAuthMetadata(): Promise<Record<string, unknown>> {
-    const backendMetadata = await fetchBackendOAuthMetadata();
-    
-    const metadata: Record<string, unknown> = {
-      issuer: API_BASE_URL,
-      authorization_endpoint: `${API_BASE_URL}/api/oauth/authorize`,
-      token_endpoint: `${API_BASE_URL}/api/oauth/token`,
-      token_endpoint_auth_methods_supported: ["none"], // Public client (PKCE)
-      grant_types_supported: ["authorization_code", "refresh_token"],
-      response_types_supported: ["code"],
-      scopes_supported: ["agents:read", "runs:read", "spaces:read", "agents:write", "offline_access"],
-      code_challenge_methods_supported: ["S256"], // PKCE support
-      service_documentation: "https://docs.sequentum.com/api",
-      // RFC 8707: Resource Indicators - required for correct audience in tokens
-      resource: `${API_BASE_URL}/api/v1`,
-    };
-
-    // Include client_id only if available from backend
-    if (backendMetadata.client_id) {
-      metadata.client_id = backendMetadata.client_id;
-    }
-
-    return metadata;
-  }
-
-  // RFC 8414 standard path
-  app.get("/.well-known/oauth-authorization-server", async (_req: Request, res: Response) => {
-    const metadata = await buildOAuthMetadata();
+  // RFC 8414 standard path - Authorization Server Metadata
+  app.get("/.well-known/oauth-authorization-server", (_req: Request, res: Response) => {
+    const metadata = buildOAuthMetadata(API_BASE_URL);
     res.json(metadata);
   });
 
-  // MCP-specific compatibility path
-  app.get("/oauth/metadata", async (_req: Request, res: Response) => {
-    const metadata = await buildOAuthMetadata();
-    res.json(metadata);
+  // RFC 9728 - Protected Resource Metadata (required by MCP spec 2025-06-18)
+  // This tells MCP clients which authorization server to use for this resource.
+  // Per MCP spec, the resource MUST be the MCP server's own canonical URL,
+  // as MCP clients compute the expected resource from the URL they connect to.
+  app.get("/.well-known/oauth-protected-resource", async (req: Request, res: Response) => {
+    // The resource is this MCP server's own URL (origin)
+    // MCP clients (e.g., Cursor) validate this matches the URL they connected to
+    const resourceUrl = new URL(`${req.protocol}://${req.get("host")}`).origin;
+    
+    const protectedResourceMetadata = {
+      // The canonical URI of this MCP server (the protected resource)
+      resource: resourceUrl,
+      // Authorization servers that can issue tokens for this resource
+      authorization_servers: [API_BASE_URL],
+      // Scopes supported by this resource
+      scopes_supported: [...SUPPORTED_SCOPES],
+      // Bearer token is required
+      bearer_methods_supported: ["header"],
+    };
+
+    res.json(protectedResourceMetadata);
   });
 
   // Log incoming requests for debugging (only when DEBUG is enabled)
@@ -1943,21 +1891,25 @@ async function startHttpServer() {
         // Require authentication for new sessions (unless REQUIRE_AUTH=false for testing)
         const requireAuth = process.env.REQUIRE_AUTH !== "false";
         if (requireAuth && !token) {
-          // Return 401 with WWW-Authenticate header pointing to OAuth metadata
-          // This triggers the OAuth flow in MCP clients
-          const authServerUrl = `${req.protocol}://${req.get("host")}/.well-known/oauth-authorization-server`;
-          res.setHeader("WWW-Authenticate", `Bearer resource="${authServerUrl}"`);
-          res.status(401).json({
+          // Return 401 with WWW-Authenticate header per RFC 9728 Section 5.1
+          // The resource is this MCP server's own URL (the protected resource)
+          const mcpServerUrl = new URL(`${req.protocol}://${req.get("host")}`).origin;
+          const wwwAuth = `Bearer resource="${mcpServerUrl}"`;
+          const prmUrl = `${mcpServerUrl}/.well-known/oauth-protected-resource`;
+          res.setHeader("WWW-Authenticate", wwwAuth);
+          const responseBody = {
             jsonrpc: "2.0",
             error: {
               code: -32001,
               message: "Authentication required",
               data: {
-                authorizationServerMetadata: authServerUrl,
+                // Point to Protected Resource Metadata on this MCP server
+                protectedResourceMetadata: prmUrl,
               },
             },
             id: null,
-          });
+          };
+          res.status(401).json(responseBody);
           console.error("[MCP] 401 - Authentication required, no Bearer token provided");
           return;
         }
@@ -1979,17 +1931,13 @@ async function startHttpServer() {
       }
 
       // Handle the request
-      console.error(`[MCP] Processing request for session: ${sessionId || "new"}`);
       await session.transport.handleRequest(req, res, req.body);
-      console.error(`[MCP] Request handled successfully`);
       
       // Store session if it's new (get session ID from response header)
       if (!sessionId) {
         const newSessionId = res.getHeader("mcp-session-id") as string;
-        console.error(`[MCP] New session ID from response: ${newSessionId}`);
         if (newSessionId && !sessions.has(newSessionId)) {
           sessions.set(newSessionId, session);
-          console.error(`[MCP] Session stored: ${newSessionId}`);
         } else if (!newSessionId) {
           // Cleanup orphaned session to prevent memory leaks
           // This can happen if handleRequest fails to set a session ID
