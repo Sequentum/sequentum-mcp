@@ -4,14 +4,19 @@
 
 ### Added
 
+- `kill_agent` tool for forceful agent termination (as a last resort when `stop_agent` fails)
+- OAuth 2.1 support with HTTP Streamable transport and RFC 8707 resource parameters
 - OAuth2 Protected Resource Metadata endpoint for MCP client authentication
 - Support for Dynamic Client Registration (DCR) and Client Instance Metadata Discovery (CIMD)
 - New `oauth-metadata.ts` module for OAuth metadata handling
+- Dockerfile for containerized deployment
 
 ### Changed
 
+- Enhanced `kill_agent` tool with improved functionality
 - Improved 401 authentication error handling on the `/mcp` endpoint
 - Refactored OAuth-related logic out of `index.ts` into dedicated `oauth-metadata.ts` module
+- Shortened MCP tool descriptions to save tokens
 - Removed unnecessary logging from authentication flow
 - Updated README with OAuth server setup instructions and improved readability
 - Improved `docs/tool-reference.md` and `docs/troubleshooting.md` documentation
