@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.1.3] - 2026-02-17
+
+### Added
+
+- OAuth2 Protected Resource Metadata endpoint for MCP client authentication
+- Support for Dynamic Client Registration (DCR) and Client Instance Metadata Discovery (CIMD)
+- New `oauth-metadata.ts` module for OAuth metadata handling
+
+### Changed
+
+- Improved 401 authentication error handling on the `/mcp` endpoint
+- Refactored OAuth-related logic out of `index.ts` into dedicated `oauth-metadata.ts` module
+- Removed unnecessary logging from authentication flow
+- Updated README with OAuth server setup instructions and improved readability
+- Improved `docs/tool-reference.md` and `docs/troubleshooting.md` documentation
+
 ## [1.0.2] - 2026-01-20
 
 ### Fixed
@@ -56,7 +72,8 @@
 
 ---
 
-[Unreleased]: https://github.com/Sequentum/sequentum-mcp/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/Sequentum/sequentum-mcp/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/Sequentum/sequentum-mcp/compare/v1.0.2...v1.1.3
 [1.0.2]: https://github.com/Sequentum/sequentum-mcp/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/Sequentum/sequentum-mcp/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/Sequentum/sequentum-mcp/releases/tag/v1.0.0
