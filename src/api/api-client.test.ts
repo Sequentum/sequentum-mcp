@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SequentumApiClient } from "./api-client.js";
-import { AuthenticationError } from "./types.js";
+import { AuthenticationError, ApiRequestError, RateLimitError } from "./types.js";
 
 describe("SequentumApiClient", () => {
   let client: SequentumApiClient;
@@ -645,12 +645,149 @@ describe("SequentumApiClient", () => {
       const result = await client.getAllAgents();
       expect(result).toBe("Plain text response");
     });
+
+    it("should throw ApiRequestError with status code on HTTP error", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        text: async () => '{"message": "Invalid agentId"}',
+      } as Response);
+
+      try {
+        await client.getAllAgents();
+        expect.fail("Should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiRequestError);
+        const apiErr = error as ApiRequestError;
+        expect(apiErr.statusCode).toBe(400);
+        expect(apiErr.message).toBe("Invalid agentId");
+        expect(apiErr.isNotFound).toBe(false);
+        expect(apiErr.isUnauthorized).toBe(false);
+      }
+    });
+
+    it("should throw ApiRequestError with isNotFound for 404", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        text: async () => '{"message": "Agent not found"}',
+      } as Response);
+
+      try {
+        await client.getAgent(999);
+        expect.fail("Should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiRequestError);
+        expect((error as ApiRequestError).isNotFound).toBe(true);
+        expect((error as ApiRequestError).statusCode).toBe(404);
+      }
+    });
+
+    it("should throw ApiRequestError with isUnauthorized for 401", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        text: async () => '{"message": "Invalid API key"}',
+      } as Response);
+
+      try {
+        await client.getAllAgents();
+        expect.fail("Should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiRequestError);
+        expect((error as ApiRequestError).isUnauthorized).toBe(true);
+      }
+    });
+
+    it("should throw ApiRequestError with isServerError for 500", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+        text: async () => '{"message": "Internal error"}',
+      } as Response);
+
+      try {
+        await client.getAllAgents();
+        expect.fail("Should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiRequestError);
+        expect((error as ApiRequestError).isServerError).toBe(true);
+        expect((error as ApiRequestError).statusCode).toBe(500);
+      }
+    });
+
+    it("should parse ProblemDetails (RFC 7807) error format", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        text: async () => JSON.stringify({
+          type: "https://tools.ietf.org/html/rfc7231#section-6.5.4",
+          title: "Not Found",
+          status: 404,
+          detail: "Agent with ID 999 was not found",
+          instance: "/api/v1/agent/999",
+        }),
+      } as Response);
+
+      try {
+        await client.getAgent(999);
+        expect.fail("Should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiRequestError);
+        // Should extract detail from ProblemDetails format
+        expect((error as ApiRequestError).message).toContain("Agent with ID 999 was not found");
+      }
+    });
+
+    it("should parse ProblemDetails with only title (no detail)", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        text: async () => JSON.stringify({
+          type: "https://tools.ietf.org/html/rfc7235#section-3.1",
+          title: "Unauthorized",
+          status: 401,
+        }),
+      } as Response);
+
+      try {
+        await client.getAllAgents();
+        expect.fail("Should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiRequestError);
+        expect((error as ApiRequestError).message).toBe("Unauthorized");
+      }
+    });
+
+    it("should truncate very long error responses", async () => {
+      const longText = "x".repeat(1000);
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+        text: async () => longText,
+      } as Response);
+
+      try {
+        await client.getAllAgents();
+        expect.fail("Should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiRequestError);
+        expect((error as ApiRequestError).message.length).toBeLessThanOrEqual(503); // 500 + "..."
+      }
+    });
   });
 
   describe("timeout handling", () => {
     it("should throw timeout error when request is aborted", async () => {
-      // Create client with very short timeout
-      const quickClient = new SequentumApiClient(mockBaseUrl, mockApiKey, 10);
+      // Create client with very short timeout and no retries
+      const quickClient = new SequentumApiClient(mockBaseUrl, mockApiKey, 10, 0);
 
       // Mock fetch to simulate abort
       const abortError = new Error("The operation was aborted");
@@ -663,7 +800,8 @@ describe("SequentumApiClient", () => {
     });
 
     it("should include endpoint in timeout error message", async () => {
-      const quickClient = new SequentumApiClient(mockBaseUrl, mockApiKey, 5);
+      // maxRetries=0 so no retries
+      const quickClient = new SequentumApiClient(mockBaseUrl, mockApiKey, 5, 0);
 
       const abortError = new Error("The operation was aborted");
       abortError.name = "AbortError";
@@ -737,32 +875,41 @@ describe("SequentumApiClient", () => {
         cronExpression: "0 9 * * *",
       });
 
-      expect(fetch).toHaveBeenCalledWith(
-        "https://api.example.com/api/v1/agent/42/schedules",
-        expect.objectContaining({
-          method: "POST",
-        })
-      );
-      // Verify required fields are in the body
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"Name":"New Schedule"'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"CronExpression":"0 9 * * *"'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"IsEnabled":true'),
-        })
-      );
+      const [url, options] = vi.mocked(fetch).mock.calls[0];
+      const body = JSON.parse((options as RequestInit).body as string);
+      expect(url).toBe("https://api.example.com/api/v1/agent/42/schedules");
+      expect((options as RequestInit).method).toBe("POST");
+      expect(body.Name).toBe("New Schedule");
+      expect(body.CronExpression).toBe("0 9 * * *");
+      expect(body.IsEnabled).toBe(true);
       expect(result).toEqual(mockSchedule);
+    });
+
+    it("should only include provided optional fields in the body", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ id: 1 }),
+      } as Response);
+
+      await client.createAgentSchedule(42, {
+        name: "Minimal Schedule",
+        cronExpression: "0 9 * * *",
+      });
+
+      const body = (vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string;
+      const parsed = JSON.parse(body);
+      expect(parsed).toHaveProperty("Name", "Minimal Schedule");
+      expect(parsed).toHaveProperty("CronExpression", "0 9 * * *");
+      expect(parsed).toHaveProperty("IsEnabled", true);
+      expect(parsed).toHaveProperty("Parallelism", 1);
+      expect(parsed).not.toHaveProperty("ScheduleType");
+      expect(parsed).not.toHaveProperty("StartTime");
+      expect(parsed).not.toHaveProperty("RunEveryCount");
+      expect(parsed).not.toHaveProperty("RunEveryPeriod");
+      expect(parsed).not.toHaveProperty("Timezone");
+      expect(parsed).not.toHaveProperty("InputParameters");
     });
 
     it("should create a schedule with all parameters", async () => {
@@ -782,37 +929,13 @@ describe("SequentumApiClient", () => {
         scheduleType: 3,
       });
 
-      // Verify all provided fields are in the body
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"Name":"Full Schedule"'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"ScheduleType":3'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"CronExpression":"0 9 * * 1,4"'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"Timezone":"America/New_York"'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"IsEnabled":false'),
-        })
-      );
+      const [, options] = vi.mocked(fetch).mock.calls[0];
+      const body = JSON.parse((options as RequestInit).body as string);
+      expect(body.Name).toBe("Full Schedule");
+      expect(body.ScheduleType).toBe(3);
+      expect(body.CronExpression).toBe("0 9 * * 1,4");
+      expect(body.Timezone).toBe("America/New_York");
+      expect(body.IsEnabled).toBe(false);
     });
 
     it("should create a schedule with custom parallelism", async () => {
@@ -829,12 +952,9 @@ describe("SequentumApiClient", () => {
         parallelism: 3,
       });
 
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"Parallelism":3'),
-        })
-      );
+      const [, options] = vi.mocked(fetch).mock.calls[0];
+      const body = JSON.parse((options as RequestInit).body as string);
+      expect(body.Parallelism).toBe(3);
     });
 
     it("should default parallelism to 1 when not provided", async () => {
@@ -850,12 +970,9 @@ describe("SequentumApiClient", () => {
         cronExpression: "0 9 * * *",
       });
 
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"Parallelism":1'),
-        })
-      );
+      const [, options] = vi.mocked(fetch).mock.calls[0];
+      const body = JSON.parse((options as RequestInit).body as string);
+      expect(body.Parallelism).toBe(1);
     });
 
     it("should create a RunOnce schedule (scheduleType=1)", async () => {
@@ -874,30 +991,13 @@ describe("SequentumApiClient", () => {
         startTime: "2026-01-20T14:30:00Z",
       });
 
-      expect(fetch).toHaveBeenCalledWith(
-        "https://api.example.com/api/v1/agent/42/schedules",
-        expect.objectContaining({
-          method: "POST",
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"Name":"One Time Run"'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"ScheduleType":1'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"StartTime":"2026-01-20T14:30:00Z"'),
-        })
-      );
+      const [url, options] = vi.mocked(fetch).mock.calls[0];
+      const body = JSON.parse((options as RequestInit).body as string);
+      expect(url).toBe("https://api.example.com/api/v1/agent/42/schedules");
+      expect((options as RequestInit).method).toBe("POST");
+      expect(body.Name).toBe("One Time Run");
+      expect(body.ScheduleType).toBe(1);
+      expect(body.StartTime).toBe("2026-01-20T14:30:00Z");
       expect(result).toEqual(mockSchedule);
     });
 
@@ -919,42 +1019,15 @@ describe("SequentumApiClient", () => {
         timezone: "America/Santiago",
       });
 
-      expect(fetch).toHaveBeenCalledWith(
-        "https://api.example.com/api/v1/agent/42/schedules",
-        expect.objectContaining({
-          method: "POST",
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"Name":"Every 6 Hours"'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"ScheduleType":2'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"RunEveryCount":6'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"RunEveryPeriod":2'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"Timezone":"America/Santiago"'),
-        })
-      );
+      const [url, options] = vi.mocked(fetch).mock.calls[0];
+      const body = JSON.parse((options as RequestInit).body as string);
+      expect(url).toBe("https://api.example.com/api/v1/agent/42/schedules");
+      expect((options as RequestInit).method).toBe("POST");
+      expect(body.Name).toBe("Every 6 Hours");
+      expect(body.ScheduleType).toBe(2);
+      expect(body.RunEveryCount).toBe(6);
+      expect(body.RunEveryPeriod).toBe(2);
+      expect(body.Timezone).toBe("America/Santiago");
       expect(result).toEqual(mockSchedule);
     });
 
@@ -974,24 +1047,11 @@ describe("SequentumApiClient", () => {
         runEveryPeriod: 4, // weeks (1=min, 2=hr, 3=day, 4=wk, 5=mo)
       });
 
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"ScheduleType":2'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"RunEveryCount":2'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"RunEveryPeriod":4'),
-        })
-      );
+      const [, options] = vi.mocked(fetch).mock.calls[0];
+      const body = JSON.parse((options as RequestInit).body as string);
+      expect(body.ScheduleType).toBe(2);
+      expect(body.RunEveryCount).toBe(2);
+      expect(body.RunEveryPeriod).toBe(4);
     });
 
     it("should create a CRON schedule (scheduleType=3) with cron expression", async () => {
@@ -1011,36 +1071,14 @@ describe("SequentumApiClient", () => {
         timezone: "UTC",
       });
 
-      expect(fetch).toHaveBeenCalledWith(
-        "https://api.example.com/api/v1/agent/42/schedules",
-        expect.objectContaining({
-          method: "POST",
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"Name":"Daily at 9am"'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"ScheduleType":3'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"CronExpression":"0 9 * * *"'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"Timezone":"UTC"'),
-        })
-      );
+      const [url, options] = vi.mocked(fetch).mock.calls[0];
+      const body = JSON.parse((options as RequestInit).body as string);
+      expect(url).toBe("https://api.example.com/api/v1/agent/42/schedules");
+      expect((options as RequestInit).method).toBe("POST");
+      expect(body.Name).toBe("Daily at 9am");
+      expect(body.ScheduleType).toBe(3);
+      expect(body.CronExpression).toBe("0 9 * * *");
+      expect(body.Timezone).toBe("UTC");
       expect(result).toEqual(mockSchedule);
     });
 
@@ -1059,12 +1097,9 @@ describe("SequentumApiClient", () => {
         timezone: "America/New_York",
       });
 
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"StartTime":"2026-02-15T10:00:00Z"'),
-        })
-      );
+      const [, options] = vi.mocked(fetch).mock.calls[0];
+      const body = JSON.parse((options as RequestInit).body as string);
+      expect(body.StartTime).toBe("2026-02-15T10:00:00Z");
     });
 
     it("should include optional startTime for RunEvery schedule", async () => {
@@ -1084,24 +1119,11 @@ describe("SequentumApiClient", () => {
         timezone: "America/Denver",
       });
 
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"StartTime":"2026-01-17T10:00:00Z"'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"RunEveryCount":30'),
-        })
-      );
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: expect.stringContaining('"RunEveryPeriod":1'),
-        })
-      );
+      const [, options] = vi.mocked(fetch).mock.calls[0];
+      const body = JSON.parse((options as RequestInit).body as string);
+      expect(body.StartTime).toBe("2026-01-17T10:00:00Z");
+      expect(body.RunEveryCount).toBe(30);
+      expect(body.RunEveryPeriod).toBe(1);
     });
   });
 
@@ -1118,6 +1140,175 @@ describe("SequentumApiClient", () => {
         "https://api.example.com/api/v1/agent/42/schedules/123",
         expect.objectContaining({ method: "DELETE" })
       );
+    });
+  });
+
+  describe("getAgentSchedule", () => {
+    it("should fetch a specific schedule by ID", async () => {
+      const mockSchedule = { id: 10, configId: 42, name: "Daily Run", cronExpression: "0 9 * * *", isEnabled: true };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockSchedule,
+      } as Response);
+
+      const result = await client.getAgentSchedule(42, 10);
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent/42/schedules/10",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockSchedule);
+    });
+
+    it("should handle 404 when schedule not found", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        text: async () => '{"message": "Schedule not found"}',
+      } as Response);
+
+      await expect(client.getAgentSchedule(42, 999)).rejects.toThrow("Schedule not found");
+    });
+  });
+
+  describe("updateAgentSchedule", () => {
+    it("should update a schedule with PUT request", async () => {
+      const mockUpdated = { id: 10, configId: 42, name: "Updated Schedule", cronExpression: "0 10 * * *", isEnabled: true };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockUpdated,
+      } as Response);
+
+      const result = await client.updateAgentSchedule(42, 10, {
+        name: "Updated Schedule",
+        scheduleType: 3,
+        cronExpression: "0 10 * * *",
+        timezone: "America/New_York",
+      });
+
+      const [url, options] = vi.mocked(fetch).mock.calls[0];
+      const body = JSON.parse((options as RequestInit).body as string);
+      expect(url).toBe("https://api.example.com/api/v1/agent/42/schedules/10");
+      expect((options as RequestInit).method).toBe("PUT");
+      expect(body.Name).toBe("Updated Schedule");
+      expect(body.ScheduleType).toBe(3);
+      expect(body.CronExpression).toBe("0 10 * * *");
+      expect(body.Timezone).toBe("America/New_York");
+      expect(result).toEqual(mockUpdated);
+    });
+
+    it("should only include provided optional fields in the body", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ id: 10 }),
+      } as Response);
+
+      await client.updateAgentSchedule(42, 10, {
+        name: "Minimal Update",
+        cronExpression: "0 9 * * *",
+      });
+
+      const body = (vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string;
+      const parsed = JSON.parse(body);
+      expect(parsed).toHaveProperty("Name", "Minimal Update");
+      expect(parsed).toHaveProperty("CronExpression", "0 9 * * *");
+      expect(parsed).not.toHaveProperty("ScheduleType");
+      expect(parsed).not.toHaveProperty("LocalSchedule");
+      expect(parsed).not.toHaveProperty("StartTime");
+      expect(parsed).not.toHaveProperty("RunEveryCount");
+      expect(parsed).not.toHaveProperty("RunEveryPeriod");
+      expect(parsed).not.toHaveProperty("Timezone");
+      expect(parsed).not.toHaveProperty("IsEnabled");
+      expect(parsed).not.toHaveProperty("Parallelism");
+      expect(parsed).not.toHaveProperty("ProxyPoolId");
+    });
+
+    it("should send all fields in the update body", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ id: 10 }),
+      } as Response);
+
+      await client.updateAgentSchedule(42, 10, {
+        name: "Full Update",
+        scheduleType: 2,
+        runEveryCount: 30,
+        runEveryPeriod: 1,
+        isEnabled: false,
+        parallelism: 3,
+      });
+
+      const [, options] = vi.mocked(fetch).mock.calls[0];
+      const body = JSON.parse((options as RequestInit).body as string);
+      expect(body.RunEveryCount).toBe(30);
+      expect(body.RunEveryPeriod).toBe(1);
+      expect(body.IsEnabled).toBe(false);
+      expect(body.Parallelism).toBe(3);
+    });
+  });
+
+  describe("enableAgentSchedule", () => {
+    it("should enable a schedule with POST request", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+      } as Response);
+
+      await client.enableAgentSchedule(42, 10);
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent/42/schedules/10/enable",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+
+    it("should handle 404 when schedule not found", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        text: async () => '{"message": "Schedule not found"}',
+      } as Response);
+
+      await expect(client.enableAgentSchedule(42, 999)).rejects.toThrow("Schedule not found");
+    });
+  });
+
+  describe("disableAgentSchedule", () => {
+    it("should disable a schedule with POST request", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+      } as Response);
+
+      await client.disableAgentSchedule(42, 10);
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent/42/schedules/10/disable",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+
+    it("should handle 404 when schedule not found", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        text: async () => '{"message": "Schedule not found"}',
+      } as Response);
+
+      await expect(client.disableAgentSchedule(42, 999)).rejects.toThrow("Schedule not found");
     });
   });
 
@@ -1536,6 +1727,332 @@ describe("SequentumApiClient", () => {
 
       await expect(clientWithToken.getAllAgents()).resolves.not.toThrow();
     });
+  });
+});
+
+// ==========================================
+// Rate Limiting & Retry Tests
+// ==========================================
+
+describe("rate limiting and retry", () => {
+  let client: SequentumApiClient;
+  const mockBaseUrl = "https://api.example.com";
+  const mockApiKey = "sk-test-key-123";
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("should throw RateLimitError on 429 response", async () => {
+    // maxRetries=0 so it throws immediately
+    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 0);
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 429,
+      statusText: "Too Many Requests",
+      headers: new Headers({ "retry-after": "60" }),
+      text: async () => '{"title": "Too Many Requests", "status": 429, "detail": "Rate limit exceeded"}',
+    } as Response);
+
+    try {
+      await client.getAllAgents();
+      expect.fail("Should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RateLimitError);
+      const rateErr = error as RateLimitError;
+      expect(rateErr.statusCode).toBe(429);
+      expect(rateErr.isRateLimited).toBe(true);
+      expect(rateErr.retryAfterSeconds).toBe(60);
+      expect(rateErr.message).toContain("Rate limit exceeded");
+    }
+  });
+
+  it("should retry GET requests on 429 and succeed", async () => {
+    // maxRetries=2, so up to 3 attempts
+    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 2);
+    // Override sleep to be instant for testing
+    (client as any).baseDelayMs = 0;
+    (client as any).maxDelayMs = 0;
+
+    // First call: 429
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: new Headers({ "retry-after": "0" }),
+        text: async () => '{"title": "Too Many Requests"}',
+      } as Response)
+      // Second call: success
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => [{ id: 1, name: "Agent 1" }],
+      } as Response);
+
+    const result = await client.getAllAgents();
+    expect(result).toEqual([{ id: 1, name: "Agent 1" }]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("should NOT retry POST requests on 429", async () => {
+    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 3);
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 429,
+      statusText: "Too Many Requests",
+      headers: new Headers({}),
+      text: async () => '{"message": "Rate limit exceeded"}',
+    } as Response);
+
+    await expect(client.startAgent(42, {})).rejects.toBeInstanceOf(RateLimitError);
+    // Should only have called fetch once (no retry for POST)
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("should retry GET requests on 502 Bad Gateway", async () => {
+    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 2);
+    (client as any).baseDelayMs = 0;
+    (client as any).maxDelayMs = 0;
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        statusText: "Bad Gateway",
+        text: async () => "",
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ id: 42, name: "Agent" }),
+      } as Response);
+
+    const result = await client.getAgent(42);
+    expect(result).toEqual({ id: 42, name: "Agent" });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("should retry GET requests on 503 Service Unavailable", async () => {
+    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 2);
+    (client as any).baseDelayMs = 0;
+    (client as any).maxDelayMs = 0;
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        statusText: "Service Unavailable",
+        text: async () => "",
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => [],
+      } as Response);
+
+    const result = await client.getAllAgents();
+    expect(result).toEqual([]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("should NOT retry on 401 Unauthorized (even for GET)", async () => {
+    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 3);
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+      text: async () => '{"message": "Invalid API key"}',
+    } as Response);
+
+    await expect(client.getAllAgents()).rejects.toBeInstanceOf(ApiRequestError);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("should NOT retry on 404 Not Found (even for GET)", async () => {
+    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 3);
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      text: async () => '{"message": "Agent not found"}',
+    } as Response);
+
+    await expect(client.getAgent(999)).rejects.toBeInstanceOf(ApiRequestError);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("should exhaust retries and throw the last error", async () => {
+    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 2);
+    (client as any).baseDelayMs = 0;
+    (client as any).maxDelayMs = 0;
+
+    // All 3 attempts fail with 503
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({
+        ok: false, status: 503, statusText: "Service Unavailable",
+        text: async () => '{"message": "Service down"}',
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: false, status: 503, statusText: "Service Unavailable",
+        text: async () => '{"message": "Service down"}',
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: false, status: 503, statusText: "Service Unavailable",
+        text: async () => '{"message": "Service still down"}',
+      } as Response);
+
+    try {
+      await client.getAllAgents();
+      expect.fail("Should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiRequestError);
+      expect((error as ApiRequestError).statusCode).toBe(503);
+      expect((error as ApiRequestError).message).toBe("Service still down");
+    }
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("should parse Retry-After header as numeric seconds", async () => {
+    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 0);
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 429,
+      statusText: "Too Many Requests",
+      headers: new Headers({ "retry-after": "120" }),
+      text: async () => '{"message": "Slow down"}',
+    } as Response);
+
+    try {
+      await client.getAllAgents();
+      expect.fail("Should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RateLimitError);
+      expect((error as RateLimitError).retryAfterSeconds).toBe(120);
+    }
+  });
+
+  it("should handle missing Retry-After header gracefully", async () => {
+    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 0);
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 429,
+      statusText: "Too Many Requests",
+      headers: new Headers({}),
+      text: async () => '{"message": "Too many requests"}',
+    } as Response);
+
+    try {
+      await client.getAllAgents();
+      expect.fail("Should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RateLimitError);
+      expect((error as RateLimitError).retryAfterSeconds).toBeNull();
+    }
+  });
+
+  it("should retry DELETE requests (idempotent) on 429", async () => {
+    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 2);
+    (client as any).baseDelayMs = 0;
+    (client as any).maxDelayMs = 0;
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: new Headers({ "retry-after": "0" }),
+        text: async () => '{"message": "Rate limited"}',
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+      } as Response);
+
+    await client.deleteAgentSchedule(42, 123);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ==========================================
+// ApiRequestError & RateLimitError Class Tests
+// ==========================================
+
+describe("ApiRequestError", () => {
+  it("should be an instance of Error", () => {
+    const error = new ApiRequestError(400, "Bad Request", "Invalid input", "/api/test");
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(ApiRequestError);
+  });
+
+  it("should have correct name property", () => {
+    const error = new ApiRequestError(400, "Bad Request", "msg", "/api/test");
+    expect(error.name).toBe("ApiRequestError");
+  });
+
+  it("should expose status code and endpoint", () => {
+    const error = new ApiRequestError(404, "Not Found", "Agent not found", "/api/v1/agent/42");
+    expect(error.statusCode).toBe(404);
+    expect(error.statusText).toBe("Not Found");
+    expect(error.endpoint).toBe("/api/v1/agent/42");
+  });
+
+  it("should correctly identify 401 Unauthorized", () => {
+    const error = new ApiRequestError(401, "Unauthorized", "msg", "/api/test");
+    expect(error.isUnauthorized).toBe(true);
+    expect(error.isForbidden).toBe(false);
+    expect(error.isNotFound).toBe(false);
+  });
+
+  it("should correctly identify 403 Forbidden", () => {
+    const error = new ApiRequestError(403, "Forbidden", "msg", "/api/test");
+    expect(error.isForbidden).toBe(true);
+    expect(error.isUnauthorized).toBe(false);
+  });
+
+  it("should correctly identify 5xx server errors", () => {
+    expect(new ApiRequestError(500, "ISE", "msg", "/").isServerError).toBe(true);
+    expect(new ApiRequestError(502, "BG", "msg", "/").isServerError).toBe(true);
+    expect(new ApiRequestError(503, "SU", "msg", "/").isServerError).toBe(true);
+    expect(new ApiRequestError(400, "BR", "msg", "/").isServerError).toBe(false);
+  });
+});
+
+describe("RateLimitError", () => {
+  it("should be an instance of ApiRequestError and Error", () => {
+    const error = new RateLimitError("msg", "/api/test", 60);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toBeInstanceOf(RateLimitError);
+  });
+
+  it("should have statusCode 429", () => {
+    const error = new RateLimitError("msg", "/api/test");
+    expect(error.statusCode).toBe(429);
+    expect(error.isRateLimited).toBe(true);
+  });
+
+  it("should store retryAfterSeconds", () => {
+    const error = new RateLimitError("msg", "/api/test", 30);
+    expect(error.retryAfterSeconds).toBe(30);
+  });
+
+  it("should default retryAfterSeconds to null", () => {
+    const error = new RateLimitError("msg", "/api/test");
+    expect(error.retryAfterSeconds).toBeNull();
   });
 });
 

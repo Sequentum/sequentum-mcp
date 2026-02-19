@@ -19,6 +19,72 @@ export class AuthenticationError extends Error {
 }
 
 /**
+ * Error thrown when the Sequentum API returns an HTTP error response.
+ * Carries the HTTP status code and parsed error details so callers can
+ * handle specific error categories (400, 401, 404, 429, 500, etc.).
+ *
+ * The Sequentum API returns errors in two formats:
+ *   - BadRequestError / InternalServerError: { statusCode, statusDescription, message, severity }
+ *   - ProblemDetails (RFC 7807):             { type, title, status, detail, instance }
+ */
+export class ApiRequestError extends Error {
+  /** HTTP status code (e.g. 400, 401, 404, 429, 500) */
+  public readonly statusCode: number;
+  /** HTTP status text (e.g. "Not Found") */
+  public readonly statusText: string;
+  /** The API endpoint that was called */
+  public readonly endpoint: string;
+
+  constructor(statusCode: number, statusText: string, message: string, endpoint: string) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.statusCode = statusCode;
+    this.statusText = statusText;
+    this.endpoint = endpoint;
+  }
+
+  /** True for 401 Unauthorized */
+  get isUnauthorized(): boolean {
+    return this.statusCode === 401;
+  }
+
+  /** True for 403 Forbidden */
+  get isForbidden(): boolean {
+    return this.statusCode === 403;
+  }
+
+  /** True for 404 Not Found */
+  get isNotFound(): boolean {
+    return this.statusCode === 404;
+  }
+
+  /** True for 429 Too Many Requests */
+  get isRateLimited(): boolean {
+    return this.statusCode === 429;
+  }
+
+  /** True for 5xx server errors */
+  get isServerError(): boolean {
+    return this.statusCode >= 500 && this.statusCode < 600;
+  }
+}
+
+/**
+ * Error thrown specifically for 429 Too Many Requests.
+ * Extends ApiRequestError with rate-limit-specific metadata.
+ */
+export class RateLimitError extends ApiRequestError {
+  /** Seconds to wait before retrying (from Retry-After header), or null if not provided */
+  public readonly retryAfterSeconds: number | null;
+
+  constructor(message: string, endpoint: string, retryAfterSeconds: number | null = null) {
+    super(429, "Too Many Requests", message, endpoint);
+    this.name = "RateLimitError";
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+/**
  * Represents a web scraping agent configuration
  */
 export interface AgentApiModel {
@@ -190,13 +256,28 @@ export enum ConfigValidationStatus {
 }
 
 /**
- * API error response
+ * API error response — union of both error formats returned by the Sequentum API:
+ *   - BadRequestError / InternalServerError:  { statusCode, statusDescription, message, severity }
+ *   - ProblemDetails (RFC 7807):              { type, title, status, detail, instance }
  */
-export interface ApiError {
-  message: string;
+export interface ApiErrorBody {
+  // BadRequestError / InternalServerError fields
+  message?: string;
   severity?: string;
   statusCode?: number;
+  statusDescription?: string;
+  // ProblemDetails (RFC 7807) fields
+  type?: string;
+  title?: string;
+  status?: number;
+  detail?: string;
+  instance?: string;
 }
+
+/**
+ * @deprecated Use ApiErrorBody instead. Kept for backward compatibility.
+ */
+export type ApiError = ApiErrorBody;
 
 /**
  * Request model for filtering agents
@@ -221,17 +302,14 @@ export interface ListAgentsRequest {
 }
 
 /**
- * Paginated response for agent list
+ * Paginated response for agent list.
+ * Returned by GET /api/v1/agent/all when pagination params (pageIndex, recordsPerPage) are provided.
  */
 export interface PaginatedAgentsResponse {
   /** Array of agents */
-  data: AgentApiModel[];
+  agents: AgentApiModel[];
   /** Total number of agents matching the query */
-  totalCount: number;
-  /** Current page index */
-  pageIndex: number;
-  /** Number of records per page */
-  recordsPerPage: number;
+  totalRecordCount: number;
 }
 
 // ==========================================
@@ -268,10 +346,12 @@ export interface AgentScheduleApiModel {
 /**
  * Request model for creating a schedule
  */
-export interface CreateScheduleRequest {
+/**
+ * Shared fields between create and update schedule requests.
+ */
+interface ScheduleRequestBase {
   name: string;
   cronExpression?: string;
-  localSchedule?: string;
   timezone?: string;
   /** Start time in ISO 8601 format (UTC). Required for RunOnce, optional for RunEvery, not used for CRON. */
   startTime?: string;
@@ -284,6 +364,29 @@ export interface CreateScheduleRequest {
   runEveryCount?: number;
   /** Period unit: 1=minutes, 2=hours, 3=days, 4=weeks, 5=months */
   runEveryPeriod?: number;
+  parallelMaxConcurrency?: number;
+  parallelExport?: string;
+  logLevel?: string;
+  logMode?: string;
+  isExclusive?: boolean;
+  isWaitOnFailure?: boolean;
+}
+
+export interface CreateScheduleRequest extends ScheduleRequestBase {}
+
+/**
+ * Request model for updating an existing schedule.
+ * Extends the base with fields only relevant for updates.
+ *
+ * Note: proxyPoolId, serverGroupId, and localSchedule are supported by the API
+ * but intentionally excluded from the MCP tool schemas because their valid values
+ * are not discoverable through any MCP-accessible endpoint. Users who need these
+ * should configure them via the Sequentum dashboard.
+ */
+export interface UpdateScheduleRequest extends ScheduleRequestBase {
+  proxyPoolId?: number;
+  serverGroupId?: number;
+  localSchedule?: string;
 }
 
 /**

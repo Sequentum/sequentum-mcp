@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { validateStartTimeInFuture } from "./validation.js";
-import { buildOAuthMetadata } from "./oauth-metadata.js";
+import { validateStartTimeInFuture } from "./utils/validation.js";
+import { buildOAuthMetadata } from "./utils/oauth-metadata.js";
+import { resources, resourceTemplates, readResource } from "./server/resources.js";
+import { prompts, getPromptMessages } from "./server/prompts.js";
 
 /**
  * Tests for MCP handler behavior in index.ts
@@ -499,7 +501,7 @@ describe("list_agents handler", () => {
       } as Response);
 
       // Import and use the API client directly to simulate handler behavior
-      const { SequentumApiClient } = await import("./api-client.js");
+      const { SequentumApiClient } = await import("./api/api-client.js");
       const client = new SequentumApiClient("https://test.example.com", "sk-test-key");
 
       // Call with default pagination (simulating handler behavior)
@@ -527,7 +529,7 @@ describe("list_agents handler", () => {
         json: async () => [],
       } as Response);
 
-      const { SequentumApiClient } = await import("./api-client.js");
+      const { SequentumApiClient } = await import("./api/api-client.js");
       const client = new SequentumApiClient("https://test.example.com", "sk-test-key");
 
       // Simulating handler always passing pagination defaults
@@ -551,7 +553,7 @@ describe("list_agents handler", () => {
         json: async () => [],
       } as Response);
 
-      const { SequentumApiClient } = await import("./api-client.js");
+      const { SequentumApiClient } = await import("./api/api-client.js");
       const client = new SequentumApiClient("https://test.example.com", "sk-test-key");
 
       // User provides explicit page 3
@@ -574,7 +576,7 @@ describe("list_agents handler", () => {
         json: async () => [],
       } as Response);
 
-      const { SequentumApiClient } = await import("./api-client.js");
+      const { SequentumApiClient } = await import("./api/api-client.js");
       const client = new SequentumApiClient("https://test.example.com", "sk-test-key");
 
       // User provides explicit 25 records per page
@@ -597,7 +599,7 @@ describe("list_agents handler", () => {
         json: async () => [],
       } as Response);
 
-      const { SequentumApiClient } = await import("./api-client.js");
+      const { SequentumApiClient } = await import("./api/api-client.js");
       const client = new SequentumApiClient("https://test.example.com", "sk-test-key");
 
       // Simulating handler with defaults + user-provided filters
@@ -631,6 +633,482 @@ describe("list_agents handler", () => {
       
       const defaultPageIndex = 1; // First page in 1-based system
       expect(defaultPageIndex).toBe(1);
+    });
+  });
+});
+
+// ==========================================
+// MCP Resource Tests
+// ==========================================
+
+describe("MCP Resources", () => {
+  describe("static resource definitions", () => {
+    it("should define 6 static resources", () => {
+      expect(resources).toHaveLength(6);
+    });
+
+    it("should include agents resource", () => {
+      const agentsResource = resources.find(r => r.uri === "sequentum://agents");
+      expect(agentsResource).toBeDefined();
+      expect(agentsResource!.name).toBe("Agent List");
+      expect(agentsResource!.mimeType).toBe("application/json");
+    });
+
+    it("should include spaces resource", () => {
+      const spacesResource = resources.find(r => r.uri === "sequentum://spaces");
+      expect(spacesResource).toBeDefined();
+      expect(spacesResource!.name).toBe("Spaces");
+      expect(spacesResource!.mimeType).toBe("application/json");
+    });
+
+    it("should include billing balance resource", () => {
+      const balanceResource = resources.find(r => r.uri === "sequentum://billing/balance");
+      expect(balanceResource).toBeDefined();
+      expect(balanceResource!.name).toBe("Credits Balance");
+      expect(balanceResource!.mimeType).toBe("application/json");
+    });
+
+    it("should include billing spending resource", () => {
+      const spendingResource = resources.find(r => r.uri === "sequentum://billing/spending");
+      expect(spendingResource).toBeDefined();
+      expect(spendingResource!.name).toBe("Monthly Spending");
+      expect(spendingResource!.mimeType).toBe("application/json");
+    });
+
+    it("should include analytics runs resource", () => {
+      const runsResource = resources.find(r => r.uri === "sequentum://analytics/runs");
+      expect(runsResource).toBeDefined();
+      expect(runsResource!.name).toBe("Recent Runs Summary");
+      expect(runsResource!.mimeType).toBe("application/json");
+    });
+
+    it("should include analytics upcoming-schedules resource", () => {
+      const schedulesResource = resources.find(r => r.uri === "sequentum://analytics/upcoming-schedules");
+      expect(schedulesResource).toBeDefined();
+      expect(schedulesResource!.name).toBe("Upcoming Schedules");
+      expect(schedulesResource!.mimeType).toBe("application/json");
+    });
+
+    it("should have descriptions on all static resources", () => {
+      resources.forEach(r => {
+        expect(r.description).toBeTruthy();
+        expect(typeof r.description).toBe("string");
+      });
+    });
+  });
+
+  describe("resource template definitions", () => {
+    it("should define 10 resource templates", () => {
+      expect(resourceTemplates).toHaveLength(10);
+    });
+
+    it("should include agent detail template", () => {
+      const tpl = resourceTemplates.find(t => t.uriTemplate === "sequentum://agents/{agentId}");
+      expect(tpl).toBeDefined();
+      expect(tpl!.name).toBe("Agent Detail");
+    });
+
+    it("should include agent versions template", () => {
+      const tpl = resourceTemplates.find(t => t.uriTemplate === "sequentum://agents/{agentId}/versions");
+      expect(tpl).toBeDefined();
+      expect(tpl!.name).toBe("Agent Versions");
+    });
+
+    it("should include agent schedules template", () => {
+      const tpl = resourceTemplates.find(t => t.uriTemplate === "sequentum://agents/{agentId}/schedules");
+      expect(tpl).toBeDefined();
+      expect(tpl!.name).toBe("Agent Schedules");
+    });
+
+    it("should include space detail template", () => {
+      const tpl = resourceTemplates.find(t => t.uriTemplate === "sequentum://spaces/{spaceId}");
+      expect(tpl).toBeDefined();
+      expect(tpl!.name).toBe("Space Detail");
+    });
+
+    it("should include space agents template", () => {
+      const tpl = resourceTemplates.find(t => t.uriTemplate === "sequentum://spaces/{spaceId}/agents");
+      expect(tpl).toBeDefined();
+      expect(tpl!.name).toBe("Space Agents");
+    });
+
+    it("should include agent runs template", () => {
+      const tpl = resourceTemplates.find(t => t.uriTemplate === "sequentum://agents/{agentId}/runs");
+      expect(tpl).toBeDefined();
+      expect(tpl!.name).toBe("Agent Runs");
+    });
+
+    it("should include run status template", () => {
+      const tpl = resourceTemplates.find(t => t.uriTemplate === "sequentum://agents/{agentId}/runs/{runId}");
+      expect(tpl).toBeDefined();
+      expect(tpl!.name).toBe("Run Status");
+    });
+
+    it("should include run files template", () => {
+      const tpl = resourceTemplates.find(t => t.uriTemplate === "sequentum://agents/{agentId}/runs/{runId}/files");
+      expect(tpl).toBeDefined();
+      expect(tpl!.name).toBe("Run Files");
+    });
+
+    it("should include run diagnostics template", () => {
+      const tpl = resourceTemplates.find(t => t.uriTemplate === "sequentum://agents/{agentId}/runs/{runId}/diagnostics");
+      expect(tpl).toBeDefined();
+      expect(tpl!.name).toBe("Run Diagnostics");
+    });
+
+    it("should include latest failure template", () => {
+      const tpl = resourceTemplates.find(t => t.uriTemplate === "sequentum://agents/{agentId}/latest-failure");
+      expect(tpl).toBeDefined();
+      expect(tpl!.name).toBe("Latest Failure");
+    });
+
+    it("should have descriptions on all resource templates", () => {
+      resourceTemplates.forEach(t => {
+        expect(t.description).toBeTruthy();
+        expect(typeof t.description).toBe("string");
+      });
+    });
+
+    it("should set mimeType to application/json on all templates", () => {
+      resourceTemplates.forEach(t => {
+        expect(t.mimeType).toBe("application/json");
+      });
+    });
+  });
+
+  describe("readResource dispatcher", () => {
+    let mockApiClient: Record<string, ReturnType<typeof vi.fn>>;
+
+    beforeEach(() => {
+      mockApiClient = {
+        getAllAgents: vi.fn().mockResolvedValue({ agents: [], totalRecordCount: 0 }),
+        getAllSpaces: vi.fn().mockResolvedValue([]),
+        getCreditsBalance: vi.fn().mockResolvedValue({ availableCredits: 100 }),
+        getSpendingSummary: vi.fn().mockResolvedValue({ totalSpent: 500 }),
+        getRunsSummary: vi.fn().mockResolvedValue({ totalRuns: 10 }),
+        getUpcomingSchedules: vi.fn().mockResolvedValue([{ scheduleId: 1 }]),
+        getAgent: vi.fn().mockResolvedValue({ id: 42, name: "Test Agent" }),
+        getAgentVersions: vi.fn().mockResolvedValue([{ version: 1 }]),
+        getAgentSchedules: vi.fn().mockResolvedValue([]),
+        getAgentRuns: vi.fn().mockResolvedValue([{ id: 100, status: "Completed" }]),
+        getRunStatus: vi.fn().mockResolvedValue({ id: 100, status: "Running" }),
+        getRunFiles: vi.fn().mockResolvedValue([{ id: 1, name: "output.csv" }]),
+        getRunDiagnostics: vi.fn().mockResolvedValue({ runId: 100, errorMessage: "Timeout" }),
+        getLatestFailure: vi.fn().mockResolvedValue({ runId: 99, status: "Failed" }),
+        getSpace: vi.fn().mockResolvedValue({ id: 1, name: "Test Space" }),
+        getSpaceAgents: vi.fn().mockResolvedValue([]),
+      };
+    });
+
+    it("should read sequentum://agents with default pagination", async () => {
+      const result = await readResource("sequentum://agents", mockApiClient as any);
+      expect(mockApiClient.getAllAgents).toHaveBeenCalledWith({ pageIndex: 1, recordsPerPage: 50 });
+      expect(result.uri).toBe("sequentum://agents");
+      expect(result.mimeType).toBe("application/json");
+    });
+
+    it("should read sequentum://spaces", async () => {
+      const result = await readResource("sequentum://spaces", mockApiClient as any);
+      expect(mockApiClient.getAllSpaces).toHaveBeenCalled();
+      expect(result.uri).toBe("sequentum://spaces");
+    });
+
+    it("should read sequentum://billing/balance", async () => {
+      const result = await readResource("sequentum://billing/balance", mockApiClient as any);
+      expect(mockApiClient.getCreditsBalance).toHaveBeenCalled();
+      expect(result.mimeType).toBe("application/json");
+      expect(JSON.parse(result.text)).toEqual({ availableCredits: 100 });
+    });
+
+    it("should read sequentum://agents/{agentId}", async () => {
+      const result = await readResource("sequentum://agents/42", mockApiClient as any);
+      expect(mockApiClient.getAgent).toHaveBeenCalledWith(42);
+      expect(JSON.parse(result.text)).toEqual({ id: 42, name: "Test Agent" });
+    });
+
+    it("should read sequentum://agents/{agentId}/versions", async () => {
+      await readResource("sequentum://agents/10/versions", mockApiClient as any);
+      expect(mockApiClient.getAgentVersions).toHaveBeenCalledWith(10);
+    });
+
+    it("should read sequentum://agents/{agentId}/schedules", async () => {
+      await readResource("sequentum://agents/10/schedules", mockApiClient as any);
+      expect(mockApiClient.getAgentSchedules).toHaveBeenCalledWith(10);
+    });
+
+    it("should read sequentum://spaces/{spaceId}", async () => {
+      await readResource("sequentum://spaces/5", mockApiClient as any);
+      expect(mockApiClient.getSpace).toHaveBeenCalledWith(5);
+    });
+
+    it("should read sequentum://spaces/{spaceId}/agents", async () => {
+      await readResource("sequentum://spaces/5/agents", mockApiClient as any);
+      expect(mockApiClient.getSpaceAgents).toHaveBeenCalledWith(5);
+    });
+
+    it("should read sequentum://billing/spending", async () => {
+      const result = await readResource("sequentum://billing/spending", mockApiClient as any);
+      expect(mockApiClient.getSpendingSummary).toHaveBeenCalled();
+      expect(result.mimeType).toBe("application/json");
+      expect(JSON.parse(result.text)).toEqual({ totalSpent: 500 });
+    });
+
+    it("should read sequentum://analytics/runs", async () => {
+      const result = await readResource("sequentum://analytics/runs", mockApiClient as any);
+      expect(mockApiClient.getRunsSummary).toHaveBeenCalled();
+      expect(JSON.parse(result.text)).toEqual({ totalRuns: 10 });
+    });
+
+    it("should read sequentum://analytics/upcoming-schedules", async () => {
+      const result = await readResource("sequentum://analytics/upcoming-schedules", mockApiClient as any);
+      expect(mockApiClient.getUpcomingSchedules).toHaveBeenCalled();
+      expect(JSON.parse(result.text)).toEqual([{ scheduleId: 1 }]);
+    });
+
+    it("should read sequentum://agents/{agentId}/runs", async () => {
+      const result = await readResource("sequentum://agents/42/runs", mockApiClient as any);
+      expect(mockApiClient.getAgentRuns).toHaveBeenCalledWith(42);
+      expect(JSON.parse(result.text)).toEqual([{ id: 100, status: "Completed" }]);
+    });
+
+    it("should read sequentum://agents/{agentId}/runs/{runId}", async () => {
+      const result = await readResource("sequentum://agents/42/runs/100", mockApiClient as any);
+      expect(mockApiClient.getRunStatus).toHaveBeenCalledWith(42, 100);
+      expect(JSON.parse(result.text)).toEqual({ id: 100, status: "Running" });
+    });
+
+    it("should read sequentum://agents/{agentId}/runs/{runId}/files", async () => {
+      const result = await readResource("sequentum://agents/42/runs/100/files", mockApiClient as any);
+      expect(mockApiClient.getRunFiles).toHaveBeenCalledWith(42, 100);
+      expect(JSON.parse(result.text)).toEqual([{ id: 1, name: "output.csv" }]);
+    });
+
+    it("should read sequentum://agents/{agentId}/runs/{runId}/diagnostics", async () => {
+      const result = await readResource("sequentum://agents/42/runs/100/diagnostics", mockApiClient as any);
+      expect(mockApiClient.getRunDiagnostics).toHaveBeenCalledWith(42, 100);
+      expect(JSON.parse(result.text)).toEqual({ runId: 100, errorMessage: "Timeout" });
+    });
+
+    it("should read sequentum://agents/{agentId}/latest-failure", async () => {
+      const result = await readResource("sequentum://agents/42/latest-failure", mockApiClient as any);
+      expect(mockApiClient.getLatestFailure).toHaveBeenCalledWith(42);
+      expect(JSON.parse(result.text)).toEqual({ runId: 99, status: "Failed" });
+    });
+
+    it("should throw for unknown resource URI", async () => {
+      await expect(readResource("sequentum://unknown", mockApiClient as any)).rejects.toThrow(
+        "Unknown resource URI: sequentum://unknown"
+      );
+    });
+
+    it("should throw for malformed agent URI", async () => {
+      await expect(readResource("sequentum://agents/abc", mockApiClient as any)).rejects.toThrow(
+        "Unknown resource URI"
+      );
+    });
+  });
+});
+
+// ==========================================
+// MCP Prompt Tests
+// ==========================================
+
+describe("MCP Prompts", () => {
+  describe("prompt definitions", () => {
+    it("should define 8 prompts", () => {
+      expect(prompts).toHaveLength(8);
+    });
+
+    it("should include debug-agent prompt with agentName argument", () => {
+      const prompt = prompts.find(p => p.name === "debug-agent");
+      expect(prompt).toBeDefined();
+      expect(prompt!.arguments).toHaveLength(1);
+      expect(prompt!.arguments![0].name).toBe("agentName");
+      expect(prompt!.arguments![0].required).toBe(true);
+    });
+
+    it("should include agent-health-check prompt with agentName argument", () => {
+      const prompt = prompts.find(p => p.name === "agent-health-check");
+      expect(prompt).toBeDefined();
+      expect(prompt!.arguments).toHaveLength(1);
+      expect(prompt!.arguments![0].name).toBe("agentName");
+      expect(prompt!.arguments![0].required).toBe(true);
+    });
+
+    it("should include spending-report prompt with no arguments", () => {
+      const prompt = prompts.find(p => p.name === "spending-report");
+      expect(prompt).toBeDefined();
+      expect(prompt!.arguments).toHaveLength(0);
+    });
+
+    it("should include run-and-monitor prompt with agentName argument", () => {
+      const prompt = prompts.find(p => p.name === "run-and-monitor");
+      expect(prompt).toBeDefined();
+      expect(prompt!.arguments).toHaveLength(1);
+      expect(prompt!.arguments![0].name).toBe("agentName");
+      expect(prompt!.arguments![0].required).toBe(true);
+    });
+
+    it("should include space-overview prompt with spaceName argument", () => {
+      const prompt = prompts.find(p => p.name === "space-overview");
+      expect(prompt).toBeDefined();
+      expect(prompt!.arguments).toHaveLength(1);
+      expect(prompt!.arguments![0].name).toBe("spaceName");
+      expect(prompt!.arguments![0].required).toBe(true);
+    });
+
+    it("should include daily-operations-report prompt with no arguments", () => {
+      const prompt = prompts.find(p => p.name === "daily-operations-report");
+      expect(prompt).toBeDefined();
+      expect(prompt!.arguments).toHaveLength(0);
+    });
+
+    it("should include schedule-agent prompt with agentName and optional scheduleDescription", () => {
+      const prompt = prompts.find(p => p.name === "schedule-agent");
+      expect(prompt).toBeDefined();
+      expect(prompt!.arguments).toHaveLength(2);
+      expect(prompt!.arguments![0].name).toBe("agentName");
+      expect(prompt!.arguments![0].required).toBe(true);
+      expect(prompt!.arguments![1].name).toBe("scheduleDescription");
+      expect(prompt!.arguments![1].required).toBe(false);
+    });
+
+    it("should include compare-runs prompt with agentName argument", () => {
+      const prompt = prompts.find(p => p.name === "compare-runs");
+      expect(prompt).toBeDefined();
+      expect(prompt!.arguments).toHaveLength(1);
+      expect(prompt!.arguments![0].name).toBe("agentName");
+      expect(prompt!.arguments![0].required).toBe(true);
+    });
+
+    it("should have descriptions on all prompts", () => {
+      prompts.forEach(p => {
+        expect(p.description).toBeTruthy();
+        expect(typeof p.description).toBe("string");
+      });
+    });
+  });
+
+  describe("getPromptMessages", () => {
+    it("should return messages for debug-agent with agentName", () => {
+      const messages = getPromptMessages("debug-agent", { agentName: "Amazon Scraper" });
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe("user");
+      expect((messages[0].content as { text: string }).text).toContain("Amazon Scraper");
+      expect((messages[0].content as { text: string }).text).toContain("search_agents");
+      expect((messages[0].content as { text: string }).text).toContain("get_latest_failure");
+    });
+
+    it("should return messages for agent-health-check with agentName", () => {
+      const messages = getPromptMessages("agent-health-check", { agentName: "Price Monitor" });
+      expect(messages).toHaveLength(1);
+      expect((messages[0].content as { text: string }).text).toContain("Price Monitor");
+      expect((messages[0].content as { text: string }).text).toContain("get_agent_runs");
+      expect((messages[0].content as { text: string }).text).toContain("list_agent_schedules");
+      expect((messages[0].content as { text: string }).text).toContain("get_agent_versions");
+    });
+
+    it("should return messages for spending-report without arguments", () => {
+      const messages = getPromptMessages("spending-report", undefined);
+      expect(messages).toHaveLength(1);
+      expect((messages[0].content as { text: string }).text).toContain("get_credits_balance");
+      expect((messages[0].content as { text: string }).text).toContain("get_spending_summary");
+      expect((messages[0].content as { text: string }).text).toContain("get_credit_history");
+    });
+
+    it("should return messages for run-and-monitor with agentName", () => {
+      const messages = getPromptMessages("run-and-monitor", { agentName: "Product Scraper" });
+      expect(messages).toHaveLength(1);
+      expect((messages[0].content as { text: string }).text).toContain("Product Scraper");
+      expect((messages[0].content as { text: string }).text).toContain("start_agent");
+      expect((messages[0].content as { text: string }).text).toContain("get_run_status");
+      expect((messages[0].content as { text: string }).text).toContain("get_run_files");
+    });
+
+    it("should throw for debug-agent without agentName", () => {
+      expect(() => getPromptMessages("debug-agent", {})).toThrow("Missing required argument: agentName");
+      expect(() => getPromptMessages("debug-agent", undefined)).toThrow("Missing required argument: agentName");
+    });
+
+    it("should throw for agent-health-check without agentName", () => {
+      expect(() => getPromptMessages("agent-health-check", {})).toThrow("Missing required argument: agentName");
+    });
+
+    it("should throw for run-and-monitor without agentName", () => {
+      expect(() => getPromptMessages("run-and-monitor", {})).toThrow("Missing required argument: agentName");
+    });
+
+    it("should return messages for space-overview with spaceName", () => {
+      const messages = getPromptMessages("space-overview", { spaceName: "Production" });
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe("user");
+      expect((messages[0].content as { text: string }).text).toContain("Production");
+      expect((messages[0].content as { text: string }).text).toContain("search_space_by_name");
+      expect((messages[0].content as { text: string }).text).toContain("get_space_agents");
+      expect((messages[0].content as { text: string }).text).toContain("get_latest_failure");
+    });
+
+    it("should throw for space-overview without spaceName", () => {
+      expect(() => getPromptMessages("space-overview", {})).toThrow("Missing required argument: spaceName");
+      expect(() => getPromptMessages("space-overview", undefined)).toThrow("Missing required argument: spaceName");
+    });
+
+    it("should return messages for daily-operations-report without arguments", () => {
+      const messages = getPromptMessages("daily-operations-report", undefined);
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe("user");
+      expect((messages[0].content as { text: string }).text).toContain("get_runs_summary");
+      expect((messages[0].content as { text: string }).text).toContain("get_records_summary");
+      expect((messages[0].content as { text: string }).text).toContain("get_credits_balance");
+      expect((messages[0].content as { text: string }).text).toContain("get_spending_summary");
+      expect((messages[0].content as { text: string }).text).toContain("get_scheduled_runs");
+    });
+
+    it("should return messages for schedule-agent with agentName", () => {
+      const messages = getPromptMessages("schedule-agent", { agentName: "Daily Scraper" });
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe("user");
+      expect((messages[0].content as { text: string }).text).toContain("Daily Scraper");
+      expect((messages[0].content as { text: string }).text).toContain("search_agents");
+      expect((messages[0].content as { text: string }).text).toContain("list_agent_schedules");
+      expect((messages[0].content as { text: string }).text).toContain("create_agent_schedule");
+    });
+
+    it("should include schedule description hint when provided", () => {
+      const messages = getPromptMessages("schedule-agent", {
+        agentName: "Daily Scraper",
+        scheduleDescription: "every Monday at 9am",
+      });
+      expect((messages[0].content as { text: string }).text).toContain("every Monday at 9am");
+    });
+
+    it("should ask for schedule when scheduleDescription is not provided", () => {
+      const messages = getPromptMessages("schedule-agent", { agentName: "Daily Scraper" });
+      expect((messages[0].content as { text: string }).text).toContain("Ask the user what schedule");
+    });
+
+    it("should throw for schedule-agent without agentName", () => {
+      expect(() => getPromptMessages("schedule-agent", {})).toThrow("Missing required argument: agentName");
+      expect(() => getPromptMessages("schedule-agent", undefined)).toThrow("Missing required argument: agentName");
+    });
+
+    it("should return messages for compare-runs with agentName", () => {
+      const messages = getPromptMessages("compare-runs", { agentName: "Price Monitor" });
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe("user");
+      expect((messages[0].content as { text: string }).text).toContain("Price Monitor");
+      expect((messages[0].content as { text: string }).text).toContain("search_agents");
+      expect((messages[0].content as { text: string }).text).toContain("get_agent_runs");
+      expect((messages[0].content as { text: string }).text).toContain("get_run_diagnostics");
+    });
+
+    it("should throw for compare-runs without agentName", () => {
+      expect(() => getPromptMessages("compare-runs", {})).toThrow("Missing required argument: agentName");
+      expect(() => getPromptMessages("compare-runs", undefined)).toThrow("Missing required argument: agentName");
+    });
+
+    it("should throw for unknown prompt name", () => {
+      expect(() => getPromptMessages("non-existent-prompt", {})).toThrow("Unknown prompt: non-existent-prompt");
     });
   });
 });
