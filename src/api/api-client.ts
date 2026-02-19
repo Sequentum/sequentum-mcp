@@ -12,6 +12,7 @@ import {
   ApiErrorBody,
   AgentScheduleApiModel,
   CreateScheduleRequest,
+  UpdateScheduleRequest,
   UpcomingScheduleApiModel,
   CreditsBalanceApiModel,
   SpendingSummaryApiModel,
@@ -584,22 +585,30 @@ export class SequentumApiClient {
     agentId: number,
     request: CreateScheduleRequest
   ): Promise<AgentScheduleApiModel> {
+    const body: Record<string, unknown> = {
+      Name: request.name,
+      IsEnabled: request.isEnabled ?? true,
+      Parallelism: request.parallelism ?? 1,
+    };
+    if (request.scheduleType !== undefined) body.ScheduleType = request.scheduleType;
+    if (request.cronExpression !== undefined) body.CronExpression = request.cronExpression;
+    if (request.startTime !== undefined) body.StartTime = request.startTime;
+    if (request.runEveryCount !== undefined) body.RunEveryCount = request.runEveryCount;
+    if (request.runEveryPeriod !== undefined) body.RunEveryPeriod = request.runEveryPeriod;
+    if (request.timezone !== undefined) body.Timezone = request.timezone;
+    if (request.inputParameters !== undefined) body.InputParameters = request.inputParameters;
+    if (request.parallelMaxConcurrency !== undefined) body.ParallelMaxConcurrency = request.parallelMaxConcurrency;
+    if (request.parallelExport !== undefined) body.ParallelExport = request.parallelExport;
+    if (request.logLevel !== undefined) body.LogLevel = request.logLevel;
+    if (request.logMode !== undefined) body.LogMode = request.logMode;
+    if (request.isExclusive !== undefined) body.IsExclusive = request.isExclusive;
+    if (request.isWaitOnFailure !== undefined) body.IsWaitOnFailure = request.isWaitOnFailure;
+
     return this.request<AgentScheduleApiModel>(
       `/api/v1/agent/${agentId}/schedules`,
       {
         method: "POST",
-        body: JSON.stringify({
-          Name: request.name,
-          ScheduleType: request.scheduleType,
-          CronExpression: request.cronExpression,
-          StartTime: request.startTime,
-          RunEveryCount: request.runEveryCount,
-          RunEveryPeriod: request.runEveryPeriod,
-          Timezone: request.timezone,
-          InputParameters: request.inputParameters,
-          IsEnabled: request.isEnabled ?? true,
-          Parallelism: request.parallelism ?? 1,
-        }),
+        body: JSON.stringify(body),
       }
     );
   }
@@ -613,6 +622,83 @@ export class SequentumApiClient {
     await this.requestVoid(
       `/api/v1/agent/${agentId}/schedules/${scheduleId}`,
       { method: "DELETE" }
+    );
+  }
+
+  /**
+   * Get a specific schedule by ID
+   * @param agentId - The ID of the agent
+   * @param scheduleId - The ID of the schedule
+   * @returns The schedule details
+   */
+  async getAgentSchedule(agentId: number, scheduleId: number): Promise<AgentScheduleApiModel> {
+    return this.request<AgentScheduleApiModel>(
+      `/api/v1/agent/${agentId}/schedules/${scheduleId}`
+    );
+  }
+
+  /**
+   * Update an existing schedule
+   * @param agentId - The ID of the agent
+   * @param scheduleId - The ID of the schedule to update
+   * @param request - The updated schedule configuration
+   * @returns The updated schedule
+   */
+  async updateAgentSchedule(
+    agentId: number,
+    scheduleId: number,
+    request: UpdateScheduleRequest
+  ): Promise<AgentScheduleApiModel> {
+    const body: Record<string, unknown> = { Name: request.name };
+    if (request.scheduleType !== undefined) body.ScheduleType = request.scheduleType;
+    if (request.cronExpression !== undefined) body.CronExpression = request.cronExpression;
+    if (request.localSchedule !== undefined) body.LocalSchedule = request.localSchedule;
+    if (request.startTime !== undefined) body.StartTime = request.startTime;
+    if (request.runEveryCount !== undefined) body.RunEveryCount = request.runEveryCount;
+    if (request.runEveryPeriod !== undefined) body.RunEveryPeriod = request.runEveryPeriod;
+    if (request.timezone !== undefined) body.Timezone = request.timezone;
+    if (request.inputParameters !== undefined) body.InputParameters = request.inputParameters;
+    if (request.isEnabled !== undefined) body.IsEnabled = request.isEnabled;
+    if (request.parallelism !== undefined) body.Parallelism = request.parallelism;
+    if (request.parallelMaxConcurrency !== undefined) body.ParallelMaxConcurrency = request.parallelMaxConcurrency;
+    if (request.parallelExport !== undefined) body.ParallelExport = request.parallelExport;
+    if (request.proxyPoolId !== undefined) body.ProxyPoolId = request.proxyPoolId;
+    if (request.serverGroupId !== undefined) body.ServerGroupId = request.serverGroupId;
+    if (request.logLevel !== undefined) body.LogLevel = request.logLevel;
+    if (request.logMode !== undefined) body.LogMode = request.logMode;
+    if (request.isExclusive !== undefined) body.IsExclusive = request.isExclusive;
+    if (request.isWaitOnFailure !== undefined) body.IsWaitOnFailure = request.isWaitOnFailure;
+
+    return this.request<AgentScheduleApiModel>(
+      `/api/v1/agent/${agentId}/schedules/${scheduleId}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }
+    );
+  }
+
+  /**
+   * Enable a schedule so it runs according to its configuration
+   * @param agentId - The ID of the agent
+   * @param scheduleId - The ID of the schedule to enable
+   */
+  async enableAgentSchedule(agentId: number, scheduleId: number): Promise<void> {
+    await this.requestVoid(
+      `/api/v1/agent/${agentId}/schedules/${scheduleId}/enable`,
+      { method: "POST" }
+    );
+  }
+
+  /**
+   * Disable a schedule so it will not run until re-enabled
+   * @param agentId - The ID of the agent
+   * @param scheduleId - The ID of the schedule to disable
+   */
+  async disableAgentSchedule(agentId: number, scheduleId: number): Promise<void> {
+    await this.requestVoid(
+      `/api/v1/agent/${agentId}/schedules/${scheduleId}/disable`,
+      { method: "POST" }
     );
   }
 

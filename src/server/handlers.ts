@@ -187,7 +187,7 @@ function summarizeAgents(agents: AgentApiModel[]) {
  * Type guard for paginated agent responses from the API.
  */
 function isPaginatedResponse(r: unknown): r is PaginatedAgentsResponse {
-  return r !== null && typeof r === 'object' && 'data' in r && Array.isArray((r as PaginatedAgentsResponse).data);
+  return r !== null && typeof r === 'object' && 'agents' in r && Array.isArray((r as PaginatedAgentsResponse).agents);
 }
 
 // ==========================================
@@ -288,18 +288,18 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
             console.error(`[DEBUG] Response type: ${typeof response}, isArray: ${Array.isArray(response)}`);
           }
 
-          // Parse response — either a plain array or a PaginatedAgentsResponse
+          // Parse response — either a plain array (no pagination) or a PaginatedAgentsResponse
           let agents: AgentApiModel[];
-          let paginationInfo: { totalCount: number; pageIndex: number; recordsPerPage: number } | null = null;
+          let paginationInfo: { totalRecordCount: number; pageIndex: number; recordsPerPage: number } | null = null;
 
           if (Array.isArray(response)) {
             agents = response;
           } else if (isPaginatedResponse(response)) {
-            agents = response.data;
+            agents = response.agents;
             paginationInfo = {
-              totalCount: response.totalCount,
-              pageIndex: response.pageIndex,
-              recordsPerPage: response.recordsPerPage,
+              totalRecordCount: response.totalRecordCount,
+              pageIndex: filters.pageIndex ?? 1,
+              recordsPerPage: filters.recordsPerPage ?? 50,
             };
           } else {
             throw new Error(`Unexpected response type: ${typeof response}`);
@@ -563,11 +563,17 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
           const startTime = validateString(params, "startTime", false);
           const cronExpression = validateString(params, "cronExpression", false);
           const runEveryCount = validateNumber(params, "runEveryCount", { required: false, min: 1, integer: true });
-          const runEveryPeriod = validateNumber(params, "runEveryPeriod", { required: false, min: 0, max: 6, integer: true });
+          const runEveryPeriod = validateNumber(params, "runEveryPeriod", { required: false, min: 1, max: 5, integer: true });
           const timezone = validateString(params, "timezone", false);
           const inputParameters = validateJsonString(params, "inputParameters", false);
           const isEnabled = validateBoolean(params, "isEnabled", false);
           const parallelism = validateNumber(params, "parallelism", { required: false, min: 1, max: 50, integer: true });
+          const parallelMaxConcurrency = validateNumber(params, "parallelMaxConcurrency", { required: false, min: 1, integer: true });
+          const parallelExport = validateString(params, "parallelExport", false);
+          const logLevel = validateString(params, "logLevel", false);
+          const logMode = validateString(params, "logMode", false);
+          const isExclusive = validateBoolean(params, "isExclusive", false);
+          const isWaitOnFailure = validateBoolean(params, "isWaitOnFailure", false);
 
           // Validate schedule type specific parameters
           const effectiveScheduleType = scheduleType ?? 3; // Default to CRON
@@ -606,6 +612,12 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
             inputParameters,
             isEnabled: isEnabled ?? true,
             parallelism: parallelism ?? 1,
+            parallelMaxConcurrency,
+            parallelExport,
+            logLevel,
+            logMode,
+            isExclusive,
+            isWaitOnFailure,
           });
           return {
             content: [
@@ -627,6 +639,125 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
               {
                 type: "text",
                 text: `Successfully deleted schedule ${scheduleId} from agent ${agentId}`,
+              },
+            ],
+          };
+        }
+
+        case "get_agent_schedule": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
+          const schedule = await apiClient.getAgentSchedule(agentId, scheduleId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(schedule, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "update_agent_schedule": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
+          const name = validateString(params, "name")!;
+          const scheduleType = validateNumber(params, "scheduleType", { required: false, min: 1, max: 3, integer: true });
+          const startTime = validateString(params, "startTime", false);
+          const cronExpression = validateString(params, "cronExpression", false);
+          const runEveryCount = validateNumber(params, "runEveryCount", { required: false, min: 1, integer: true });
+          const runEveryPeriod = validateNumber(params, "runEveryPeriod", { required: false, min: 1, max: 5, integer: true });
+          const timezone = validateString(params, "timezone", false);
+          const inputParameters = validateJsonString(params, "inputParameters", false);
+          const isEnabled = validateBoolean(params, "isEnabled", false);
+          const parallelism = validateNumber(params, "parallelism", { required: false, min: 1, max: 50, integer: true });
+          const parallelMaxConcurrency = validateNumber(params, "parallelMaxConcurrency", { required: false, min: 1, integer: true });
+          const parallelExport = validateString(params, "parallelExport", false);
+          const logLevel = validateString(params, "logLevel", false);
+          const logMode = validateString(params, "logMode", false);
+          const isExclusive = validateBoolean(params, "isExclusive", false);
+          const isWaitOnFailure = validateBoolean(params, "isWaitOnFailure", false);
+
+          const hasCronFields = cronExpression !== undefined;
+          const hasRunEveryFields = runEveryCount !== undefined || runEveryPeriod !== undefined;
+
+          if (hasCronFields && hasRunEveryFields && scheduleType === undefined) {
+            throw new Error(
+              "Conflicting schedule fields: both cronExpression and runEveryCount/runEveryPeriod were provided without an explicit scheduleType. " +
+              "Specify scheduleType to clarify intent (2=RunEvery, 3=CRON)."
+            );
+          }
+
+          // Infer scheduleType from provided fields when not explicitly set,
+          // so the user doesn't have to redundantly specify it on every update.
+          let effectiveScheduleType = scheduleType;
+          if (effectiveScheduleType === undefined) {
+            if (hasCronFields) effectiveScheduleType = 3;
+            else if (hasRunEveryFields) effectiveScheduleType = 2;
+          }
+
+          if (effectiveScheduleType === 1 && startTime) {
+            validateStartTimeInFuture(startTime, 1);
+          }
+          if (effectiveScheduleType === 2 && startTime) {
+            validateStartTimeInFuture(startTime, 0);
+          }
+
+          const updated = await apiClient.updateAgentSchedule(agentId, scheduleId, {
+            name,
+            scheduleType: effectiveScheduleType,
+            startTime,
+            cronExpression,
+            runEveryCount,
+            runEveryPeriod,
+            timezone,
+            inputParameters,
+            isEnabled,
+            parallelism,
+            parallelMaxConcurrency,
+            parallelExport,
+            logLevel,
+            logMode,
+            isExclusive,
+            isWaitOnFailure,
+          });
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Schedule updated successfully.\n\n${JSON.stringify(updated, null, 2)}`,
+              },
+            ],
+          };
+        }
+
+        case "enable_agent_schedule": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
+          await apiClient.enableAgentSchedule(agentId, scheduleId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Successfully enabled schedule ${scheduleId} for agent ${agentId}. The schedule will now run according to its configuration.`,
+              },
+            ],
+          };
+        }
+
+        case "disable_agent_schedule": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
+          await apiClient.disableAgentSchedule(agentId, scheduleId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Successfully disabled schedule ${scheduleId} for agent ${agentId}. The schedule will not run until re-enabled.`,
               },
             ],
           };

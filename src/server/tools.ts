@@ -362,6 +362,29 @@ export const tools: Tool[] = [
         inputParameters: { type: "string", description: "Optional JSON string of input parameters to pass to each scheduled run." },
         isEnabled: { type: "boolean", description: "Whether the schedule is active. Default: true." },
         parallelism: { type: "number", description: "Number of parallel instances to run. Default: 1." },
+        parallelMaxConcurrency: { type: "number", description: "Maximum concurrent parallel instances. Only relevant when parallelism > 1." },
+        parallelExport: {
+          type: "string",
+          enum: ["Combined", "Separated"],
+          description: "How parallel run exports are handled. 'Combined' merges output, 'Separated' keeps per-instance files.",
+        },
+        logLevel: {
+          type: "string",
+          enum: ["Fatal", "Error", "Warning", "Info"],
+          description: "Log verbosity for scheduled runs. Default: 'Info'.",
+        },
+        logMode: {
+          type: "string",
+          enum: ["Text", "TextAndHtml"],
+          description: "Log format. 'Text' for plain text, 'TextAndHtml' for both. Default: 'Text'.",
+        },
+        isExclusive: { type: "boolean", description: "If true, prevents concurrent runs of this agent. Default: false." },
+        isWaitOnFailure: { type: "boolean", description: "If true, waits before retrying after a failure. Default: false." },
+        // NOTE: proxyPoolId and serverGroupId are intentionally omitted from the MCP tool.
+        // The API supports them, but users have no way to discover valid IDs through the MCP
+        // (no list-proxy-pools or list-server-groups endpoints exist). Users needing these
+        // should configure them via the Sequentum dashboard.
+        // localSchedule is also omitted — it's a human-readable string generated server-side.
       },
       required: ["agentId", "name"],
     },
@@ -387,6 +410,135 @@ export const tools: Tool[] = [
     annotations: {
       readOnlyHint: false,
       destructiveHint: true,
+    },
+  },
+  {
+    name: "get_agent_schedule",
+    description:
+      "Get details of a specific schedule for an agent. " +
+      "Answers: 'Show me schedule X details', 'What are the settings for this schedule?'. " +
+      "Returns: Full schedule details including name, cronExpression, nextRunTime, isEnabled, timezone, and run parameters.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agentId: { type: "number", description: "The unique ID of the agent." },
+        scheduleId: { type: "number", description: "The schedule ID. Get this from list_agent_schedules." },
+      },
+      required: ["agentId", "scheduleId"],
+    },
+    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "update_agent_schedule",
+    description:
+      "Update an existing schedule for an agent. Modify timing, parameters, or other settings. " +
+      "Answers: 'Change the schedule to run at 10am', 'Update the cron expression', 'Modify the schedule timezone'. " +
+      "Three schedule types: RunOnce (1), RunEvery (2), CRON (3). " +
+      "TIP: Use get_agent_schedule or list_agent_schedules first to see current settings before updating.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agentId: { type: "number", description: "The unique ID of the agent." },
+        scheduleId: { type: "number", description: "The schedule ID to update. Get this from list_agent_schedules." },
+        name: { type: "string", description: "A descriptive name for the schedule." },
+        scheduleType: {
+          type: "number",
+          enum: [1, 2, 3],
+          description: "Schedule type: 1=RunOnce (single execution), 2=RunEvery (recurring interval), 3=CRON (cron expression)."
+        },
+        startTime: {
+          type: "string",
+          description: "Start time in ISO 8601 UTC format (e.g., '2026-01-20T14:30:00Z'). Required for RunOnce, optional for RunEvery."
+        },
+        cronExpression: {
+          type: "string",
+          description: "CRON expression for scheduleType=3. Format: 'minute hour day month weekday'. Examples: '0 9 * * *' (daily 9am), '0 9 * * 1,4' (Mon/Thu 9am)."
+        },
+        runEveryCount: {
+          type: "number",
+          description: "For scheduleType=2 (RunEvery): The interval count. Example: 30 with runEveryPeriod=1 means every 30 minutes."
+        },
+        runEveryPeriod: {
+          type: "number",
+          enum: [1, 2, 3, 4, 5],
+          description: "For scheduleType=2 (RunEvery): The time unit. 1=minutes, 2=hours, 3=days, 4=weeks, 5=months."
+        },
+        timezone: {
+          type: "string",
+          description: "Timezone for schedule interpretation (e.g., 'America/New_York', 'Europe/London')."
+        },
+        inputParameters: { type: "string", description: "Optional JSON string of input parameters to pass to each scheduled run." },
+        isEnabled: { type: "boolean", description: "Whether the schedule is active." },
+        parallelism: { type: "number", description: "Number of parallel instances to run." },
+        parallelMaxConcurrency: { type: "number", description: "Maximum concurrent parallel instances. Only relevant when parallelism > 1." },
+        parallelExport: {
+          type: "string",
+          enum: ["Combined", "Separated"],
+          description: "How parallel run exports are handled. 'Combined' merges output, 'Separated' keeps per-instance files.",
+        },
+        logLevel: {
+          type: "string",
+          enum: ["Fatal", "Error", "Warning", "Info"],
+          description: "Log verbosity for scheduled runs. Default: 'Info'.",
+        },
+        logMode: {
+          type: "string",
+          enum: ["Text", "TextAndHtml"],
+          description: "Log format. 'Text' for plain text, 'TextAndHtml' for both. Default: 'Text'.",
+        },
+        isExclusive: { type: "boolean", description: "If true, prevents concurrent runs of this agent." },
+        isWaitOnFailure: { type: "boolean", description: "If true, waits before retrying after a failure." },
+        // NOTE: proxyPoolId and serverGroupId are intentionally omitted from the MCP tool.
+        // The API supports them, but users have no way to discover valid IDs through the MCP
+        // (no list-proxy-pools or list-server-groups endpoints exist). Users needing these
+        // should configure them via the Sequentum dashboard.
+        // localSchedule is also omitted — it's a human-readable string generated server-side.
+      },
+      required: ["agentId", "scheduleId", "name"],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+    },
+  },
+  {
+    name: "enable_agent_schedule",
+    description:
+      "Enable a previously disabled schedule so it will run according to its configuration. " +
+      "Answers: 'Turn on the schedule', 'Re-enable the Monday schedule', 'Activate schedule X'. " +
+      "TIP: Use list_agent_schedules to check current isEnabled status first.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agentId: { type: "number", description: "The unique ID of the agent." },
+        scheduleId: { type: "number", description: "The schedule ID to enable. Get this from list_agent_schedules." },
+      },
+      required: ["agentId", "scheduleId"],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+    },
+  },
+  {
+    name: "disable_agent_schedule",
+    description:
+      "Disable a schedule so it will not run until re-enabled. The schedule is preserved but inactive. " +
+      "Answers: 'Pause the schedule', 'Turn off the daily run', 'Disable schedule X temporarily'. " +
+      "TIP: Unlike delete, this preserves the schedule configuration. Use enable_agent_schedule to reactivate.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agentId: { type: "number", description: "The unique ID of the agent." },
+        scheduleId: { type: "number", description: "The schedule ID to disable. Get this from list_agent_schedules." },
+      },
+      required: ["agentId", "scheduleId"],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
     },
   },
   {

@@ -38,6 +38,30 @@ export const resources: Resource[] = [
       "Shows availableCredits, organizationId, and retrievedAt timestamp.",
     mimeType: "application/json",
   },
+  {
+    uri: "sequentum://billing/spending",
+    name: "Monthly Spending",
+    description:
+      "Spending summary for the current month. " +
+      "Shows totalSpent, startDate, endDate, organizationId, and currentBalance.",
+    mimeType: "application/json",
+  },
+  {
+    uri: "sequentum://analytics/runs",
+    name: "Recent Runs Summary",
+    description:
+      "Summary of all agent runs in the last 24 hours. " +
+      "Shows totalRuns, completedRuns, failedRuns, runningRuns, queuedRuns, and stoppedRuns.",
+    mimeType: "application/json",
+  },
+  {
+    uri: "sequentum://analytics/upcoming-schedules",
+    name: "Upcoming Schedules",
+    description:
+      "All scheduled runs for the next 7 days across all agents. " +
+      "Shows scheduleId, agentId, agentName, scheduleName, nextRunTime, and isEnabled.",
+    mimeType: "application/json",
+  },
 ];
 
 // ==========================================
@@ -85,6 +109,46 @@ export const resourceTemplates: ResourceTemplate[] = [
       "status, configType, and lastActivity for each agent.",
     mimeType: "application/json",
   },
+  {
+    uriTemplate: "sequentum://agents/{agentId}/runs",
+    name: "Agent Runs",
+    description:
+      "Recent run history for a specific agent (up to 50 most recent). " +
+      "Shows run id, status, startTime, endTime, records extracted/exported, and errors.",
+    mimeType: "application/json",
+  },
+  {
+    uriTemplate: "sequentum://agents/{agentId}/runs/{runId}",
+    name: "Run Status",
+    description:
+      "Current status and details of a specific agent run. " +
+      "Shows id, status, startTime, endTime, records, errors, and runtime.",
+    mimeType: "application/json",
+  },
+  {
+    uriTemplate: "sequentum://agents/{agentId}/runs/{runId}/files",
+    name: "Run Files",
+    description:
+      "Output files produced by a completed agent run. " +
+      "Shows file id, name, fileType, fileSize, and created date.",
+    mimeType: "application/json",
+  },
+  {
+    uriTemplate: "sequentum://agents/{agentId}/runs/{runId}/diagnostics",
+    name: "Run Diagnostics",
+    description:
+      "Detailed diagnostics for a specific run including error messages, " +
+      "statistics, possible failure causes, and suggested remediation actions.",
+    mimeType: "application/json",
+  },
+  {
+    uriTemplate: "sequentum://agents/{agentId}/latest-failure",
+    name: "Latest Failure",
+    description:
+      "Diagnostics for the most recent failed run of an agent. " +
+      "Shows error message, possible causes, suggested actions, and run statistics.",
+    mimeType: "application/json",
+  },
 ];
 
 // ==========================================
@@ -107,10 +171,11 @@ export async function readResource(
   // Static resources
   if (uri === "sequentum://agents") {
     const response = await apiClient.getAllAgents({ pageIndex: 1, recordsPerPage: 50 });
+    const agents = Array.isArray(response) ? response : response.agents;
     return {
       uri,
       mimeType: "application/json",
-      text: JSON.stringify(response, null, 2),
+      text: JSON.stringify(agents, null, 2),
     };
   }
 
@@ -132,8 +197,98 @@ export async function readResource(
     };
   }
 
+  if (uri === "sequentum://billing/spending") {
+    const spending = await apiClient.getSpendingSummary();
+    return {
+      uri,
+      mimeType: "application/json",
+      text: JSON.stringify(spending, null, 2),
+    };
+  }
+
+  if (uri === "sequentum://analytics/runs") {
+    const runs = await apiClient.getRunsSummary();
+    return {
+      uri,
+      mimeType: "application/json",
+      text: JSON.stringify(runs, null, 2),
+    };
+  }
+
+  if (uri === "sequentum://analytics/upcoming-schedules") {
+    const schedules = await apiClient.getUpcomingSchedules();
+    return {
+      uri,
+      mimeType: "application/json",
+      text: JSON.stringify(schedules, null, 2),
+    };
+  }
+
   // Templated resources — match patterns and extract IDs
   let match: RegExpExecArray | null;
+
+  // sequentum://agents/{agentId}/runs/{runId}/diagnostics
+  match = /^sequentum:\/\/agents\/(\d+)\/runs\/(\d+)\/diagnostics$/.exec(uri);
+  if (match) {
+    const agentId = parseInt(match[1], 10);
+    const runId = parseInt(match[2], 10);
+    const diagnostics = await apiClient.getRunDiagnostics(agentId, runId);
+    return {
+      uri,
+      mimeType: "application/json",
+      text: JSON.stringify(diagnostics, null, 2),
+    };
+  }
+
+  // sequentum://agents/{agentId}/runs/{runId}/files
+  match = /^sequentum:\/\/agents\/(\d+)\/runs\/(\d+)\/files$/.exec(uri);
+  if (match) {
+    const agentId = parseInt(match[1], 10);
+    const runId = parseInt(match[2], 10);
+    const files = await apiClient.getRunFiles(agentId, runId);
+    return {
+      uri,
+      mimeType: "application/json",
+      text: JSON.stringify(files, null, 2),
+    };
+  }
+
+  // sequentum://agents/{agentId}/runs/{runId}  (must come after /diagnostics and /files)
+  match = /^sequentum:\/\/agents\/(\d+)\/runs\/(\d+)$/.exec(uri);
+  if (match) {
+    const agentId = parseInt(match[1], 10);
+    const runId = parseInt(match[2], 10);
+    const status = await apiClient.getRunStatus(agentId, runId);
+    return {
+      uri,
+      mimeType: "application/json",
+      text: JSON.stringify(status, null, 2),
+    };
+  }
+
+  // sequentum://agents/{agentId}/runs  (must come after specific run patterns)
+  match = /^sequentum:\/\/agents\/(\d+)\/runs$/.exec(uri);
+  if (match) {
+    const agentId = parseInt(match[1], 10);
+    const runs = await apiClient.getAgentRuns(agentId);
+    return {
+      uri,
+      mimeType: "application/json",
+      text: JSON.stringify(runs, null, 2),
+    };
+  }
+
+  // sequentum://agents/{agentId}/latest-failure
+  match = /^sequentum:\/\/agents\/(\d+)\/latest-failure$/.exec(uri);
+  if (match) {
+    const agentId = parseInt(match[1], 10);
+    const diagnostics = await apiClient.getLatestFailure(agentId);
+    return {
+      uri,
+      mimeType: "application/json",
+      text: JSON.stringify(diagnostics, null, 2),
+    };
+  }
 
   // sequentum://agents/{agentId}/versions
   match = /^sequentum:\/\/agents\/(\d+)\/versions$/.exec(uri);

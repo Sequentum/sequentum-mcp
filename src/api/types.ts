@@ -302,17 +302,14 @@ export interface ListAgentsRequest {
 }
 
 /**
- * Paginated response for agent list
+ * Paginated response for agent list.
+ * Returned by GET /api/v1/agent/all when pagination params (pageIndex, recordsPerPage) are provided.
  */
 export interface PaginatedAgentsResponse {
   /** Array of agents */
-  data: AgentApiModel[];
+  agents: AgentApiModel[];
   /** Total number of agents matching the query */
-  totalCount: number;
-  /** Current page index */
-  pageIndex: number;
-  /** Number of records per page */
-  recordsPerPage: number;
+  totalRecordCount: number;
 }
 
 // ==========================================
@@ -349,10 +346,12 @@ export interface AgentScheduleApiModel {
 /**
  * Request model for creating a schedule
  */
-export interface CreateScheduleRequest {
+/**
+ * Shared fields between create and update schedule requests.
+ */
+interface ScheduleRequestBase {
   name: string;
   cronExpression?: string;
-  localSchedule?: string;
   timezone?: string;
   /** Start time in ISO 8601 format (UTC). Required for RunOnce, optional for RunEvery, not used for CRON. */
   startTime?: string;
@@ -365,6 +364,29 @@ export interface CreateScheduleRequest {
   runEveryCount?: number;
   /** Period unit: 1=minutes, 2=hours, 3=days, 4=weeks, 5=months */
   runEveryPeriod?: number;
+  parallelMaxConcurrency?: number;
+  parallelExport?: string;
+  logLevel?: string;
+  logMode?: string;
+  isExclusive?: boolean;
+  isWaitOnFailure?: boolean;
+}
+
+export interface CreateScheduleRequest extends ScheduleRequestBase {}
+
+/**
+ * Request model for updating an existing schedule.
+ * Extends the base with fields only relevant for updates.
+ *
+ * Note: proxyPoolId, serverGroupId, and localSchedule are supported by the API
+ * but intentionally excluded from the MCP tool schemas because their valid values
+ * are not discoverable through any MCP-accessible endpoint. Users who need these
+ * should configure them via the Sequentum dashboard.
+ */
+export interface UpdateScheduleRequest extends ScheduleRequestBase {
+  proxyPoolId?: number;
+  serverGroupId?: number;
+  localSchedule?: string;
 }
 
 /**
