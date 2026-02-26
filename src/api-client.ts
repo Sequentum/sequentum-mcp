@@ -349,6 +349,21 @@ export class SequentumApiClient {
     });
   }
 
+  /**
+   * Delete a run and all its associated data, including files and storage.
+   * Primarily used for PII compliance when an agent extracts personally identifiable information.
+   * The run can be in either the active Runs table or the RunHistory table.
+   * @param agentId - The ID of the agent that contains the run
+   * @param runId - The ID of the run to delete
+   * @param removeMethod - The deletion method: RemoveEntireRun (default), RemoveAllFiles, or RemoveAllFilesAndAgentInput
+   */
+  async deleteRun(agentId: number, runId: number, removeMethod?: string): Promise<void> {
+    const query = removeMethod ? `?removeMethod=${removeMethod}` : "";
+    await this.requestVoid(`/api/v1/agent/${agentId}/run/${runId}${query}`, {
+      method: "DELETE",
+    });
+  }
+
   // ==========================================
   // File Operations
   // ==========================================
