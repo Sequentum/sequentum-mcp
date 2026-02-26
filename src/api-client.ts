@@ -357,7 +357,7 @@ export class SequentumApiClient {
    * @param runId - The ID of the run to delete
    * @param removeMethod - The deletion method: RemoveEntireRun (default), RemoveAllFiles, or RemoveAllFilesAndAgentInput
    */
-  async deleteRun(agentId: number, runId: number, removeMethod?: string): Promise<void> {
+  async deleteRun(agentId: number, runId: number, removeMethod?: "RemoveEntireRun" | "RemoveAllFiles" | "RemoveAllFilesAndAgentInput"): Promise<void> {
     const query = removeMethod ? `?removeMethod=${removeMethod}` : "";
     await this.requestVoid(`/api/v1/agent/${agentId}/run/${runId}${query}`, {
       method: "DELETE",
