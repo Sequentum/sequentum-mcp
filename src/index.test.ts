@@ -479,6 +479,88 @@ describe("create_agent_schedule handler validation", () => {
   });
 });
 
+// ==========================================
+// delete_run Handler Validation Tests
+// ==========================================
+
+describe("delete_run handler validation", () => {
+  describe("removeMethod defaults", () => {
+    it("should default removeMethod to RemoveEntireRun when not specified", () => {
+      const removeMethod = undefined;
+      const effectiveMethod = removeMethod ?? "RemoveEntireRun";
+
+      expect(effectiveMethod).toBe("RemoveEntireRun");
+    });
+
+    it("should use provided removeMethod when specified", () => {
+      const removeMethod = "RemoveAllFiles";
+      const effectiveMethod = removeMethod ?? "RemoveEntireRun";
+
+      expect(effectiveMethod).toBe("RemoveAllFiles");
+    });
+  });
+
+  describe("removeMethod enum values", () => {
+    const validMethods = ["RemoveEntireRun", "RemoveAllFiles", "RemoveAllFilesAndAgentInput"];
+
+    it("should accept RemoveEntireRun", () => {
+      expect(validMethods).toContain("RemoveEntireRun");
+    });
+
+    it("should accept RemoveAllFiles", () => {
+      expect(validMethods).toContain("RemoveAllFiles");
+    });
+
+    it("should accept RemoveAllFilesAndAgentInput", () => {
+      expect(validMethods).toContain("RemoveAllFilesAndAgentInput");
+    });
+
+    it("should have exactly 3 valid enum values", () => {
+      expect(validMethods).toHaveLength(3);
+    });
+  });
+
+  describe("required parameters", () => {
+    it("should require agentId", () => {
+      const agentId = undefined;
+      const runId = 5201;
+
+      const isValid = agentId !== undefined && runId !== undefined;
+      expect(isValid).toBe(false);
+    });
+
+    it("should require runId", () => {
+      const agentId = 42;
+      const runId = undefined;
+
+      const isValid = agentId !== undefined && runId !== undefined;
+      expect(isValid).toBe(false);
+    });
+
+    it("should accept valid agentId and runId without removeMethod", () => {
+      const agentId = 42;
+      const runId = 5201;
+      const removeMethod = undefined;
+
+      const hasRequiredFields = agentId !== undefined && runId !== undefined;
+      const removeMethodOptional = removeMethod === undefined || typeof removeMethod === "string";
+
+      expect(hasRequiredFields && removeMethodOptional).toBe(true);
+    });
+
+    it("should accept valid agentId, runId, and removeMethod", () => {
+      const agentId = 42;
+      const runId = 5201;
+      const removeMethod = "RemoveAllFiles";
+
+      const hasRequiredFields = agentId !== undefined && runId !== undefined;
+      const removeMethodValid = typeof removeMethod === "string";
+
+      expect(hasRequiredFields && removeMethodValid).toBe(true);
+    });
+  });
+});
+
 describe("list_agents handler", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());

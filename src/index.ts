@@ -422,6 +422,42 @@ const tools: Tool[] = [
     },
   },
 
+  {
+    name: "delete_run",
+    description:
+      "Delete a run and all its associated data, including files and storage. " +
+      "Primarily used for PII compliance when an agent extracts personally identifiable information. " +
+      "The run can be in either the active Runs table or the RunHistory table - both are checked automatically. " +
+      "The 'removeMethod' parameter controls what is deleted: " +
+      "RemoveEntireRun (default) completely removes the run record and all associated files. " +
+      "RemoveAllFiles removes files but keeps the run record. " +
+      "RemoveAllFilesAndAgentInput removes files and clears agent input parameters. " +
+      "Answers: 'Delete run X', 'Remove run files', 'Clean up PII data from a run'. " +
+      "WARNING: This is destructive and cannot be undone. " +
+      "REQUIRED: agentId and runId. Get runId from get_agent_runs.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agentId: { type: "number", description: "The ID of the agent that contains the run." },
+        runId: { type: "number", description: "The ID of the run to delete. Get from get_agent_runs." },
+        removeMethod: {
+          type: "string",
+          enum: ["RemoveEntireRun", "RemoveAllFiles", "RemoveAllFilesAndAgentInput"],
+          description:
+            "What to delete. " +
+            "RemoveEntireRun (default): Completely removes the run record and all associated files. " +
+            "RemoveAllFiles: Removes files but keeps the run record. " +
+            "RemoveAllFilesAndAgentInput: Removes files and clears agent input parameters.",
+        },
+      },
+      required: ["agentId", "runId"],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+    },
+  },
+
   // File Tools
   {
     name: "get_run_files",
@@ -1106,6 +1142,22 @@ function createMcpServer(apiClient: SequentumApiClient): Server {
             {
               type: "text",
               text: `Kill command sent for run ${runId} of agent ${agentId}. If the agent was running, it will initiate graceful stop. If already stopping, it will force immediate termination.`,
+            },
+          ],
+        };
+      }
+
+      case "delete_run": {
+        const params = args as Record<string, unknown>;
+        const agentId = validateNumber(params, "agentId")!;
+        const runId = validateNumber(params, "runId")!;
+        const removeMethod = validateString(params, "removeMethod", false);
+        await apiClient.deleteRun(agentId, runId, removeMethod);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully deleted run ${runId} from agent ${agentId} (method: ${removeMethod ?? "RemoveEntireRun"})`,
             },
           ],
         };
