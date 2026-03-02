@@ -15,7 +15,6 @@ for agent automation, monitoring, and data extraction.
 - **Agent management**: List, search, and get detailed information about your web scraping agents.
 - **Run automation**: Start, stop, and monitor agent executions with real-time status tracking.
 - **Schedule management**: Create and manage automated schedules using cron expressions.
-- **Billing & cost analysis**: Track agent costs, analyze spending by usage type, and get detailed cost breakdowns for runs.
 - **Analytics & diagnostics**: Get run statistics, error analysis, and suggested fixes for failures.
 - **Space organization**: Manage agent workspaces and run batch operations across spaces.
 
@@ -33,11 +32,7 @@ sharing sensitive information that you don't want accessible to MCP clients.
 
 ## Getting Started
 
-There are two ways to connect to the Sequentum MCP: running locally with an API key, or connecting to a remote server with OAuth authentication.
-
-### Option 1: Local (API Key)
-
-Run the MCP server locally using `npx`. Add the following config to your MCP client:
+Add the following config to your MCP client:
 
 ```json
 {
@@ -53,31 +48,11 @@ Run the MCP server locally using `npx`. Add the following config to your MCP cli
 }
 ```
 
-#### Get Your API Key
+### Get Your API Key
 
 1. Log in to the [Sequentum Control Center](https://dashboard.sequentum.com)
 2. Go to **Settings** → **API Keys**
 3. Click **Create API Key** and copy the generated key (starts with `sk-`)
-
-### Option 2: Remote Server (OAuth)
-
-Connect to a hosted Sequentum MCP server using OAuth 2.0 authentication. Add the following config to your MCP client:
-
-```json
-{
-  "mcpServers": {
-    "sequentum": {
-      "url": "https://mcp.sequentum.com/mcp"
-    }
-  }
-}
-```
-
-> **QA environment:** Use `https://mcp-qa.sequentum.com/mcp` instead for testing against the QA server.
-
-When you connect for the first time, your MCP client will open a browser window for you to log in with your Sequentum account.
-
-The server supports [Client ID Metadata Documents (CIMD)](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document-00) as the preferred client identification method, with [Dynamic Client Registration (RFC 7591)](https://datatracker.ietf.org/doc/html/rfc7591) as a fallback. MCP clients that support CIMD (such as Cursor) can use their own URL as a `client_id` without any prior registration.
 
 ### MCP Client Configuration Files
 
