@@ -172,6 +172,10 @@ How many records were found the last time <agent name> was run?
 What is my current balance?
 Schedule agent <agent name> to run every Monday at 9am.
 Look at the run log for <agent name> run at 9:22am. What caused the agent to fail?
+Which agents cost the most this month?
+Show me the cost breakdown for agent <agent name> in January.
+What were the most expensive runs for agent <agent name>?
+How much did I spend on server time vs exports last week?
 ```
 
 ## Available Tools
@@ -201,10 +205,13 @@ The Sequentum MCP Server provides tools across 8 categories for interacting with
   - [`create_agent_schedule`](docs/tool-reference.md#create_agent_schedule)
   - [`delete_agent_schedule`](docs/tool-reference.md#delete_agent_schedule)
   - [`get_scheduled_runs`](docs/tool-reference.md#get_scheduled_runs)
-- **Billing & Credits** (3 tools)
+- **Billing & Credits** (6 tools)
   - [`get_credits_balance`](docs/tool-reference.md#get_credits_balance)
   - [`get_spending_summary`](docs/tool-reference.md#get_spending_summary)
   - [`get_credit_history`](docs/tool-reference.md#get_credit_history)
+  - [`get_agents_usage`](docs/tool-reference.md#get_agents_usage)
+  - [`get_agent_cost_breakdown`](docs/tool-reference.md#get_agent_cost_breakdown)
+  - [`get_agent_runs_cost`](docs/tool-reference.md#get_agent_runs_cost)
 - **Space Management** (5 tools)
   - [`list_spaces`](docs/tool-reference.md#list_spaces)
   - [`get_space`](docs/tool-reference.md#get_space)
