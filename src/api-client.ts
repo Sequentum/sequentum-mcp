@@ -573,8 +573,9 @@ export class SequentumApiClient {
     if (name) params.append("name", name);
     if (usageTypes) params.append("usageTypes", usageTypes);
 
+    const query = params.toString() ? `?${params.toString()}` : "";
     return this.request<AgentsUsageApiResponse>(
-      `/api/v1/billing/agents?${params.toString()}`
+      `/api/v1/billing/agents${query}`
     );
   }
 
@@ -599,8 +600,9 @@ export class SequentumApiClient {
     if (timeUnit) params.append("timeUnit", timeUnit);
     if (usageTypes) params.append("usageTypes", usageTypes);
 
+    const query = params.toString() ? `?${params.toString()}` : "";
     return this.request<AgentCostBreakdownApiModel>(
-      `/api/v1/billing/agents/${agentId}?${params.toString()}`
+      `/api/v1/billing/agents/${agentId}${query}`
     );
   }
 
@@ -635,8 +637,9 @@ export class SequentumApiClient {
     if (sortOrder !== undefined) params.append("sortOrder", String(sortOrder));
     if (usageTypes) params.append("usageTypes", usageTypes);
 
+    const query = params.toString() ? `?${params.toString()}` : "";
     return this.request<AgentRunsApiResponse>(
-      `/api/v1/billing/agents/${agentId}/runs?${params.toString()}`
+      `/api/v1/billing/agents/${agentId}/runs${query}`
     );
   }
 

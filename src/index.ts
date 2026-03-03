@@ -41,7 +41,7 @@ import {
 import express, { Request, Response } from "express";
 import { SequentumApiClient } from "./api-client.js";
 import { AgentApiModel, AgentRunFileApiModel, AgentRunStatus, AuthMode, ConfigType, ListAgentsRequest } from "./types.js";
-import { validateStartTimeInFuture } from "./validation.js";
+import { validateStartTimeInFuture, validateISODate, validateDateRange, getDefaultDateRange } from "./validation.js";
 import { buildOAuthMetadata, SUPPORTED_SCOPES } from "./oauth-metadata.js";
 
 // Import version from package.json
@@ -166,37 +166,6 @@ function validateBoolean(
     );
   }
   return value;
-}
-
-function validateISODate(dateStr: string, field: string): void {
-  // Basic sanity check - ensure it's a non-empty string
-  if (!dateStr || typeof dateStr !== 'string' || dateStr.trim().length === 0) {
-    throw new Error(`Missing or invalid ${field}`);
-  }
-  
-  // Let JavaScript's Date constructor handle the validation
-  const date = new Date(dateStr);
-  if (isNaN(date.getTime())) {
-    throw new Error(
-      `Invalid date format for '${field}': expected ISO 8601 format (e.g., '2026-01-01' or '2026-01-01T00:00:00Z')`
-    );
-  }
-}
-
-/**
- * Get default date range for billing queries (start of current month to now)
- * Uses UTC to ensure consistent behavior across different server timezones
- */
-function getDefaultDateRange(): { startDate: string; endDate: string } {
-  const now = new Date();
-  // Use UTC methods to avoid timezone-dependent calculations
-  const startOfMonth = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
-  );
-  return {
-    startDate: startOfMonth.toISOString(),
-    endDate: now.toISOString(),
-  };
 }
 
 // ==========================================
@@ -1457,6 +1426,7 @@ function createMcpServer(apiClient: SequentumApiClient): Server {
         const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
         validateISODate(startDate, "startDate");
         validateISODate(endDate, "endDate");
+        validateDateRange(startDate, endDate);
         const pageIndex = validateNumber(params, "pageIndex", false);
         const recordsPerPage = validateNumber(params, "recordsPerPage", false);
         const sortColumn = validateString(params, "sortColumn", false);
@@ -1491,6 +1461,7 @@ function createMcpServer(apiClient: SequentumApiClient): Server {
         const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
         validateISODate(startDate, "startDate");
         validateISODate(endDate, "endDate");
+        validateDateRange(startDate, endDate);
         const timeUnit = validateString(params, "timeUnit", false);
         const usageTypes = validateString(params, "usageTypes", false);
         const result = await apiClient.getAgentCostBreakdown(
@@ -1518,6 +1489,7 @@ function createMcpServer(apiClient: SequentumApiClient): Server {
         const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
         validateISODate(startDate, "startDate");
         validateISODate(endDate, "endDate");
+        validateDateRange(startDate, endDate);
         const pageIndex = validateNumber(params, "pageIndex", false);
         const recordsPerPage = validateNumber(params, "recordsPerPage", false);
         const sortColumn = validateString(params, "sortColumn", false);
