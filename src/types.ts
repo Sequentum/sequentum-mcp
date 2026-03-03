@@ -346,6 +346,72 @@ export interface CreditHistoryApiModel {
   recordsPerPage: number;
 }
 
+/**
+ * Individual agent usage summary
+ */
+export interface AgentUsageApiModel {
+  agentId: number;
+  agentName?: string;
+  cost: number;
+  spaceId?: number;
+}
+
+/**
+ * Paginated response for agent usage list
+ */
+export interface AgentsUsageApiResponse {
+  agents: AgentUsageApiModel[];
+  totalRecordCount: number;
+  totalCost: number;
+  startDate: string;
+  endDate: string;
+}
+
+/**
+ * Usage data for a specific usage type (e.g., Server Time, Export GB)
+ */
+export interface UsageTypeDataApiModel {
+  type?: string;
+  data: number[];
+  totalCost: number;
+}
+
+/**
+ * Cost breakdown for a specific agent over time
+ */
+export interface AgentCostBreakdownApiModel {
+  agentId: number;
+  agentName?: string;
+  labels: string[];
+  usageTypes: UsageTypeDataApiModel[];
+  totalCost: number;
+  startDate: string;
+  endDate: string;
+}
+
+/**
+ * Individual run cost record
+ */
+export interface AgentRunCostApiModel {
+  runId: number;
+  date: string;
+  startTime?: string;
+  endTime?: string;
+  cost: number;
+  billingType?: string;
+}
+
+/**
+ * Paginated response for agent runs cost
+ */
+export interface AgentRunsApiResponse {
+  runs: AgentRunCostApiModel[];
+  totalRecordCount: number;
+  totalCost: number;
+  agentId: number;
+  agentName?: string;
+}
+
 // ==========================================
 // Space Types
 // ==========================================

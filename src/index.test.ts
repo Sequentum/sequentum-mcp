@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { validateStartTimeInFuture } from "./validation.js";
+import { validateStartTimeInFuture, validateISODate, validateDateRange, getDefaultDateRange } from "./validation.js";
 import { buildOAuthMetadata } from "./oauth-metadata.js";
 
 /**
@@ -714,5 +714,153 @@ describe("list_agents handler", () => {
       const defaultPageIndex = 1; // First page in 1-based system
       expect(defaultPageIndex).toBe(1);
     });
+  });
+});
+
+// ==========================================
+// validateISODate Tests
+// ==========================================
+
+describe("validateISODate", () => {
+  describe("valid ISO 8601 dates", () => {
+    it("should accept date-only format (YYYY-MM-DD)", () => {
+      expect(() => validateISODate("2026-01-01", "startDate")).not.toThrow();
+    });
+
+    it("should accept full ISO format with Z timezone", () => {
+      expect(() => validateISODate("2026-01-01T00:00:00Z", "startDate")).not.toThrow();
+    });
+
+    it("should accept ISO format with milliseconds", () => {
+      expect(() => validateISODate("2026-01-01T00:00:00.000Z", "startDate")).not.toThrow();
+    });
+
+    it("should accept ISO format with positive timezone offset", () => {
+      expect(() => validateISODate("2026-01-01T00:00:00+05:30", "startDate")).not.toThrow();
+    });
+
+    it("should accept ISO format with negative timezone offset", () => {
+      expect(() => validateISODate("2026-01-01T00:00:00-08:00", "startDate")).not.toThrow();
+    });
+  });
+
+  describe("invalid dates", () => {
+    it("should reject empty string", () => {
+      expect(() => validateISODate("", "startDate")).toThrow("Missing or invalid startDate");
+    });
+
+    it("should reject non-ISO format like 'January 1, 2026'", () => {
+      expect(() => validateISODate("January 1, 2026", "startDate")).toThrow(
+        "Invalid date format for 'startDate'"
+      );
+    });
+
+    it("should reject US date format like '1/1/2026'", () => {
+      expect(() => validateISODate("1/1/2026", "startDate")).toThrow(
+        "Invalid date format for 'startDate'"
+      );
+    });
+
+    it("should reject completely invalid string", () => {
+      expect(() => validateISODate("not-a-date", "startDate")).toThrow(
+        "Invalid date format for 'startDate'"
+      );
+    });
+
+    it("should reject date with invalid month (2026-13-01)", () => {
+      expect(() => validateISODate("2026-13-01", "endDate")).toThrow(
+        "Invalid date format for 'endDate'"
+      );
+    });
+
+    it("should accept structurally valid dates even if logically invalid (API handles calendar validation)", () => {
+      // JavaScript's Date rolls 2026-02-30 to 2026-03-02, so it passes format validation.
+      // The API server is responsible for rejecting logically invalid dates.
+      expect(() => validateISODate("2026-02-30", "endDate")).not.toThrow();
+    });
+
+    it("should include field name in error message", () => {
+      expect(() => validateISODate("bad", "myField")).toThrow("'myField'");
+    });
+  });
+});
+
+// ==========================================
+// validateDateRange Tests
+// ==========================================
+
+describe("validateDateRange", () => {
+  it("should accept when startDate equals endDate", () => {
+    expect(() => validateDateRange("2026-01-01", "2026-01-01")).not.toThrow();
+  });
+
+  it("should accept when startDate is before endDate", () => {
+    expect(() => validateDateRange("2026-01-01", "2026-01-31")).not.toThrow();
+  });
+
+  it("should throw when startDate is after endDate", () => {
+    expect(() => validateDateRange("2026-01-31", "2026-01-01")).toThrow(
+      "startDate must be before or equal to endDate"
+    );
+  });
+
+  it("should work with full ISO timestamps", () => {
+    expect(() =>
+      validateDateRange("2026-01-01T00:00:00Z", "2026-01-31T23:59:59Z")
+    ).not.toThrow();
+  });
+
+  it("should throw when timestamps are swapped", () => {
+    expect(() =>
+      validateDateRange("2026-01-31T23:59:59Z", "2026-01-01T00:00:00Z")
+    ).toThrow("startDate must be before or equal to endDate");
+  });
+});
+
+// ==========================================
+// getDefaultDateRange Tests
+// ==========================================
+
+describe("getDefaultDateRange", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-15T14:30:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("should return startDate as the first day of the current month in UTC", () => {
+    const { startDate } = getDefaultDateRange();
+    expect(startDate).toBe("2026-03-01T00:00:00.000Z");
+  });
+
+  it("should return endDate as the current time", () => {
+    const { endDate } = getDefaultDateRange();
+    expect(endDate).toBe("2026-03-15T14:30:00.000Z");
+  });
+
+  it("should return valid ISO 8601 strings", () => {
+    const { startDate, endDate } = getDefaultDateRange();
+    expect(() => validateISODate(startDate, "startDate")).not.toThrow();
+    expect(() => validateISODate(endDate, "endDate")).not.toThrow();
+  });
+
+  it("should return a valid range (startDate <= endDate)", () => {
+    const { startDate, endDate } = getDefaultDateRange();
+    expect(() => validateDateRange(startDate, endDate)).not.toThrow();
+  });
+
+  it("should handle January correctly (no off-by-one on month)", () => {
+    vi.setSystemTime(new Date("2026-01-20T10:00:00Z"));
+    const { startDate } = getDefaultDateRange();
+    expect(startDate).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  it("should handle year boundary (January 1st)", () => {
+    vi.setSystemTime(new Date("2026-01-01T00:00:01Z"));
+    const { startDate } = getDefaultDateRange();
+    expect(startDate).toBe("2026-01-01T00:00:00.000Z");
   });
 });

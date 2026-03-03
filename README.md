@@ -173,6 +173,9 @@ What is my current balance?
 Which agents cost the most this month?
 Schedule agent <agent name> to run every Monday at 9am.
 Look at the run log for <agent name> run at 9:22am. What caused the agent to fail?
+Show me the cost breakdown for agent <agent name> in January.
+What were the most expensive runs for agent <agent name>?
+How much did I spend on server time vs exports last week?
 ```
 
 ## Available Tools

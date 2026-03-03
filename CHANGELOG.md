@@ -1,13 +1,20 @@
 # Changelog
 
-## [1.1.3] - 2026-02-17
+## [Unreleased]
 
 ### Added
 
 - `delete_run` tool for deleting runs and associated data (PII compliance)
-- `get_agents_usage` tool for viewing agent costs over a date range
-- `get_agent_cost_breakdown` tool for detailed cost breakdown by usage type
-- `get_agent_runs_cost` tool for individual run costs for an agent
+- **Billing & Cost Analysis** tools for detailed agent cost tracking:
+  - `get_agents_usage` - Get all agents with their costs for a date range, with filtering and sorting options
+  - `get_agent_cost_breakdown` - Get cost breakdown by usage type for a specific agent over time (for charting)
+  - `get_agent_runs_cost` - Get individual run costs for a specific agent with detailed run information
+
+## [1.1.3] - 2026-02-17
+
+### Added
+
+
 - `kill_agent` tool for forceful agent termination (as a last resort when `stop_agent` fails)
 - OAuth 2.1 support with HTTP Streamable transport and RFC 8707 resource parameters
 - OAuth2 Protected Resource Metadata endpoint for MCP client authentication
