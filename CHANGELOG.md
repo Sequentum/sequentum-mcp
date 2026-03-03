@@ -4,6 +4,10 @@
 
 ### Added
 
+- `delete_run` tool for deleting runs and associated data (PII compliance)
+- `get_agents_usage` tool for viewing agent costs over a date range
+- `get_agent_cost_breakdown` tool for detailed cost breakdown by usage type
+- `get_agent_runs_cost` tool for individual run costs for an agent
 - `kill_agent` tool for forceful agent termination (as a last resort when `stop_agent` fails)
 - OAuth 2.1 support with HTTP Streamable transport and RFC 8707 resource parameters
 - OAuth2 Protected Resource Metadata endpoint for MCP client authentication
