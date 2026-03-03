@@ -425,15 +425,10 @@ const tools: Tool[] = [
   {
     name: "delete_run",
     description:
-      "Delete a run and all its associated data, including files and storage. " +
-      "Primarily used for PII compliance when an agent extracts personally identifiable information. " +
-      "The run can be in either the active Runs table or the RunHistory table - both are checked automatically. " +
-      "The 'removeMethod' parameter controls what is deleted: " +
-      "RemoveEntireRun (default) completely removes the run record and all associated files. " +
-      "RemoveAllFiles removes files but keeps the run record. " +
-      "RemoveAllFilesAndAgentInput removes files and clears agent input parameters. " +
+      "Delete a run and its associated data (files, storage). Used for PII compliance. " +
+      "Checks both active Runs and RunHistory tables automatically. " +
       "Answers: 'Delete run X', 'Remove run files', 'Clean up PII data from a run'. " +
-      "WARNING: This is destructive and cannot be undone. " +
+      "WARNING: Destructive and irreversible. " +
       "REQUIRED: agentId and runId. Get runId from get_agent_runs.",
     inputSchema: {
       type: "object" as const,
