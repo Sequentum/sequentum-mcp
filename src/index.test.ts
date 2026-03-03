@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { validateStartTimeInFuture, validateISODate, validateDateRange, getDefaultDateRange } from "./validation.js";
+import {
+  getDefaultDateRange,
+  validateDateRange,
+  validateEnum,
+  validateISODate,
+  validateNumber,
+  validateStartTimeInFuture,
+  validateString,
+} from "./validation.js";
 import { buildOAuthMetadata } from "./oauth-metadata.js";
 
 /**
@@ -51,199 +59,6 @@ describe("OAuth Authorization Server metadata (RFC 8414)", () => {
     // Resource indicators allow clients to specify which resource they're requesting a token for.
     // This is required by the MCP spec for proper token scoping.
     expect(metadata.resource_indicators_supported).toBe(true);
-  });
-});
-
-// ==========================================
-// Session Management Tests
-// ==========================================
-
-describe("HTTP session management", () => {
-  describe("orphaned session cleanup", () => {
-    it("should document that sessions without ID are cleaned up to prevent memory leaks", () => {
-      // This test documents the expected behavior:
-      // When a session is created but handleRequest doesn't return a session ID,
-      // the session should be cleaned up by calling server.close()
-      
-      // The cleanup logic in POST /mcp handler:
-      // 1. Session is created with createSession(token)
-      // 2. handleRequest is called
-      // 3. After handleRequest, check for mcp-session-id header
-      // 4. If newSessionId exists, store the session
-      // 5. If newSessionId is missing, call session.server.close() to cleanup
-      
-      const sessionCreated = true;
-      const sessionIdReturned = false;
-      
-      // When session is created but no ID returned, cleanup should occur
-      const shouldCleanup = sessionCreated && !sessionIdReturned;
-      expect(shouldCleanup).toBe(true);
-    });
-
-    it("should not cleanup sessions that are successfully stored", () => {
-      const sessionCreated = true;
-      const sessionIdReturned = true;
-      
-      // When session ID is returned, session should be stored, not cleaned up
-      const shouldCleanup = sessionCreated && !sessionIdReturned;
-      expect(shouldCleanup).toBe(false);
-    });
-
-    it("should handle errors during session cleanup gracefully", () => {
-      // Document that cleanup errors are logged but don't crash the server
-      // The try/catch around session.server.close() ensures robustness
-      
-      const closeError = new Error("Failed to close");
-      
-      // Error should be caught and logged, not thrown
-      expect(() => {
-        // Simulating the try/catch behavior
-        try {
-          throw closeError;
-        } catch (error) {
-          // Error is logged but not rethrown
-          expect(error).toBe(closeError);
-        }
-      }).not.toThrow();
-    });
-  });
-
-  describe("session storage", () => {
-    it("should store sessions in a Map keyed by session ID", () => {
-      const sessions = new Map<string, object>();
-      const sessionId = "test-session-123";
-      const session = { server: {}, transport: {}, apiClient: {} };
-      
-      sessions.set(sessionId, session);
-      
-      expect(sessions.has(sessionId)).toBe(true);
-      expect(sessions.get(sessionId)).toBe(session);
-    });
-
-    it("should not overwrite existing sessions", () => {
-      const sessions = new Map<string, object>();
-      const sessionId = "test-session-123";
-      const existingSession = { id: "existing" };
-      const newSession = { id: "new" };
-      
-      sessions.set(sessionId, existingSession);
-      
-      // The condition checks !sessions.has(newSessionId) before storing
-      if (!sessions.has(sessionId)) {
-        sessions.set(sessionId, newSession);
-      }
-      
-      // Existing session should not be overwritten
-      expect(sessions.get(sessionId)).toBe(existingSession);
-    });
-  });
-
-  describe("session cleanup interval", () => {
-    it("should cleanup stale sessions after 1 hour of inactivity", () => {
-      const SESSION_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
-      expect(SESSION_MAX_AGE_MS).toBe(3600000);
-    });
-
-    it("should run cleanup every 15 minutes", () => {
-      const SESSION_CLEANUP_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
-      expect(SESSION_CLEANUP_INTERVAL_MS).toBe(900000);
-    });
-
-    it("should identify stale sessions based on lastActivityAt", () => {
-      const SESSION_MAX_AGE_MS = 60 * 60 * 1000;
-      const now = Date.now();
-      
-      // Active session (5 minutes ago)
-      const activeSession = { lastActivityAt: now - (5 * 60 * 1000) };
-      const activeSessionAge = now - activeSession.lastActivityAt;
-      expect(activeSessionAge < SESSION_MAX_AGE_MS).toBe(true);
-      
-      // Stale session (2 hours ago)
-      const staleSession = { lastActivityAt: now - (2 * 60 * 60 * 1000) };
-      const staleSessionAge = now - staleSession.lastActivityAt;
-      expect(staleSessionAge > SESSION_MAX_AGE_MS).toBe(true);
-    });
-  });
-
-  describe("DELETE /mcp session termination", () => {
-    it("should call server.close() when terminating a session via DELETE", () => {
-      // Document the expected behavior:
-      // When DELETE /mcp is called with a valid session ID:
-      // 1. Get the session from the Map
-      // 2. Delete from sessions Map
-      // 3. Call session.server.close() to release resources
-      
-      const mockClose = vi.fn().mockResolvedValue(undefined);
-      const sessions = new Map<string, { server: { close: () => Promise<void> } }>();
-      const sessionId = "test-session-123";
-      const session = { server: { close: mockClose } };
-      
-      sessions.set(sessionId, session);
-      
-      // Simulate DELETE handler logic
-      if (sessionId && sessions.has(sessionId)) {
-        const sessionToClose = sessions.get(sessionId);
-        sessions.delete(sessionId);
-        sessionToClose?.server.close();
-      }
-      
-      expect(sessions.has(sessionId)).toBe(false);
-      expect(mockClose).toHaveBeenCalledTimes(1);
-    });
-
-    it("should handle errors during server.close() gracefully", () => {
-      // Document that close errors are caught and logged, not thrown
-      const closeError = new Error("Failed to close server");
-      
-      expect(() => {
-        try {
-          throw closeError;
-        } catch (e) {
-          // Error is logged but not rethrown (matches DEBUG-wrapped logging)
-          expect(e).toBe(closeError);
-        }
-      }).not.toThrow();
-    });
-
-    it("should not attempt cleanup for non-existent sessions", () => {
-      const sessions = new Map<string, object>();
-      const sessionId = "non-existent-session";
-      
-      // Simulate DELETE handler logic - no session to cleanup
-      const sessionExists = sessionId && sessions.has(sessionId);
-      
-      expect(sessionExists).toBe(false);
-    });
-
-    it("should remove session from Map before calling close", () => {
-      // Document the order of operations to prevent race conditions:
-      // 1. Remove from Map FIRST
-      // 2. Then close the server
-      // This ensures no new requests can use the session while it's closing
-      
-      const operationOrder: string[] = [];
-      const sessions = new Map<string, { server: { close: () => void } }>();
-      const sessionId = "test-session";
-      
-      const session = {
-        server: {
-          close: () => {
-            operationOrder.push("close");
-          }
-        }
-      };
-      sessions.set(sessionId, session);
-      
-      // Simulate DELETE handler
-      if (sessionId && sessions.has(sessionId)) {
-        const sessionToClose = sessions.get(sessionId);
-        sessions.delete(sessionId);
-        operationOrder.push("delete");
-        sessionToClose?.server.close();
-      }
-      
-      expect(operationOrder).toEqual(["delete", "close"]);
-    });
   });
 });
 
@@ -372,110 +187,30 @@ describe("validateStartTimeInFuture", () => {
 // ==========================================
 
 describe("create_agent_schedule handler validation", () => {
-  describe("RunOnce (scheduleType=1) validation rules", () => {
-    it("should require startTime for RunOnce schedule type", () => {
-      // This test documents the expected behavior:
-      // When scheduleType is 1 (RunOnce), startTime is required
-      const scheduleType = 1;
-      const startTime = undefined;
-      
-      const isValid = !(scheduleType === 1 && !startTime);
-      expect(isValid).toBe(false);
-    });
-
-    it("should accept RunOnce schedule with valid future startTime", () => {
-      const scheduleType = 1;
-      const startTime = "2026-01-20T14:30:00Z"; // Future date
-      
-      const hasRequiredFields = scheduleType === 1 && !!startTime;
-      expect(hasRequiredFields).toBe(true);
-    });
+  it("requires name (validateString default required=true)", () => {
+    expect(() => validateString({}, "name")).toThrow(/Missing required parameter: name/);
   });
 
-  describe("RunEvery (scheduleType=2) validation rules", () => {
-    it("should require runEveryCount for RunEvery schedule type", () => {
-      const scheduleType = 2;
-      const runEveryCount = undefined;
-      const runEveryPeriod = 1;
-      
-      const isValid = !(scheduleType === 2 && (runEveryCount === undefined || runEveryPeriod === undefined));
-      expect(isValid).toBe(false);
-    });
-
-    it("should require runEveryPeriod for RunEvery schedule type", () => {
-      const scheduleType = 2;
-      const runEveryCount = 30;
-      const runEveryPeriod = undefined;
-      
-      const isValid = !(scheduleType === 2 && (runEveryCount === undefined || runEveryPeriod === undefined));
-      expect(isValid).toBe(false);
-    });
-
-    it("should accept RunEvery schedule without startTime", () => {
-      const scheduleType = 2;
-      const runEveryCount = 30;
-      const runEveryPeriod = 1; // minutes
-      const startTime = undefined;
-      
-      const hasRequiredFields = scheduleType === 2 && runEveryCount !== undefined && runEveryPeriod !== undefined;
-      const startTimeOptional = startTime === undefined || typeof startTime === "string";
-      
-      expect(hasRequiredFields && startTimeOptional).toBe(true);
-    });
-
-    it("should accept RunEvery schedule with optional startTime", () => {
-      const scheduleType = 2;
-      const runEveryCount = 30;
-      const runEveryPeriod = 1; // minutes
-      const startTime = "2026-01-20T10:00:00Z";
-      
-      const hasRequiredFields = scheduleType === 2 && runEveryCount !== undefined && runEveryPeriod !== undefined;
-      expect(hasRequiredFields).toBe(true);
-    });
-
-    it("should validate all runEveryPeriod values (1=min, 2=hr, 3=day, 4=wk, 5=mo)", () => {
-      const validPeriods = [1, 2, 3, 4, 5];
-      validPeriods.forEach(period => {
-        expect(period >= 1 && period <= 5).toBe(true);
-      });
-    });
+  it("treats scheduleType as optional (validateNumber required=false)", () => {
+    const result = validateNumber({}, "scheduleType", false);
+    expect(result).toBeUndefined();
   });
 
-  describe("CRON (scheduleType=3) validation rules", () => {
-    it("should require cronExpression for CRON schedule type", () => {
-      const scheduleType = 3;
-      const cronExpression = undefined;
-      
-      const isValid = !(scheduleType === 3 && !cronExpression);
-      expect(isValid).toBe(false);
-    });
-
-    it("should accept CRON schedule with valid cronExpression", () => {
-      const scheduleType = 3;
-      const cronExpression = "0 9 * * *"; // Daily at 9am
-      
-      const hasRequiredFields = scheduleType === 3 && !!cronExpression;
-      expect(hasRequiredFields).toBe(true);
-    });
-
-    it("should not require startTime for CRON schedule type", () => {
-      const scheduleType = 3;
-      const cronExpression = "0 9 * * 1,4"; // Mon/Thu at 9am
-      const startTime = undefined;
-      
-      // CRON schedules don't use startTime
-      const isValid = scheduleType === 3 && !!cronExpression;
-      expect(isValid).toBe(true);
-    });
+  it("throws when scheduleType is the wrong type", () => {
+    expect(() =>
+      validateNumber({ scheduleType: "3" }, "scheduleType", false)
+    ).toThrow(/expected a number/);
   });
 
-  describe("default schedule type", () => {
-    it("should default to CRON (scheduleType=3) when not specified", () => {
-      const scheduleType = undefined;
-      const effectiveScheduleType = scheduleType ?? 3;
-      
-      expect(effectiveScheduleType).toBe(3);
-    });
+  it("treats startTime and cronExpression as optional strings", () => {
+    expect(validateString({}, "startTime", false)).toBeUndefined();
+    expect(validateString({}, "cronExpression", false)).toBeUndefined();
+  });
+
+  it("throws when startTime is not a string", () => {
+    expect(() =>
+      validateString({ startTime: 123 }, "startTime", false)
+    ).toThrow(/expected a string/);
   });
 });
 
@@ -484,80 +219,47 @@ describe("create_agent_schedule handler validation", () => {
 // ==========================================
 
 describe("delete_run handler validation", () => {
-  describe("removeMethod defaults", () => {
-    it("should default removeMethod to RemoveEntireRun when not specified", () => {
-      const removeMethod = undefined;
-      const effectiveMethod = removeMethod ?? "RemoveEntireRun";
+  const validMethods = [
+    "RemoveEntireRun",
+    "RemoveAllFiles",
+    "RemoveAllFilesAndAgentInput",
+  ] as const;
 
-      expect(effectiveMethod).toBe("RemoveEntireRun");
-    });
-
-    it("should use provided removeMethod when specified", () => {
-      const removeMethod = "RemoveAllFiles";
-      const effectiveMethod = removeMethod ?? "RemoveEntireRun";
-
-      expect(effectiveMethod).toBe("RemoveAllFiles");
-    });
+  it("returns undefined when removeMethod is omitted (optional)", () => {
+    const result = validateEnum({}, "removeMethod", validMethods, false);
+    expect(result).toBeUndefined();
   });
 
-  describe("removeMethod enum values", () => {
-    const validMethods = ["RemoveEntireRun", "RemoveAllFiles", "RemoveAllFilesAndAgentInput"];
-
-    it("should accept RemoveEntireRun", () => {
-      expect(validMethods).toContain("RemoveEntireRun");
-    });
-
-    it("should accept RemoveAllFiles", () => {
-      expect(validMethods).toContain("RemoveAllFiles");
-    });
-
-    it("should accept RemoveAllFilesAndAgentInput", () => {
-      expect(validMethods).toContain("RemoveAllFilesAndAgentInput");
-    });
-
-    it("should have exactly 3 valid enum values", () => {
-      expect(validMethods).toHaveLength(3);
-    });
+  it("accepts valid enum values", () => {
+    const result = validateEnum(
+      { removeMethod: "RemoveAllFiles" },
+      "removeMethod",
+      validMethods,
+      false
+    );
+    expect(result).toBe("RemoveAllFiles");
   });
 
-  describe("required parameters", () => {
-    it("should require agentId", () => {
-      const agentId = undefined;
-      const runId = 5201;
+  it("throws for invalid enum values", () => {
+    expect(() =>
+      validateEnum(
+        { removeMethod: "DropEverything" },
+        "removeMethod",
+        validMethods,
+        false
+      )
+    ).toThrow(/Invalid parameter 'removeMethod'/);
+  });
 
-      const isValid = agentId !== undefined && runId !== undefined;
-      expect(isValid).toBe(false);
-    });
-
-    it("should require runId", () => {
-      const agentId = 42;
-      const runId = undefined;
-
-      const isValid = agentId !== undefined && runId !== undefined;
-      expect(isValid).toBe(false);
-    });
-
-    it("should accept valid agentId and runId without removeMethod", () => {
-      const agentId = 42;
-      const runId = 5201;
-      const removeMethod = undefined;
-
-      const hasRequiredFields = agentId !== undefined && runId !== undefined;
-      const removeMethodOptional = removeMethod === undefined || typeof removeMethod === "string";
-
-      expect(hasRequiredFields && removeMethodOptional).toBe(true);
-    });
-
-    it("should accept valid agentId, runId, and removeMethod", () => {
-      const agentId = 42;
-      const runId = 5201;
-      const removeMethod = "RemoveAllFiles";
-
-      const hasRequiredFields = agentId !== undefined && runId !== undefined;
-      const removeMethodValid = typeof removeMethod === "string";
-
-      expect(hasRequiredFields && removeMethodValid).toBe(true);
-    });
+  it("throws when removeMethod is not a string", () => {
+    expect(() =>
+      validateEnum(
+        { removeMethod: 42 as unknown as string },
+        "removeMethod",
+        validMethods,
+        false
+      )
+    ).toThrow(/expected a string/);
   });
 });
 

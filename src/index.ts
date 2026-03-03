@@ -41,7 +41,16 @@ import {
 import express, { Request, Response } from "express";
 import { SequentumApiClient } from "./api-client.js";
 import { AgentApiModel, AgentRunFileApiModel, AgentRunStatus, AuthMode, ConfigType, ListAgentsRequest } from "./types.js";
-import { validateStartTimeInFuture, validateISODate, validateDateRange, getDefaultDateRange } from "./validation.js";
+import {
+  getDefaultDateRange,
+  validateBoolean,
+  validateDateRange,
+  validateEnum,
+  validateISODate,
+  validateNumber,
+  validateStartTimeInFuture,
+  validateString,
+} from "./validation.js";
 import { buildOAuthMetadata, SUPPORTED_SCOPES } from "./oauth-metadata.js";
 
 // Import version from package.json
@@ -107,66 +116,6 @@ const client = new SequentumApiClient(API_BASE_URL, authMode === "apikey" ? API_
 // ==========================================
 // Input Validation Helpers
 // ==========================================
-
-function validateNumber(
-  args: Record<string, unknown>,
-  field: string,
-  required: boolean = true
-): number | undefined {
-  const value = args[field];
-  if (value === undefined || value === null) {
-    if (required) {
-      throw new Error(`Missing required parameter: ${field}`);
-    }
-    return undefined;
-  }
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(
-      `Invalid parameter '${field}': expected a number, got ${typeof value}`
-    );
-  }
-  return value;
-}
-
-function validateString(
-  args: Record<string, unknown>,
-  field: string,
-  required: boolean = true
-): string | undefined {
-  const value = args[field];
-  if (value === undefined || value === null) {
-    if (required) {
-      throw new Error(`Missing required parameter: ${field}`);
-    }
-    return undefined;
-  }
-  if (typeof value !== "string") {
-    throw new Error(
-      `Invalid parameter '${field}': expected a string, got ${typeof value}`
-    );
-  }
-  return value;
-}
-
-function validateBoolean(
-  args: Record<string, unknown>,
-  field: string,
-  required: boolean = true
-): boolean | undefined {
-  const value = args[field];
-  if (value === undefined || value === null) {
-    if (required) {
-      throw new Error(`Missing required parameter: ${field}`);
-    }
-    return undefined;
-  }
-  if (typeof value !== "boolean") {
-    throw new Error(
-      `Invalid parameter '${field}': expected a boolean, got ${typeof value}`
-    );
-  }
-  return value;
-}
 
 // ==========================================
 // Response Helpers
@@ -990,9 +939,24 @@ function createMcpServer(apiClient: SequentumApiClient): Server {
         const statusNum = validateNumber(params, "status", false);
         const spaceId = validateNumber(params, "spaceId", false);
         const search = validateString(params, "search", false);
-        const configTypeStr = validateString(params, "configType", false);
-        const sortColumn = validateString(params, "sortColumn", false);
-        const sortOrderStr = validateString(params, "sortOrder", false);
+        const configTypeStr = validateEnum(
+          params,
+          "configType",
+          ["Agent", "Command", "Api", "Shared"] as const,
+          false
+        );
+        const sortColumn = validateEnum(
+          params,
+          "sortColumn",
+          ["name", "lastActivity", "created", "updated", "status", "configType"] as const,
+          false
+        );
+        const sortOrderStr = validateEnum(
+          params,
+          "sortOrder",
+          ["asc", "desc"] as const,
+          false
+        );
         const pageIndex = validateNumber(params, "pageIndex", false);
         const recordsPerPage = validateNumber(params, "recordsPerPage", false);
 
@@ -1217,17 +1181,35 @@ function createMcpServer(apiClient: SequentumApiClient): Server {
         };
       }
 
+      // Destructive Operations
       case "delete_run": {
         const params = args as Record<string, unknown>;
         const agentId = validateNumber(params, "agentId")!;
         const runId = validateNumber(params, "runId")!;
-        const removeMethod = validateString(params, "removeMethod", false);
+        const removeMethod = validateEnum(
+          params,
+          "removeMethod",
+          [
+            "RemoveEntireRun",
+            "RemoveAllFiles",
+            "RemoveAllFilesAndAgentInput",
+          ] as const,
+          false
+        );
         await apiClient.deleteRun(agentId, runId, removeMethod);
+        const methodDescriptions: Record<string, string> = {
+          RemoveEntireRun: `Successfully deleted run ${runId} and all associated files from agent ${agentId}.`,
+          RemoveAllFiles: `Successfully removed all files for run ${runId} from agent ${agentId}. The run record has been preserved.`,
+          RemoveAllFilesAndAgentInput: `Successfully removed all files and agent input for run ${runId} from agent ${agentId}. The run record has been preserved.`,
+        };
+        const description =
+          methodDescriptions[removeMethod ?? "RemoveEntireRun"] ??
+          `Operation completed for run ${runId} on agent ${agentId} (method: ${removeMethod ?? "RemoveEntireRun"})`;
         return {
           content: [
             {
               type: "text",
-              text: `Successfully deleted run ${runId} from agent ${agentId} (method: ${removeMethod ?? "RemoveEntireRun"})`,
+              text: description,
             },
           ],
         };

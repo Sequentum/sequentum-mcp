@@ -593,6 +593,17 @@ describe("SequentumApiClient", () => {
         "Run is currently active and cannot be deleted"
       );
     });
+
+    it("should handle 404 not found error for invalid run or agent", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        text: async () => '{"message": "Run not found"}',
+      } as Response);
+
+      await expect(client.deleteRun(999, 99999)).rejects.toThrow("Run not found");
+    });
   });
 
   describe("getRunFiles", () => {

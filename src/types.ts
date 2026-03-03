@@ -133,6 +133,11 @@ export enum ConfigType {
   Shared = "Shared",
 }
 
+export type RunRemoveMethod =
+  | "RemoveEntireRun"
+  | "RemoveAllFiles"
+  | "RemoveAllFilesAndAgentInput";
+
 /**
  * Run status enum
  */
