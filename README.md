@@ -55,6 +55,8 @@ You can also add the server manually by editing your `mcp.json` file using the [
 
 ### Claude Desktop
 
+> **Note:** Custom connectors are currently in beta. Free plan users are limited to one custom connector.
+
 Claude Desktop connects to remote MCP servers using **Custom Connectors** rather than the config file. The setup differs based on your plan type. For full details, see [Claude's custom connectors documentation](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
 
 **Free, Pro, and Max plans:**
@@ -82,8 +84,6 @@ Then, each team member connects individually:
 **Enabling per conversation:**
 
 Once configured, enable the Sequentum connector in individual conversations via the **"+"** button on the lower left of the chat interface, then select **"Connectors"**.
-
-> **Note:** Free plan users are limited to one custom connector. This feature is currently in beta.
 
 ### Claude Code
 
