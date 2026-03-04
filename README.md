@@ -35,7 +35,7 @@ Add the Sequentum MCP server to your client with this configuration:
 }
 ```
 
-**Most clients support the OAuth configuration.** When you first connect, you'll be prompted to:
+**Most clients support the OAuth configuration.** Claude Desktop uses a different setup via Custom Connectors — see [Claude Desktop](#claude-desktop) below. For other clients, when you first connect, you'll be prompted to:
 
 1. Log in with your Sequentum account
 2. Accept the OAuth authorization
@@ -55,13 +55,35 @@ You can also add the server manually by editing your `mcp.json` file using the [
 
 ### Claude Desktop
 
-Open developer tools via `Settings` > `Developer` > `Edit Config`, then add the [configuration above](#getting-started) to your config file. Restart Claude Desktop to pick up the changes.
+Claude Desktop connects to remote MCP servers using **Custom Connectors** rather than the config file. The setup differs based on your plan type. For full details, see [Claude's custom connectors documentation](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
 
-| Platform | Config File Location |
-|----------|---------------------|
-| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
-| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| Linux | `~/.config/Claude/claude_desktop_config.json` |
+**Free, Pro, and Max plans:**
+
+1. Navigate to **Settings** > **Connectors**.
+2. Click **"Add custom connector"** at the bottom of the section.
+3. Enter the Sequentum MCP server URL: `https://mcp.sequentum.com/mcp`
+4. Click **"Add"** to finish.
+
+**Team and Enterprise plans:**
+
+An Owner or Primary Owner must first add the connector to the organization:
+
+1. Navigate to **Organization settings** > **Connectors**.
+2. Click **"Add custom connector"** at the bottom of the section.
+3. Enter the Sequentum MCP server URL: `https://mcp.sequentum.com/mcp`
+4. Click **"Add"** to finish.
+
+Then, each team member connects individually:
+
+1. Navigate to **Settings** > **Connectors**.
+2. Find the Sequentum connector in the list (it will have a "Custom" label).
+3. Click **"Connect"** to authenticate.
+
+**Enabling per conversation:**
+
+Once configured, enable the Sequentum connector in individual conversations via the **"+"** button on the lower left of the chat interface, then select **"Connectors"**.
+
+> **Note:** Free plan users are limited to one custom connector. This feature is currently in beta.
 
 ### Claude Code
 
@@ -230,7 +252,7 @@ The Sequentum MCP Server provides tools across 8 categories for interacting with
 
 | Error | Solution |
 |-------|----------|
-| OAuth login not opening | Ensure your client supports OAuth and Streamable HTTP. Try restarting the client. |
+| OAuth login not opening | Ensure your client supports OAuth and Streamable HTTP. Try restarting the client. For Claude Desktop, use [Custom Connectors](#claude-desktop) instead of the config file. |
 | Connection refused | Verify the URL is `https://mcp.sequentum.com/mcp` and check your network connection. |
 | `SEQUENTUM_API_KEY required` | Local mode only. Add your API key to the `env` section of the MCP config. |
 | `API Error 401: Unauthorized` | Your API key or OAuth token is invalid or expired. Re-authenticate or generate a new key. |

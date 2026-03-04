@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.1.4] - 2026-03-04
 
 ### Added
 
@@ -8,6 +8,10 @@
   - `get_agents_usage` - Get all agents with their costs for a date range, with filtering and sorting options
   - `get_agent_cost_breakdown` - Get cost breakdown by usage type for a specific agent over time (for charting)
   - `get_agent_runs_cost` - Get individual run costs for a specific agent with detailed run information
+
+### Changed
+
+- Replaced Claude Desktop setup instructions with Custom Connectors approach (config file method caused Claude Desktop to break). Added plan-specific steps for Free/Pro/Max and Team/Enterprise accounts, with a link to [Claude's custom connectors documentation](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
 
 ## [1.1.3] - 2026-02-17
 
@@ -86,7 +90,7 @@
 
 ---
 
-[Unreleased]: https://github.com/Sequentum/sequentum-mcp/compare/v1.1.3...HEAD
+[1.1.4]: https://github.com/Sequentum/sequentum-mcp/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/Sequentum/sequentum-mcp/compare/v1.0.2...v1.1.3
 [1.0.2]: https://github.com/Sequentum/sequentum-mcp/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/Sequentum/sequentum-mcp/compare/v1.0.0...v1.0.1
