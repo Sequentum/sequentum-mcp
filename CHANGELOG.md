@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `delete_run` tool for deleting runs and associated data (PII compliance)
+
 ## [1.1.4] - 2026-03-04
 
 ### Added
@@ -90,6 +96,7 @@
 
 ---
 
+[Unreleased]: https://github.com/Sequentum/sequentum-mcp/compare/v1.1.4...HEAD
 [1.1.4]: https://github.com/Sequentum/sequentum-mcp/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/Sequentum/sequentum-mcp/compare/v1.0.2...v1.1.3
 [1.0.2]: https://github.com/Sequentum/sequentum-mcp/compare/v1.0.1...v1.0.2
