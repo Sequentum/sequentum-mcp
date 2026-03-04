@@ -3,6 +3,86 @@
  * Contains reusable validation functions that can be shared across modules
  */
 
+export function validateNumber(
+  args: Record<string, unknown>,
+  field: string,
+  required: boolean = true
+): number | undefined {
+  const value = args[field];
+  if (value === undefined || value === null) {
+    if (required) {
+      throw new Error(`Missing required parameter: ${field}`);
+    }
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(
+      `Invalid parameter '${field}': expected a number, got ${typeof value}`
+    );
+  }
+  return value;
+}
+
+export function validateString(
+  args: Record<string, unknown>,
+  field: string,
+  required: boolean = true
+): string | undefined {
+  const value = args[field];
+  if (value === undefined || value === null) {
+    if (required) {
+      throw new Error(`Missing required parameter: ${field}`);
+    }
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new Error(
+      `Invalid parameter '${field}': expected a string, got ${typeof value}`
+    );
+  }
+  return value;
+}
+
+export function validateEnum<T extends string>(
+  args: Record<string, unknown>,
+  field: string,
+  validValues: readonly T[],
+  required: boolean = true
+): T | undefined {
+  const raw = validateString(args, field, required);
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (!validValues.includes(raw as T)) {
+    throw new Error(
+      `Invalid parameter '${field}': '${raw}'. Must be one of: ${validValues.join(
+        ", "
+      )}`
+    );
+  }
+  return raw as T;
+}
+
+export function validateBoolean(
+  args: Record<string, unknown>,
+  field: string,
+  required: boolean = true
+): boolean | undefined {
+  const value = args[field];
+  if (value === undefined || value === null) {
+    if (required) {
+      throw new Error(`Missing required parameter: ${field}`);
+    }
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new Error(
+      `Invalid parameter '${field}': expected a boolean, got ${typeof value}`
+    );
+  }
+  return value;
+}
+
 /**
  * Validates that a startTime string is a valid ISO 8601 date and is in the future
  * @param startTime - The start time to validate (ISO 8601 format)

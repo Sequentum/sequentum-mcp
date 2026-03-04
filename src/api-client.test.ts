@@ -513,6 +513,99 @@ describe("SequentumApiClient", () => {
     });
   });
 
+  describe("deleteRun", () => {
+    it("should send DELETE request to correct URL without removeMethod", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+      } as Response);
+
+      await client.deleteRun(42, 5201);
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent/42/run/5201",
+        expect.objectContaining({ method: "DELETE" })
+      );
+    });
+
+    it("should include removeMethod=RemoveEntireRun query parameter when provided", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+      } as Response);
+
+      await client.deleteRun(42, 5201, "RemoveEntireRun");
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent/42/run/5201?removeMethod=RemoveEntireRun",
+        expect.objectContaining({ method: "DELETE" })
+      );
+    });
+
+    it("should include removeMethod=RemoveAllFiles query parameter when provided", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+      } as Response);
+
+      await client.deleteRun(42, 5201, "RemoveAllFiles");
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent/42/run/5201?removeMethod=RemoveAllFiles",
+        expect.objectContaining({ method: "DELETE" })
+      );
+    });
+
+    it("should include removeMethod=RemoveAllFilesAndAgentInput query parameter when provided", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+      } as Response);
+
+      await client.deleteRun(42, 5201, "RemoveAllFilesAndAgentInput");
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent/42/run/5201?removeMethod=RemoveAllFilesAndAgentInput",
+        expect.objectContaining({ method: "DELETE" })
+      );
+    });
+
+    it("should handle 401 unauthorized error", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        text: async () => '{"message": "No run access"}',
+      } as Response);
+
+      await expect(client.deleteRun(42, 5201)).rejects.toThrow("No run access");
+    });
+
+    it("should handle 400 bad request error when run cannot be deleted", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        text: async () => '{"message": "Run is currently active and cannot be deleted"}',
+      } as Response);
+
+      await expect(client.deleteRun(42, 5201)).rejects.toThrow(
+        "Run is currently active and cannot be deleted"
+      );
+    });
+
+    it("should handle 404 not found error for invalid run or agent", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        text: async () => '{"message": "Run not found"}',
+      } as Response);
+
+      await expect(client.deleteRun(999, 99999)).rejects.toThrow("Run not found");
+    });
+  });
+
   describe("getRunFiles", () => {
     it("should fetch run files", async () => {
       const mockFiles = [

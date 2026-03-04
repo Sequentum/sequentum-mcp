@@ -170,9 +170,9 @@ What agents are scheduled to run today?
 Download the extracted data from agent <agent name>.
 How many records were found the last time <agent name> was run?
 What is my current balance?
+Which agents cost the most this month?
 Schedule agent <agent name> to run every Monday at 9am.
 Look at the run log for <agent name> run at 9:22am. What caused the agent to fail?
-Which agents cost the most this month?
 Show me the cost breakdown for agent <agent name> in January.
 What were the most expensive runs for agent <agent name>?
 How much did I spend on server time vs exports last week?
@@ -188,12 +188,13 @@ The Sequentum MCP Server provides tools across 8 categories for interacting with
   - [`list_agents`](docs/tool-reference.md#list_agents)
   - [`get_agent`](docs/tool-reference.md#get_agent)
   - [`search_agents`](docs/tool-reference.md#search_agents)
-- **Run Management** (5 tools)
+- **Run Management** (6 tools)
   - [`get_agent_runs`](docs/tool-reference.md#get_agent_runs)
   - [`get_run_status`](docs/tool-reference.md#get_run_status)
   - [`start_agent`](docs/tool-reference.md#start_agent)
   - [`stop_agent`](docs/tool-reference.md#stop_agent)
   - [`kill_agent`](docs/tool-reference.md#kill_agent)
+  - [`delete_run`](docs/tool-reference.md#delete_run)
 - **File Management** (2 tools)
   - [`get_run_files`](docs/tool-reference.md#get_run_files)
   - [`get_file_download_url`](docs/tool-reference.md#get_file_download_url)

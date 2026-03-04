@@ -4,6 +4,7 @@
 
 ### Added
 
+- `delete_run` tool for deleting runs and associated data (PII compliance)
 - **Billing & Cost Analysis** tools for detailed agent cost tracking:
   - `get_agents_usage` - Get all agents with their costs for a date range, with filtering and sorting options
   - `get_agent_cost_breakdown` - Get cost breakdown by usage type for a specific agent over time (for charting)
@@ -12,6 +13,7 @@
 ## [1.1.3] - 2026-02-17
 
 ### Added
+
 
 - `kill_agent` tool for forceful agent termination (as a last resort when `stop_agent` fails)
 - OAuth 2.1 support with HTTP Streamable transport and RFC 8707 resource parameters
