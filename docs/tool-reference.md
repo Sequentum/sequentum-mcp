@@ -2,7 +2,7 @@
 
 The Sequentum MCP Server provides tools across 8 categories for managing web scraping agents, runs, schedules, and more. These tools become available once you connect to the server -- either via the [remote OAuth setup](../README.md#getting-started) at `https://mcp.sequentum.com/mcp` or the [local API key setup](../README.md#alternative-local-setup-api-key).
 
-> **Pagination:** Tools that return lists (`list_agents`, `get_agent_runs`, `get_credit_history`) support pagination via `pageIndex` (1-based) and `recordsPerPage`. When the result is paginated, the response includes the total count so you know if more pages are available.
+> **Pagination:** Tools that return lists (`list_agents`, `get_agent_runs`, `get_credit_history`, `get_agents_usage`, `get_agent_runs_cost`) support pagination via `pageIndex` (1-based) and `recordsPerPage`. When the result is paginated, the response includes the total count so you know if more pages are available.
 
 ## Quick Reference
 
@@ -18,6 +18,7 @@ The Sequentum MCP Server provides tools across 8 categories for managing web scr
 | [`start_agent`](#start_agent) | Start an agent execution (async or sync) |
 | [`stop_agent`](#stop_agent) | Stop a running agent |
 | [`kill_agent`](#kill_agent) | Force-terminate an unresponsive agent |
+| [`delete_run`](#delete_run) | Delete a run and its associated data |
 | **File Management** | |
 | [`get_run_files`](#get_run_files) | List output files from a completed run |
 | [`get_file_download_url`](#get_file_download_url) | Get a temporary download URL for a file |
@@ -33,6 +34,9 @@ The Sequentum MCP Server provides tools across 8 categories for managing web scr
 | [`get_credits_balance`](#get_credits_balance) | Get current available credits balance |
 | [`get_spending_summary`](#get_spending_summary) | Get credits spent in a date range |
 | [`get_credit_history`](#get_credit_history) | Get credit transaction history |
+| [`get_agents_usage`](#get_agents_usage) | Get all agents with their costs for a date range |
+| [`get_agent_cost_breakdown`](#get_agent_cost_breakdown) | Get cost breakdown by usage type for an agent |
+| [`get_agent_runs_cost`](#get_agent_runs_cost) | Get individual run costs for an agent |
 | **Space Management** | |
 | [`list_spaces`](#list_spaces) | List all accessible spaces |
 | [`get_space`](#get_space) | Get details of a specific space |
@@ -283,6 +287,46 @@ Force kill agent 123, stop_agent didn't work
 The agent is stuck stopping, force terminate it
 Kill the unresponsive run
 ```
+
+---
+
+### delete_run
+
+Delete a run and all its associated data, including files and storage. Primarily used for PII compliance when an agent extracts personally identifiable information.
+
+The run can be in either the active Runs table or the RunHistory table -- both are checked automatically.
+
+**Warning**: This operation is destructive and cannot be undone.
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `agentId` | number | Yes | The ID of the agent that contains the run. |
+| `runId` | number | Yes | The ID of the run to delete. Get this from `get_agent_runs`. |
+| `removeMethod` | string | No | What to delete. One of: `RemoveEntireRun` (default), `RemoveAllFiles`, `RemoveAllFilesAndAgentInput`. |
+
+**Remove methods:**
+
+| Value | Description |
+|-------|-------------|
+| `RemoveEntireRun` | Completely removes the run record and all associated files (default). |
+| `RemoveAllFiles` | Removes files but keeps the run record. |
+| `RemoveAllFilesAndAgentInput` | Removes files and clears agent input parameters. |
+
+#### Returns
+
+Confirmation message that the run was deleted.
+
+#### Example Prompts
+
+```
+Delete run 123 for agent 456
+Remove all files from that run
+Clean up PII data from run 789
+```
+
+> **See also:** [`get_agent_runs`](#get_agent_runs) to find run IDs, [`get_run_files`](#get_run_files) to see what files a run has before deleting.
 
 ---
 
@@ -605,6 +649,118 @@ Show credit history
 What were my credit transactions?
 When were credits added?
 ```
+
+---
+
+### get_agents_usage
+
+Get all agents with their total costs for a date range, with filtering and sorting options.
+
+**Use this** to analyze which agents are costing the most, compare agent costs, or track spending by agent.
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `startDate` | string | No | Start date in ISO 8601 format. Defaults to start of current month. Example: `'2026-01-01'` or `'2026-01-01T00:00:00Z'`. |
+| `endDate` | string | No | End date in ISO 8601 format. Defaults to now. Example: `'2026-01-31'` or `'2026-01-31T23:59:59Z'`. |
+| `pageIndex` | number | No | Page number (1-based). Default: 1. |
+| `recordsPerPage` | number | No | Records per page. Default: 50, Max: 1000. |
+| `sortColumn` | string | No | Column to sort by: `'name'` or `'cost'`. Default: `'name'`. |
+| `sortOrder` | number | No | Sort order: 0 = ascending, 1 = descending. Default: 0. |
+| `name` | string | No | Filter by agent name (case-insensitive contains match). |
+| `usageTypes` | string | No | Filter by usage types (comma-separated). Example: `'Server Time,Export GB'`. |
+
+#### Returns
+
+Paginated list of agents with `agentId`, `agentName`, `cost`, `spaceId`, plus `totalRecordCount` and `totalCost`.
+
+**Usage types** available for filtering: `Server Time`, `Export GB`, `Agent Inputs`, `Proxy Data`, `Export CPM`.
+
+#### Example Prompts
+
+```
+Which agents cost the most?
+Show agent costs this month
+What did agent X cost in January?
+List agents by cost for last week
+```
+
+> **See also:** [`get_agent_cost_breakdown`](#get_agent_cost_breakdown) to drill into a specific agent's costs, [`get_spending_summary`](#get_spending_summary) for overall spending.
+
+
+---
+
+### get_agent_cost_breakdown
+
+Get detailed cost breakdown by usage type for a specific agent over time, useful for visualizing costs in charts.
+
+**Use this** to understand what's driving costs for an agent (server time vs exports vs proxies), or to chart agent costs over time.
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `agentId` | number | Yes | The unique ID of the agent. |
+| `startDate` | string | No | Start date in ISO 8601 format. Defaults to start of current month. Example: `'2026-01-01'` or `'2026-01-01T00:00:00Z'`. |
+| `endDate` | string | No | End date in ISO 8601 format. Defaults to now. Example: `'2026-01-31'` or `'2026-01-31T23:59:59Z'`. |
+| `timeUnit` | string | No | Time unit for grouping: `'day'` or `'month'`. Default: `'day'`. |
+| `usageTypes` | string | No | Filter by usage types (comma-separated). Example: `'Server Time,Export GB'`. |
+
+#### Returns
+
+Cost data with `agentId`, `agentName`, date `labels` array, `usageTypes` array (each with type name, data points, totalCost), `totalCost`, `startDate`, `endDate`.
+
+The `labels` array corresponds to data points in each `usageTypes.data` array, making it ideal for charting.
+
+#### Example Prompts
+
+```
+What's causing agent X's costs?
+Show me cost breakdown for agent 123
+Chart agent costs by day
+What usage types cost the most for agent X?
+```
+
+> **See also:** [`get_agents_usage`](#get_agents_usage) for a summary across all agents, [`get_agent_runs_cost`](#get_agent_runs_cost) to see individual run costs.
+
+
+---
+
+### get_agent_runs_cost
+
+Get individual run costs for a specific agent with detailed run information and filtering options.
+
+**Use this** to drill down into specific runs, identify expensive runs, or analyze run costs over time.
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `agentId` | number | Yes | The unique ID of the agent. |
+| `startDate` | string | No | Start date in ISO 8601 format. Defaults to start of current month. Example: `'2026-01-01'` or `'2026-01-01T00:00:00Z'`. |
+| `endDate` | string | No | End date in ISO 8601 format. Defaults to now. Example: `'2026-01-31'` or `'2026-01-31T23:59:59Z'`. |
+| `pageIndex` | number | No | Page number (1-based). Default: 1. |
+| `recordsPerPage` | number | No | Records per page. Default: 50, Max: 1000. |
+| `sortColumn` | string | No | Column to sort by: `'date'`, `'cost'`, or `'duration'`. Default: `'date'`. |
+| `sortOrder` | number | No | Sort order: 0 = ascending, 1 = descending. Default: 0. |
+| `usageTypes` | string | No | Filter by usage types (comma-separated). Example: `'Server Time,Proxy Data'`. |
+
+#### Returns
+
+Paginated list of runs with `runId`, `date`, `startTime`, `endTime`, `cost`, `billingType`, plus `agentId`, `agentName`, `totalRecordCount`, `totalCost`.
+
+#### Example Prompts
+
+```
+Which runs were most expensive?
+Show run costs for agent X
+What did run Y cost?
+List the 10 most expensive runs for agent X this month
+```
+
+> **See also:** [`get_agent_cost_breakdown`](#get_agent_cost_breakdown) for costs grouped by usage type, [`get_agents_usage`](#get_agents_usage) for a summary across all agents.
+
 
 ---
 

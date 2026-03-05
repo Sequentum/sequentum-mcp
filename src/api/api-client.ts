@@ -17,6 +17,9 @@ import {
   CreditsBalanceApiModel,
   SpendingSummaryApiModel,
   CreditHistoryApiModel,
+  AgentsUsageApiResponse,
+  AgentCostBreakdownApiModel,
+  AgentRunsApiResponse,
   SpaceApiModel,
   SpaceAgentApiModel,
   RunSpaceAgentsResultApiModel,
@@ -28,6 +31,7 @@ import {
   AuthenticationError,
   ApiRequestError,
   RateLimitError,
+  RunRemoveMethod,
 } from "./types.js";
 
 /** Default retry configuration for transient failures */
@@ -493,6 +497,25 @@ export class SequentumApiClient {
     });
   }
 
+  /**
+   * Delete a run and all its associated data, including files and storage.
+   * Primarily used for PII compliance when an agent extracts personally identifiable information.
+   * The run can be in either the active Runs table or the RunHistory table.
+   * @param agentId - The ID of the agent that contains the run
+   * @param runId - The ID of the run to delete
+   * @param removeMethod - The deletion method: RemoveEntireRun (default), RemoveAllFiles, or RemoveAllFilesAndAgentInput
+   */
+  async deleteRun(
+    agentId: number,
+    runId: number,
+    removeMethod?: RunRemoveMethod
+  ): Promise<void> {
+    const query = removeMethod ? `?removeMethod=${encodeURIComponent(removeMethod)}` : "";
+    await this.requestVoid(`/api/v1/agent/${agentId}/run/${runId}${query}`, {
+      method: "DELETE",
+    });
+  }
+
   // ==========================================
   // File Operations
   // ==========================================
@@ -764,6 +787,108 @@ export class SequentumApiClient {
     const query = params.toString() ? `?${params.toString()}` : "";
     return this.request<CreditHistoryApiModel>(
       `/api/v1/billing/history${query}`
+    );
+  }
+
+  /**
+   * Get all agents with their costs for a date range
+   * @param startDate - Start date (ISO format, required)
+   * @param endDate - End date (ISO format, required)
+   * @param pageIndex - Page number (1-based, default: 1)
+   * @param recordsPerPage - Records per page (default: 50, max: 1000)
+   * @param sortColumn - Column to sort by (name, cost)
+   * @param sortOrder - Sort order (0 = ascending, 1 = descending)
+   * @param name - Filter by agent name (contains match)
+   * @param usageTypes - Filter by usage types (comma-separated)
+   */
+  async getAgentsUsage(
+    startDate: string,
+    endDate: string,
+    pageIndex?: number,
+    recordsPerPage?: number,
+    sortColumn?: string,
+    sortOrder?: number,
+    name?: string,
+    usageTypes?: string
+  ): Promise<AgentsUsageApiResponse> {
+    const params = new URLSearchParams();
+    params.append("startDate", startDate);
+    params.append("endDate", endDate);
+    if (pageIndex !== undefined) params.append("pageIndex", String(pageIndex));
+    if (recordsPerPage !== undefined)
+      params.append("recordsPerPage", String(recordsPerPage));
+    if (sortColumn) params.append("sortColumn", sortColumn);
+    if (sortOrder !== undefined) params.append("sortOrder", String(sortOrder));
+    if (name) params.append("name", name);
+    if (usageTypes) params.append("usageTypes", usageTypes);
+
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return this.request<AgentsUsageApiResponse>(
+      `/api/v1/billing/agents${query}`
+    );
+  }
+
+  /**
+   * Get cost breakdown for a specific agent over time
+   * @param agentId - The agent ID
+   * @param startDate - Start date (ISO format, required)
+   * @param endDate - End date (ISO format, required)
+   * @param timeUnit - Time unit for grouping (day, month)
+   * @param usageTypes - Filter by usage types (comma-separated)
+   */
+  async getAgentCostBreakdown(
+    agentId: number,
+    startDate: string,
+    endDate: string,
+    timeUnit?: string,
+    usageTypes?: string
+  ): Promise<AgentCostBreakdownApiModel> {
+    const params = new URLSearchParams();
+    params.append("startDate", startDate);
+    params.append("endDate", endDate);
+    if (timeUnit) params.append("timeUnit", timeUnit);
+    if (usageTypes) params.append("usageTypes", usageTypes);
+
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return this.request<AgentCostBreakdownApiModel>(
+      `/api/v1/billing/agents/${agentId}${query}`
+    );
+  }
+
+  /**
+   * Get individual run costs for a specific agent
+   * @param agentId - The agent ID
+   * @param startDate - Start date (ISO format, required)
+   * @param endDate - End date (ISO format, required)
+   * @param pageIndex - Page number (1-based, default: 1)
+   * @param recordsPerPage - Records per page (default: 50, max: 1000)
+   * @param sortColumn - Column to sort by (date, cost, duration)
+   * @param sortOrder - Sort order (0 = ascending, 1 = descending)
+   * @param usageTypes - Filter by usage types (comma-separated)
+   */
+  async getAgentRunsCost(
+    agentId: number,
+    startDate: string,
+    endDate: string,
+    pageIndex?: number,
+    recordsPerPage?: number,
+    sortColumn?: string,
+    sortOrder?: number,
+    usageTypes?: string
+  ): Promise<AgentRunsApiResponse> {
+    const params = new URLSearchParams();
+    params.append("startDate", startDate);
+    params.append("endDate", endDate);
+    if (pageIndex !== undefined) params.append("pageIndex", String(pageIndex));
+    if (recordsPerPage !== undefined)
+      params.append("recordsPerPage", String(recordsPerPage));
+    if (sortColumn) params.append("sortColumn", sortColumn);
+    if (sortOrder !== undefined) params.append("sortOrder", String(sortOrder));
+    if (usageTypes) params.append("usageTypes", usageTypes);
+
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return this.request<AgentRunsApiResponse>(
+      `/api/v1/billing/agents/${agentId}/runs${query}`
     );
   }
 

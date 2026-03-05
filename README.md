@@ -35,7 +35,7 @@ Add the Sequentum MCP server to your client with this configuration:
 }
 ```
 
-**Most clients support the OAuth configuration.** When you first connect, you'll be prompted to:
+**Most clients support the OAuth configuration.** Claude Desktop uses a different setup via Custom Connectors — see [Claude Desktop](#claude-desktop) below. For other clients, when you first connect, you'll be prompted to:
 
 1. Log in with your Sequentum account
 2. Accept the OAuth authorization
@@ -55,13 +55,35 @@ You can also add the server manually by editing your `mcp.json` file using the [
 
 ### Claude Desktop
 
-Open developer tools via `Settings` > `Developer` > `Edit Config`, then add the [configuration above](#getting-started) to your config file. Restart Claude Desktop to pick up the changes.
+> **Note:** Custom connectors are currently in beta. Free plan users are limited to one custom connector.
 
-| Platform | Config File Location |
-|----------|---------------------|
-| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
-| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| Linux | `~/.config/Claude/claude_desktop_config.json` |
+Claude Desktop connects to remote MCP servers using **Custom Connectors** rather than the config file. The setup differs based on your plan type. For full details, see [Claude's custom connectors documentation](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
+
+**Free, Pro, and Max plans:**
+
+1. Navigate to **Settings** > **Connectors**.
+2. Click **"Add custom connector"** at the bottom of the section.
+3. Enter the Sequentum MCP server URL: `https://mcp.sequentum.com/mcp`
+4. Click **"Add"** to finish.
+
+**Team and Enterprise plans:**
+
+An Owner or Primary Owner must first add the connector to the organization:
+
+1. Navigate to **Organization settings** > **Connectors**.
+2. Click **"Add custom connector"** at the bottom of the section.
+3. Enter the Sequentum MCP server URL: `https://mcp.sequentum.com/mcp`
+4. Click **"Add"** to finish.
+
+Then, each team member connects individually:
+
+1. Navigate to **Settings** > **Connectors**.
+2. Find the Sequentum connector in the list (it will have a "Custom" label).
+3. Click **"Connect"** to authenticate.
+
+**Enabling per conversation:**
+
+Once configured, enable the Sequentum connector in individual conversations via the **"+"** button on the lower left of the chat interface, then select **"Connectors"**.
 
 ### Claude Code
 
@@ -170,8 +192,12 @@ What agents are scheduled to run today?
 Download the extracted data from agent <agent name>.
 How many records were found the last time <agent name> was run?
 What is my current balance?
+Which agents cost the most this month?
 Schedule agent <agent name> to run every Monday at 9am.
 Look at the run log for <agent name> run at 9:22am. What caused the agent to fail?
+Show me the cost breakdown for agent <agent name> in January.
+What were the most expensive runs for agent <agent name>?
+How much did I spend on server time vs exports last week?
 ```
 
 ## Available Tools
@@ -184,12 +210,13 @@ The Sequentum MCP Server provides tools across 8 categories for interacting with
   - [`list_agents`](docs/tool-reference.md#list_agents)
   - [`get_agent`](docs/tool-reference.md#get_agent)
   - [`search_agents`](docs/tool-reference.md#search_agents)
-- **Run Management** (5 tools)
+- **Run Management** (6 tools)
   - [`get_agent_runs`](docs/tool-reference.md#get_agent_runs)
   - [`get_run_status`](docs/tool-reference.md#get_run_status)
   - [`start_agent`](docs/tool-reference.md#start_agent)
   - [`stop_agent`](docs/tool-reference.md#stop_agent)
   - [`kill_agent`](docs/tool-reference.md#kill_agent)
+  - [`delete_run`](docs/tool-reference.md#delete_run)
 - **File Management** (2 tools)
   - [`get_run_files`](docs/tool-reference.md#get_run_files)
   - [`get_file_download_url`](docs/tool-reference.md#get_file_download_url)
@@ -201,10 +228,13 @@ The Sequentum MCP Server provides tools across 8 categories for interacting with
   - [`create_agent_schedule`](docs/tool-reference.md#create_agent_schedule)
   - [`delete_agent_schedule`](docs/tool-reference.md#delete_agent_schedule)
   - [`get_scheduled_runs`](docs/tool-reference.md#get_scheduled_runs)
-- **Billing & Credits** (3 tools)
+- **Billing & Credits** (6 tools)
   - [`get_credits_balance`](docs/tool-reference.md#get_credits_balance)
   - [`get_spending_summary`](docs/tool-reference.md#get_spending_summary)
   - [`get_credit_history`](docs/tool-reference.md#get_credit_history)
+  - [`get_agents_usage`](docs/tool-reference.md#get_agents_usage)
+  - [`get_agent_cost_breakdown`](docs/tool-reference.md#get_agent_cost_breakdown)
+  - [`get_agent_runs_cost`](docs/tool-reference.md#get_agent_runs_cost)
 - **Space Management** (5 tools)
   - [`list_spaces`](docs/tool-reference.md#list_spaces)
   - [`get_space`](docs/tool-reference.md#get_space)
@@ -223,7 +253,7 @@ The Sequentum MCP Server provides tools across 8 categories for interacting with
 
 | Error | Solution |
 |-------|----------|
-| OAuth login not opening | Ensure your client supports OAuth and Streamable HTTP. Try restarting the client. |
+| OAuth login not opening | Ensure your client supports OAuth and Streamable HTTP. Try restarting the client. For Claude Desktop, use [Custom Connectors](#claude-desktop) instead of the config file. |
 | Connection refused | Verify the URL is `https://mcp.sequentum.com/mcp` and check your network connection. |
 | `SEQUENTUM_API_KEY required` | Local mode only. Add your API key to the `env` section of the MCP config. |
 | `API Error 401: Unauthorized` | Your API key or OAuth token is invalid or expired. Re-authenticate or generate a new key. |
