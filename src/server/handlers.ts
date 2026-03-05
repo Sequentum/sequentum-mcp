@@ -16,8 +16,8 @@ import {
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { SequentumApiClient } from "../api/api-client.js";
-import { AgentApiModel, AgentRunFileApiModel, AgentRunStatus, ConfigType, ListAgentsRequest, PaginatedAgentsResponse, ApiRequestError, RateLimitError, AuthenticationError } from "../api/types.js";
-import { validateStartTimeInFuture } from "../utils/validation.js";
+import { AgentApiModel, AgentRunFileApiModel, AgentRunStatus, ConfigType, ListAgentsRequest, PaginatedAgentsResponse, ApiRequestError, RateLimitError, AuthenticationError, RunRemoveMethod } from "../api/types.js";
+import { getDefaultDateRange, validateDateRange, validateISODate, validateStartTimeInFuture } from "../utils/validation.js";
 import { tools } from "./tools.js";
 import { resources, resourceTemplates, readResource } from "./resources.js";
 import { prompts, getPromptMessages } from "./prompts.js";
@@ -95,6 +95,24 @@ function validateString(
     );
   }
   return value;
+}
+
+function validateEnum<T extends string>(
+  args: Record<string, unknown>,
+  field: string,
+  validValues: readonly T[],
+  required: boolean = true
+): T | undefined {
+  const raw = validateString(args, field, required);
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (!validValues.includes(raw as T)) {
+    throw new Error(
+      `Invalid parameter '${field}': '${raw}'. Must be one of: ${validValues.join(", ")}`
+    );
+  }
+  return raw as T;
 }
 
 /**
@@ -452,6 +470,39 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
               {
                 type: "text",
                 text: `Kill command sent for run ${runId} of agent ${agentId}. If the agent was running, it will initiate graceful stop. If already stopping, it will force immediate termination.`,
+              },
+            ],
+          };
+        }
+
+        // Destructive Operations
+        case "delete_run": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
+          const removeMethod = validateEnum(
+            params,
+            "removeMethod",
+            ["RemoveEntireRun", "RemoveAllFiles", "RemoveAllFilesAndAgentInput"] as const,
+            false
+          ) as RunRemoveMethod | undefined;
+
+          await apiClient.deleteRun(agentId, runId, removeMethod);
+
+          const methodDescriptions: Record<RunRemoveMethod, string> = {
+            RemoveEntireRun: `Successfully deleted run ${runId} and all associated files from agent ${agentId}.`,
+            RemoveAllFiles: `Successfully removed all files for run ${runId} from agent ${agentId}. The run record has been preserved.`,
+            RemoveAllFilesAndAgentInput: `Successfully removed all files and agent input for run ${runId} from agent ${agentId}. The run record has been preserved.`,
+          };
+          const description =
+            (removeMethod ? methodDescriptions[removeMethod] : undefined) ??
+            `Successfully deleted run ${runId} and all associated files from agent ${agentId}.`;
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: description,
               },
             ],
           };
@@ -816,6 +867,110 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
               {
                 type: "text",
                 text: JSON.stringify(history, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_agents_usage": {
+          const params = args as Record<string, unknown>;
+          const defaults = getDefaultDateRange();
+          const startDate = validateString(params, "startDate", false) ?? defaults.startDate;
+          const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
+          validateISODate(startDate, "startDate");
+          validateISODate(endDate, "endDate");
+          validateDateRange(startDate, endDate);
+
+          const pageIndex = validateNumber(params, "pageIndex", { required: false, min: 1, integer: true });
+          const recordsPerPage = validateNumber(params, "recordsPerPage", { required: false, min: 1, max: 1000, integer: true });
+          const sortColumn = validateString(params, "sortColumn", false);
+          const sortOrder = validateNumber(params, "sortOrder", { required: false, min: 0, max: 1, integer: true });
+          const name = validateString(params, "name", false);
+          const usageTypes = validateString(params, "usageTypes", false);
+
+          const result = await apiClient.getAgentsUsage(
+            startDate,
+            endDate,
+            pageIndex,
+            recordsPerPage,
+            sortColumn,
+            sortOrder,
+            name,
+            usageTypes
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_agent_cost_breakdown": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+
+          const defaults = getDefaultDateRange();
+          const startDate = validateString(params, "startDate", false) ?? defaults.startDate;
+          const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
+          validateISODate(startDate, "startDate");
+          validateISODate(endDate, "endDate");
+          validateDateRange(startDate, endDate);
+
+          const timeUnit = validateEnum(params, "timeUnit", ["day", "month"] as const, false);
+          const usageTypes = validateString(params, "usageTypes", false);
+
+          const result = await apiClient.getAgentCostBreakdown(
+            agentId,
+            startDate,
+            endDate,
+            timeUnit,
+            usageTypes
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_agent_runs_cost": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+
+          const defaults = getDefaultDateRange();
+          const startDate = validateString(params, "startDate", false) ?? defaults.startDate;
+          const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
+          validateISODate(startDate, "startDate");
+          validateISODate(endDate, "endDate");
+          validateDateRange(startDate, endDate);
+
+          const pageIndex = validateNumber(params, "pageIndex", { required: false, min: 1, integer: true });
+          const recordsPerPage = validateNumber(params, "recordsPerPage", { required: false, min: 1, max: 1000, integer: true });
+          const sortColumn = validateEnum(params, "sortColumn", ["date", "cost", "duration"] as const, false);
+          const sortOrder = validateNumber(params, "sortOrder", { required: false, min: 0, max: 1, integer: true });
+          const usageTypes = validateString(params, "usageTypes", false);
+
+          const result = await apiClient.getAgentRunsCost(
+            agentId,
+            startDate,
+            endDate,
+            pageIndex,
+            recordsPerPage,
+            sortColumn,
+            sortOrder,
+            usageTypes
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
               },
             ],
           };

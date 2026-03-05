@@ -47,6 +47,13 @@ export const prompts: Prompt[] = [
     arguments: [],
   },
   {
+    name: "cost-analysis",
+    description:
+      "Analyze costs across agents. Identifies the most expensive agents, " +
+      "breaks down costs by usage type, and highlights expensive runs.",
+    arguments: [],
+  },
+  {
     name: "run-and-monitor",
     description:
       "Start an agent and monitor it until completion. Finds the agent, " +
@@ -187,8 +194,27 @@ export function getPromptMessages(
               "Generate a comprehensive spending and credits report. Follow these steps:\n\n" +
               "1. Use get_credits_balance to check the current available credits.\n" +
               "2. Use get_spending_summary to get spending for the current month.\n" +
-              "3. Use get_credit_history to retrieve recent credit transactions (additions and deductions).\n" +
-              "4. Summarize the findings: current balance, total spent this month, and notable transactions.",
+              "3. Use get_agents_usage to identify which agents are costing the most this month.\n" +
+              "4. Use get_credit_history to retrieve recent credit transactions (additions and deductions).\n" +
+              "5. Summarize the findings: current balance, total spent this month, top-cost agents, and notable transactions.",
+          },
+        },
+      ];
+    }
+
+    case "cost-analysis": {
+      return [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text:
+              "Analyze costs across agents and identify key drivers. Follow these steps:\n\n" +
+              "1. Use get_credits_balance to record the current available credits.\n" +
+              "2. Use get_agents_usage to find the most expensive agents for the current month (sort by cost desc).\n" +
+              "3. Pick the top 1-3 agents by cost and use get_agent_cost_breakdown for each to see what usage types drive cost.\n" +
+              "4. For the top-cost agent, use get_agent_runs_cost to identify the most expensive runs and their durations.\n" +
+              "5. Summarize: top agents by cost, main cost drivers (usage types), any outlier expensive runs, and concrete cost-reduction recommendations.",
           },
         },
       ];

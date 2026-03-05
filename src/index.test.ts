@@ -1,8 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { validateStartTimeInFuture } from "./utils/validation.js";
-import { buildOAuthMetadata } from "./utils/oauth-metadata.js";
-import { resources, resourceTemplates, readResource } from "./server/resources.js";
-import { prompts, getPromptMessages } from "./server/prompts.js";
 import {
   getDefaultDateRange,
   validateDateRange,
@@ -11,8 +7,10 @@ import {
   validateNumber,
   validateStartTimeInFuture,
   validateString,
-} from "./validation.js";
-import { buildOAuthMetadata } from "./oauth-metadata.js";
+} from "./utils/validation.js";
+import { buildOAuthMetadata } from "./utils/oauth-metadata.js";
+import { resources, resourceTemplates, readResource } from "./server/resources.js";
+import { prompts, getPromptMessages } from "./server/prompts.js";
 
 /**
  * Tests for MCP handler behavior in index.ts
@@ -429,8 +427,8 @@ describe("list_agents handler", () => {
 
 describe("MCP Resources", () => {
   describe("static resource definitions", () => {
-    it("should define 6 static resources", () => {
-      expect(resources).toHaveLength(6);
+    it("should define 7 static resources", () => {
+      expect(resources).toHaveLength(7);
     });
 
     it("should include agents resource", () => {
@@ -461,6 +459,13 @@ describe("MCP Resources", () => {
       expect(spendingResource!.mimeType).toBe("application/json");
     });
 
+    it("should include billing agents-usage resource", () => {
+      const usageResource = resources.find(r => r.uri === "sequentum://billing/agents-usage");
+      expect(usageResource).toBeDefined();
+      expect(usageResource!.name).toBe("Agent Costs (Current Month)");
+      expect(usageResource!.mimeType).toBe("application/json");
+    });
+
     it("should include analytics runs resource", () => {
       const runsResource = resources.find(r => r.uri === "sequentum://analytics/runs");
       expect(runsResource).toBeDefined();
@@ -484,8 +489,8 @@ describe("MCP Resources", () => {
   });
 
   describe("resource template definitions", () => {
-    it("should define 10 resource templates", () => {
-      expect(resourceTemplates).toHaveLength(10);
+    it("should define 11 resource templates", () => {
+      expect(resourceTemplates).toHaveLength(11);
     });
 
     it("should include agent detail template", () => {
@@ -504,6 +509,12 @@ describe("MCP Resources", () => {
       const tpl = resourceTemplates.find(t => t.uriTemplate === "sequentum://agents/{agentId}/schedules");
       expect(tpl).toBeDefined();
       expect(tpl!.name).toBe("Agent Schedules");
+    });
+
+    it("should include agent cost breakdown template", () => {
+      const tpl = resourceTemplates.find(t => t.uriTemplate === "sequentum://agents/{agentId}/cost-breakdown");
+      expect(tpl).toBeDefined();
+      expect(tpl!.name).toBe("Agent Cost Breakdown");
     });
 
     it("should include space detail template", () => {
@@ -701,8 +712,8 @@ describe("MCP Resources", () => {
 
 describe("MCP Prompts", () => {
   describe("prompt definitions", () => {
-    it("should define 8 prompts", () => {
-      expect(prompts).toHaveLength(8);
+    it("should define 9 prompts", () => {
+      expect(prompts).toHaveLength(9);
     });
 
     it("should include debug-agent prompt with agentName argument", () => {
@@ -723,6 +734,12 @@ describe("MCP Prompts", () => {
 
     it("should include spending-report prompt with no arguments", () => {
       const prompt = prompts.find(p => p.name === "spending-report");
+      expect(prompt).toBeDefined();
+      expect(prompt!.arguments).toHaveLength(0);
+    });
+
+    it("should include cost-analysis prompt with no arguments", () => {
+      const prompt = prompts.find(p => p.name === "cost-analysis");
       expect(prompt).toBeDefined();
       expect(prompt!.arguments).toHaveLength(0);
     });

@@ -8,6 +8,7 @@
 
 import { Resource, ResourceTemplate } from "@modelcontextprotocol/sdk/types.js";
 import { SequentumApiClient } from "../api/api-client.js";
+import { getDefaultDateRange } from "../utils/validation.js";
 
 // ==========================================
 // Static Resources (no parameters)
@@ -44,6 +45,14 @@ export const resources: Resource[] = [
     description:
       "Spending summary for the current month. " +
       "Shows totalSpent, startDate, endDate, organizationId, and currentBalance.",
+    mimeType: "application/json",
+  },
+  {
+    uri: "sequentum://billing/agents-usage",
+    name: "Agent Costs (Current Month)",
+    description:
+      "Agent cost totals for the current month (top agents by cost, first page). " +
+      "Shows agents with agentId, agentName, cost, plus totals for the period.",
     mimeType: "application/json",
   },
   {
@@ -91,6 +100,14 @@ export const resourceTemplates: ResourceTemplate[] = [
     description:
       "Scheduled tasks configured for a specific agent. Shows schedule id, " +
       "name, cron expression, next run time, and enabled status.",
+    mimeType: "application/json",
+  },
+  {
+    uriTemplate: "sequentum://agents/{agentId}/cost-breakdown",
+    name: "Agent Cost Breakdown",
+    description:
+      "Cost breakdown by usage type for a specific agent (default: current month, daily). " +
+      "Useful for understanding what is driving costs (server time vs export vs proxy, etc.).",
     mimeType: "application/json",
   },
   {
@@ -206,6 +223,23 @@ export async function readResource(
     };
   }
 
+  if (uri === "sequentum://billing/agents-usage") {
+    const { startDate, endDate } = getDefaultDateRange();
+    const usage = await apiClient.getAgentsUsage(
+      startDate,
+      endDate,
+      1,
+      50,
+      "cost",
+      1
+    );
+    return {
+      uri,
+      mimeType: "application/json",
+      text: JSON.stringify(usage, null, 2),
+    };
+  }
+
   if (uri === "sequentum://analytics/runs") {
     const runs = await apiClient.getRunsSummary();
     return {
@@ -311,6 +345,24 @@ export async function readResource(
       uri,
       mimeType: "application/json",
       text: JSON.stringify(schedules, null, 2),
+    };
+  }
+
+  // sequentum://agents/{agentId}/cost-breakdown
+  match = /^sequentum:\/\/agents\/(\d+)\/cost-breakdown$/.exec(uri);
+  if (match) {
+    const agentId = parseInt(match[1], 10);
+    const { startDate, endDate } = getDefaultDateRange();
+    const breakdown = await apiClient.getAgentCostBreakdown(
+      agentId,
+      startDate,
+      endDate,
+      "day"
+    );
+    return {
+      uri,
+      mimeType: "application/json",
+      text: JSON.stringify(breakdown, null, 2),
     };
   }
 
