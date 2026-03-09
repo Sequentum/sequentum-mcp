@@ -41,7 +41,16 @@ import {
 import express, { Request, Response } from "express";
 import { SequentumApiClient } from "./api-client.js";
 import { AgentApiModel, AgentRunFileApiModel, AgentRunStatus, AuthMode, ConfigType, ListAgentsRequest } from "./types.js";
-import { validateStartTimeInFuture } from "./validation.js";
+import {
+  getDefaultDateRange,
+  validateBoolean,
+  validateDateRange,
+  validateEnum,
+  validateISODate,
+  validateNumber,
+  validateStartTimeInFuture,
+  validateString,
+} from "./validation.js";
 import { buildOAuthMetadata, SUPPORTED_SCOPES } from "./oauth-metadata.js";
 
 // Import version from package.json
@@ -107,66 +116,6 @@ const client = new SequentumApiClient(API_BASE_URL, authMode === "apikey" ? API_
 // ==========================================
 // Input Validation Helpers
 // ==========================================
-
-function validateNumber(
-  args: Record<string, unknown>,
-  field: string,
-  required: boolean = true
-): number | undefined {
-  const value = args[field];
-  if (value === undefined || value === null) {
-    if (required) {
-      throw new Error(`Missing required parameter: ${field}`);
-    }
-    return undefined;
-  }
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(
-      `Invalid parameter '${field}': expected a number, got ${typeof value}`
-    );
-  }
-  return value;
-}
-
-function validateString(
-  args: Record<string, unknown>,
-  field: string,
-  required: boolean = true
-): string | undefined {
-  const value = args[field];
-  if (value === undefined || value === null) {
-    if (required) {
-      throw new Error(`Missing required parameter: ${field}`);
-    }
-    return undefined;
-  }
-  if (typeof value !== "string") {
-    throw new Error(
-      `Invalid parameter '${field}': expected a string, got ${typeof value}`
-    );
-  }
-  return value;
-}
-
-function validateBoolean(
-  args: Record<string, unknown>,
-  field: string,
-  required: boolean = true
-): boolean | undefined {
-  const value = args[field];
-  if (value === undefined || value === null) {
-    if (required) {
-      throw new Error(`Missing required parameter: ${field}`);
-    }
-    return undefined;
-  }
-  if (typeof value !== "boolean") {
-    throw new Error(
-      `Invalid parameter '${field}': expected a boolean, got ${typeof value}`
-    );
-  }
-  return value;
-}
 
 // ==========================================
 // Response Helpers
@@ -422,6 +371,37 @@ const tools: Tool[] = [
     },
   },
 
+  {
+    name: "delete_run",
+    description:
+      "Delete a run and its associated data (files, storage). Used for PII compliance. " +
+      "Checks both active Runs and RunHistory tables automatically. " +
+      "Answers: 'Delete run X', 'Remove run files', 'Clean up PII data from a run'. " +
+      "WARNING: Destructive and irreversible. " +
+      "REQUIRED: agentId and runId. Get runId from get_agent_runs.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agentId: { type: "number", description: "The ID of the agent that contains the run." },
+        runId: { type: "number", description: "The ID of the run to delete. Get from get_agent_runs." },
+        removeMethod: {
+          type: "string",
+          enum: ["RemoveEntireRun", "RemoveAllFiles", "RemoveAllFilesAndAgentInput"],
+          description:
+            "What to delete. " +
+            "RemoveEntireRun (default): Completely removes the run record and all associated files. " +
+            "RemoveAllFiles: Removes files but keeps the run record. " +
+            "RemoveAllFilesAndAgentInput: Removes files and clears agent input parameters.",
+        },
+      },
+      required: ["agentId", "runId"],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+    },
+  },
+
   // File Tools
   {
     name: "get_run_files",
@@ -667,6 +647,81 @@ const tools: Tool[] = [
       readOnlyHint: true,
     },
   },
+  {
+    name: "get_agents_usage",
+    description:
+      "Get all agents with their total costs for a date range, with filtering and sorting options. " +
+      "USE THIS to analyze which agents are costing the most, compare agent costs, or track spending by agent. " +
+      "Answers: 'Which agents cost the most?', 'Show agent costs this month', 'What did agent X cost in January?'. " +
+      "Returns: Paginated list of agents with agentId, agentName, cost, spaceId, plus totalRecordCount and totalCost. " +
+      "TIP: Use sortColumn='cost' and sortOrder=1 to see most expensive agents first. Filter by name to find specific agents. Usage types: 'Server Time,Export GB,Agent Inputs,Proxy Data,Export CPM'.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        startDate: { type: "string", description: "Start date in ISO 8601 format. Defaults to start of current month. Example: '2026-01-01' or '2026-01-01T00:00:00Z'." },
+        endDate: { type: "string", description: "End date in ISO 8601 format. Defaults to now. Example: '2026-01-31' or '2026-01-31T23:59:59Z'." },
+        pageIndex: { type: "number", description: "Page number (1-based). Default: 1." },
+        recordsPerPage: { type: "number", description: "Records per page. Default: 50, Max: 1000." },
+        sortColumn: { type: "string", description: "Column to sort by: 'name' or 'cost'. Default: 'name'." },
+        sortOrder: { type: "number", description: "Sort order: 0 = ascending, 1 = descending. Default: 0." },
+        name: { type: "string", description: "Filter by agent name (case-insensitive contains match)." },
+        usageTypes: { type: "string", description: "Filter by usage types (comma-separated). Example: 'Server Time,Export GB'." },
+      },
+      required: [],
+    },
+    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "get_agent_cost_breakdown",
+    description:
+      "Get detailed cost breakdown by usage type for a specific agent over time, useful for visualizing costs in charts. " +
+      "USE THIS to understand what's driving costs for an agent (server time vs exports vs proxies), or to chart agent costs over time. " +
+      "Answers: 'What's causing agent X's costs?', 'Show me cost breakdown for agent 123', 'Chart agent costs by day'. " +
+      "Returns: Cost data with agentId, agentName, date labels array, usageTypes array (each with type name, data points, totalCost), totalCost, startDate, endDate. " +
+      "TIP: Use timeUnit='day' for daily granularity or 'month' for monthly. The labels array corresponds to data points in each usageTypes.data array.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agentId: { type: "number", description: "The unique ID of the agent." },
+        startDate: { type: "string", description: "Start date in ISO 8601 format. Defaults to start of current month. Example: '2026-01-01' or '2026-01-01T00:00:00Z'." },
+        endDate: { type: "string", description: "End date in ISO 8601 format. Defaults to now. Example: '2026-01-31' or '2026-01-31T23:59:59Z'." },
+        timeUnit: { type: "string", description: "Time unit for grouping: 'day' or 'month'. Default: 'day'." },
+        usageTypes: { type: "string", description: "Filter by usage types (comma-separated). Example: 'Server Time,Export GB'." },
+      },
+      required: ["agentId"],
+    },
+    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "get_agent_runs_cost",
+    description:
+      "Get individual run costs for a specific agent with detailed run information and filtering options. " +
+      "USE THIS to drill down into specific runs, identify expensive runs, or analyze run costs over time. " +
+      "Answers: 'Which runs were most expensive?', 'Show run costs for agent X', 'What did run Y cost?'. " +
+      "Returns: Paginated list of runs with runId, date, startTime, endTime, cost, billingType, plus agentId, agentName, totalRecordCount, totalCost. " +
+      "TIP: Sort by cost (sortColumn='cost', sortOrder=1) to find most expensive runs. Filter by usageTypes to see specific cost categories.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agentId: { type: "number", description: "The unique ID of the agent." },
+        startDate: { type: "string", description: "Start date in ISO 8601 format. Defaults to start of current month. Example: '2026-01-01' or '2026-01-01T00:00:00Z'." },
+        endDate: { type: "string", description: "End date in ISO 8601 format. Defaults to now. Example: '2026-01-31' or '2026-01-31T23:59:59Z'." },
+        pageIndex: { type: "number", description: "Page number (1-based). Default: 1." },
+        recordsPerPage: { type: "number", description: "Records per page. Default: 50, Max: 1000." },
+        sortColumn: { type: "string", description: "Column to sort by: 'date', 'cost', or 'duration'. Default: 'date'." },
+        sortOrder: { type: "number", description: "Sort order: 0 = ascending, 1 = descending. Default: 0." },
+        usageTypes: { type: "string", description: "Filter by usage types (comma-separated). Example: 'Server Time,Proxy Data'." },
+      },
+      required: ["agentId"],
+    },
+    annotations: {
+      readOnlyHint: true,
+    },
+  },
 
   // Space Tools
   {
@@ -884,9 +939,24 @@ function createMcpServer(apiClient: SequentumApiClient): Server {
         const statusNum = validateNumber(params, "status", false);
         const spaceId = validateNumber(params, "spaceId", false);
         const search = validateString(params, "search", false);
-        const configTypeStr = validateString(params, "configType", false);
-        const sortColumn = validateString(params, "sortColumn", false);
-        const sortOrderStr = validateString(params, "sortOrder", false);
+        const configTypeStr = validateEnum(
+          params,
+          "configType",
+          ["Agent", "Command", "Api", "Shared"] as const,
+          false
+        );
+        const sortColumn = validateEnum(
+          params,
+          "sortColumn",
+          ["name", "lastActivity", "created", "updated", "status", "configType"] as const,
+          false
+        );
+        const sortOrderStr = validateEnum(
+          params,
+          "sortOrder",
+          ["asc", "desc"] as const,
+          false
+        );
         const pageIndex = validateNumber(params, "pageIndex", false);
         const recordsPerPage = validateNumber(params, "recordsPerPage", false);
 
@@ -1106,6 +1176,40 @@ function createMcpServer(apiClient: SequentumApiClient): Server {
             {
               type: "text",
               text: `Kill command sent for run ${runId} of agent ${agentId}. If the agent was running, it will initiate graceful stop. If already stopping, it will force immediate termination.`,
+            },
+          ],
+        };
+      }
+
+      // Destructive Operations
+      case "delete_run": {
+        const params = args as Record<string, unknown>;
+        const agentId = validateNumber(params, "agentId")!;
+        const runId = validateNumber(params, "runId")!;
+        const removeMethod = validateEnum(
+          params,
+          "removeMethod",
+          [
+            "RemoveEntireRun",
+            "RemoveAllFiles",
+            "RemoveAllFilesAndAgentInput",
+          ] as const,
+          false
+        );
+        await apiClient.deleteRun(agentId, runId, removeMethod);
+        const methodDescriptions: Record<string, string> = {
+          RemoveEntireRun: `Successfully deleted run ${runId} and all associated files from agent ${agentId}.`,
+          RemoveAllFiles: `Successfully removed all files for run ${runId} from agent ${agentId}. The run record has been preserved.`,
+          RemoveAllFilesAndAgentInput: `Successfully removed all files and agent input for run ${runId} from agent ${agentId}. The run record has been preserved.`,
+        };
+        const description =
+          methodDescriptions[removeMethod ?? "RemoveEntireRun"] ??
+          `Operation completed for run ${runId} on agent ${agentId} (method: ${removeMethod ?? "RemoveEntireRun"})`;
+        return {
+          content: [
+            {
+              type: "text",
+              text: description,
             },
           ],
         };
@@ -1339,6 +1443,102 @@ function createMcpServer(apiClient: SequentumApiClient): Server {
             {
               type: "text",
               text: JSON.stringify(history, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "get_agents_usage": {
+        const params = args as Record<string, unknown>;
+        const defaults = getDefaultDateRange();
+        const startDate = validateString(params, "startDate", false) ?? defaults.startDate;
+        const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
+        validateISODate(startDate, "startDate");
+        validateISODate(endDate, "endDate");
+        validateDateRange(startDate, endDate);
+        const pageIndex = validateNumber(params, "pageIndex", false);
+        const recordsPerPage = validateNumber(params, "recordsPerPage", false);
+        const sortColumn = validateString(params, "sortColumn", false);
+        const sortOrder = validateNumber(params, "sortOrder", false);
+        const name = validateString(params, "name", false);
+        const usageTypes = validateString(params, "usageTypes", false);
+        const result = await apiClient.getAgentsUsage(
+          startDate,
+          endDate,
+          pageIndex,
+          recordsPerPage,
+          sortColumn,
+          sortOrder,
+          name,
+          usageTypes
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "get_agent_cost_breakdown": {
+        const params = args as Record<string, unknown>;
+        const agentId = validateNumber(params, "agentId")!;
+        const defaults = getDefaultDateRange();
+        const startDate = validateString(params, "startDate", false) ?? defaults.startDate;
+        const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
+        validateISODate(startDate, "startDate");
+        validateISODate(endDate, "endDate");
+        validateDateRange(startDate, endDate);
+        const timeUnit = validateString(params, "timeUnit", false);
+        const usageTypes = validateString(params, "usageTypes", false);
+        const result = await apiClient.getAgentCostBreakdown(
+          agentId,
+          startDate,
+          endDate,
+          timeUnit,
+          usageTypes
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "get_agent_runs_cost": {
+        const params = args as Record<string, unknown>;
+        const agentId = validateNumber(params, "agentId")!;
+        const defaults = getDefaultDateRange();
+        const startDate = validateString(params, "startDate", false) ?? defaults.startDate;
+        const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
+        validateISODate(startDate, "startDate");
+        validateISODate(endDate, "endDate");
+        validateDateRange(startDate, endDate);
+        const pageIndex = validateNumber(params, "pageIndex", false);
+        const recordsPerPage = validateNumber(params, "recordsPerPage", false);
+        const sortColumn = validateString(params, "sortColumn", false);
+        const sortOrder = validateNumber(params, "sortOrder", false);
+        const usageTypes = validateString(params, "usageTypes", false);
+        const result = await apiClient.getAgentRunsCost(
+          agentId,
+          startDate,
+          endDate,
+          pageIndex,
+          recordsPerPage,
+          sortColumn,
+          sortOrder,
+          usageTypes
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };
