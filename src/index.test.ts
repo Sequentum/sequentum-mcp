@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   getDefaultDateRange,
+  validateBoolean,
   validateDateRange,
   validateEnum,
   validateISODate,
+  validateJsonString,
   validateNumber,
   validateStartTimeInFuture,
   validateString,
@@ -1061,5 +1063,145 @@ describe("getDefaultDateRange", () => {
     vi.setSystemTime(new Date("2026-01-01T00:00:01Z"));
     const { startDate } = getDefaultDateRange();
     expect(startDate).toBe("2026-01-01T00:00:00.000Z");
+  });
+});
+
+// ==========================================
+// validateNumber with NumberValidationOptions Tests
+// ==========================================
+
+describe("validateNumber with NumberValidationOptions", () => {
+  it("supports the boolean shorthand (backward compatibility)", () => {
+    expect(validateNumber({ x: 5 }, "x", true)).toBe(5);
+    expect(validateNumber({}, "x", false)).toBeUndefined();
+    expect(() => validateNumber({}, "x", true)).toThrow(/Missing required/);
+  });
+
+  it("supports the options object form", () => {
+    expect(validateNumber({ x: 5 }, "x", { required: true })).toBe(5);
+    expect(validateNumber({}, "x", { required: false })).toBeUndefined();
+  });
+
+  it("enforces min constraint", () => {
+    expect(validateNumber({ x: 5 }, "x", { min: 1 })).toBe(5);
+    expect(() => validateNumber({ x: 0 }, "x", { min: 1 })).toThrow(
+      /must be >= 1/
+    );
+  });
+
+  it("enforces max constraint", () => {
+    expect(validateNumber({ x: 5 }, "x", { max: 10 })).toBe(5);
+    expect(() => validateNumber({ x: 11 }, "x", { max: 10 })).toThrow(
+      /must be <= 10/
+    );
+  });
+
+  it("enforces min and max together", () => {
+    expect(validateNumber({ x: 5 }, "x", { min: 1, max: 10 })).toBe(5);
+    expect(() => validateNumber({ x: 0 }, "x", { min: 1, max: 10 })).toThrow(
+      /must be >= 1/
+    );
+    expect(() => validateNumber({ x: 11 }, "x", { min: 1, max: 10 })).toThrow(
+      /must be <= 10/
+    );
+  });
+
+  it("enforces integer constraint", () => {
+    expect(validateNumber({ x: 5 }, "x", { integer: true })).toBe(5);
+    expect(() => validateNumber({ x: 5.5 }, "x", { integer: true })).toThrow(
+      /expected an integer/
+    );
+  });
+
+  it("allows boundary values for min/max", () => {
+    expect(validateNumber({ x: 1 }, "x", { min: 1, max: 10 })).toBe(1);
+    expect(validateNumber({ x: 10 }, "x", { min: 1, max: 10 })).toBe(10);
+  });
+
+  it("defaults required to true in options object", () => {
+    expect(() => validateNumber({}, "x", { min: 1 })).toThrow(
+      /Missing required/
+    );
+  });
+
+  it("returns undefined when optional and missing with options object", () => {
+    expect(
+      validateNumber({}, "x", { required: false, min: 1, max: 10 })
+    ).toBeUndefined();
+  });
+});
+
+// ==========================================
+// validateJsonString Tests
+// ==========================================
+
+describe("validateJsonString", () => {
+  it("returns undefined when optional and missing", () => {
+    expect(validateJsonString({}, "data", false)).toBeUndefined();
+  });
+
+  it("throws when required and missing", () => {
+    expect(() => validateJsonString({}, "data", true)).toThrow(
+      /Missing required parameter: data/
+    );
+  });
+
+  it("accepts valid JSON strings", () => {
+    expect(
+      validateJsonString({ data: '{"key": "value"}' }, "data")
+    ).toBe('{"key": "value"}');
+    expect(validateJsonString({ data: "[]" }, "data")).toBe("[]");
+    expect(validateJsonString({ data: '"hello"' }, "data")).toBe('"hello"');
+    expect(validateJsonString({ data: "123" }, "data")).toBe("123");
+    expect(validateJsonString({ data: "null" }, "data")).toBe("null");
+  });
+
+  it("throws for invalid JSON strings", () => {
+    expect(() =>
+      validateJsonString({ data: "{not json}" }, "data")
+    ).toThrow(/must be a valid JSON string/);
+  });
+
+  it("truncates long invalid values in error message", () => {
+    const longValue = "x".repeat(200);
+    expect(() =>
+      validateJsonString({ data: longValue }, "data")
+    ).toThrow(/must be a valid JSON string/);
+  });
+
+  it("throws when value is not a string", () => {
+    expect(() =>
+      validateJsonString({ data: 123 }, "data")
+    ).toThrow(/expected a string/);
+  });
+});
+
+// ==========================================
+// validateBoolean Tests
+// ==========================================
+
+describe("validateBoolean", () => {
+  it("returns the boolean value when valid", () => {
+    expect(validateBoolean({ flag: true }, "flag")).toBe(true);
+    expect(validateBoolean({ flag: false }, "flag")).toBe(false);
+  });
+
+  it("throws when required and missing", () => {
+    expect(() => validateBoolean({}, "flag")).toThrow(
+      /Missing required parameter: flag/
+    );
+  });
+
+  it("returns undefined when optional and missing", () => {
+    expect(validateBoolean({}, "flag", false)).toBeUndefined();
+  });
+
+  it("throws when value is not a boolean", () => {
+    expect(() => validateBoolean({ flag: "true" }, "flag")).toThrow(
+      /expected a boolean/
+    );
+    expect(() => validateBoolean({ flag: 1 }, "flag")).toThrow(
+      /expected a boolean/
+    );
   });
 });

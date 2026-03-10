@@ -17,145 +17,20 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { SequentumApiClient } from "../api/api-client.js";
 import { AgentApiModel, AgentRunFileApiModel, AgentRunStatus, ConfigType, ListAgentsRequest, PaginatedAgentsResponse, ApiRequestError, RateLimitError, AuthenticationError, RunRemoveMethod } from "../api/types.js";
-import { getDefaultDateRange, validateDateRange, validateISODate, validateStartTimeInFuture } from "../utils/validation.js";
+import {
+  getDefaultDateRange,
+  validateBoolean,
+  validateDateRange,
+  validateEnum,
+  validateISODate,
+  validateJsonString,
+  validateNumber,
+  validateStartTimeInFuture,
+  validateString,
+} from "../utils/validation.js";
 import { tools } from "./tools.js";
 import { resources, resourceTemplates, readResource } from "./resources.js";
 import { prompts, getPromptMessages } from "./prompts.js";
-
-// ==========================================
-// Input Validation Helpers
-// ==========================================
-
-interface NumberValidationOptions {
-  required?: boolean;
-  /** Minimum allowed value (inclusive) */
-  min?: number;
-  /** Maximum allowed value (inclusive) */
-  max?: number;
-  /** If true, value must be an integer (no decimals) */
-  integer?: boolean;
-}
-
-function validateNumber(
-  args: Record<string, unknown>,
-  field: string,
-  requiredOrOptions: boolean | NumberValidationOptions = true
-): number | undefined {
-  // Support both old signature (boolean) and new options object
-  const opts: NumberValidationOptions = typeof requiredOrOptions === "boolean"
-    ? { required: requiredOrOptions }
-    : requiredOrOptions;
-  const required = opts.required ?? true;
-
-  const value = args[field];
-  if (value === undefined || value === null) {
-    if (required) {
-      throw new Error(`Missing required parameter: ${field}`);
-    }
-    return undefined;
-  }
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(
-      `Invalid parameter '${field}': expected a number, got ${typeof value}`
-    );
-  }
-  if (opts.integer && !Number.isInteger(value)) {
-    throw new Error(
-      `Invalid parameter '${field}': expected an integer, got ${value}`
-    );
-  }
-  if (opts.min !== undefined && value < opts.min) {
-    throw new Error(
-      `Invalid parameter '${field}': must be >= ${opts.min}, got ${value}`
-    );
-  }
-  if (opts.max !== undefined && value > opts.max) {
-    throw new Error(
-      `Invalid parameter '${field}': must be <= ${opts.max}, got ${value}`
-    );
-  }
-  return value;
-}
-
-function validateString(
-  args: Record<string, unknown>,
-  field: string,
-  required: boolean = true
-): string | undefined {
-  const value = args[field];
-  if (value === undefined || value === null) {
-    if (required) {
-      throw new Error(`Missing required parameter: ${field}`);
-    }
-    return undefined;
-  }
-  if (typeof value !== "string") {
-    throw new Error(
-      `Invalid parameter '${field}': expected a string, got ${typeof value}`
-    );
-  }
-  return value;
-}
-
-function validateEnum<T extends string>(
-  args: Record<string, unknown>,
-  field: string,
-  validValues: readonly T[],
-  required: boolean = true
-): T | undefined {
-  const raw = validateString(args, field, required);
-  if (raw === undefined) {
-    return undefined;
-  }
-  if (!validValues.includes(raw as T)) {
-    throw new Error(
-      `Invalid parameter '${field}': '${raw}'. Must be one of: ${validValues.join(", ")}`
-    );
-  }
-  return raw as T;
-}
-
-/**
- * Validate that a string is valid JSON. Returns the string as-is if valid.
- * Used for inputParameters fields to catch malformed JSON before sending to the API.
- */
-function validateJsonString(
-  args: Record<string, unknown>,
-  field: string,
-  required: boolean = false
-): string | undefined {
-  const value = validateString(args, field, required);
-  if (value === undefined) return undefined;
-
-  try {
-    JSON.parse(value);
-  } catch {
-    throw new Error(
-      `Invalid parameter '${field}': must be a valid JSON string. Got: ${value.length > 100 ? value.substring(0, 100) + "..." : value}`
-    );
-  }
-  return value;
-}
-
-function validateBoolean(
-  args: Record<string, unknown>,
-  field: string,
-  required: boolean = true
-): boolean | undefined {
-  const value = args[field];
-  if (value === undefined || value === null) {
-    if (required) {
-      throw new Error(`Missing required parameter: ${field}`);
-    }
-    return undefined;
-  }
-  if (typeof value !== "boolean") {
-    throw new Error(
-      `Invalid parameter '${field}': expected a boolean, got ${typeof value}`
-    );
-  }
-  return value;
-}
 
 // ==========================================
 // Response Helpers

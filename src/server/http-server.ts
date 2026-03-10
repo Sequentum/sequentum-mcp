@@ -95,6 +95,10 @@ export async function startHttpServer(
   // Maximum number of concurrent sessions to prevent memory exhaustion
   const MAX_SESSIONS = parseInt(process.env.MAX_SESSIONS || "1000", 10);
 
+  // Tracks sessions being created (between capacity check and sessions.set()).
+  // Prevents concurrent requests from all passing the check before any session is stored.
+  let pendingSessions = 0;
+
   // Clean up stale sessions every 15 minutes
   // Sessions are removed if they haven't had activity in over 1 hour
   const SESSION_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
@@ -245,8 +249,10 @@ export async function startHttpServer(
           return;
         }
 
-        // Reject if at session capacity to prevent memory exhaustion
-        if (sessions.size >= MAX_SESSIONS) {
+        // Reject if at session capacity to prevent memory exhaustion.
+        // pendingSessions counts sessions being created but not yet stored, so
+        // concurrent requests all see the updated count before any await completes.
+        if (sessions.size + pendingSessions >= MAX_SESSIONS) {
           res.status(503).json({
             jsonrpc: "2.0",
             error: { code: -32000, message: "Server at capacity. Please try again later." },
@@ -256,8 +262,13 @@ export async function startHttpServer(
           return;
         }
 
-        // Create session with MCP server, transport, and API client
-        session = await createSession(token);
+        // Reserve a slot before the first await so concurrent requests see it.
+        pendingSessions++;
+        try {
+          session = await createSession(token);
+        } finally {
+          pendingSessions--;
+        }
         
         // We'll store the session after handleRequest sets the session ID
       }
