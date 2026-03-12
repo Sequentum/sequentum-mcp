@@ -584,11 +584,13 @@ describe("MCP Resources", () => {
         getAllSpaces: vi.fn().mockResolvedValue([]),
         getCreditsBalance: vi.fn().mockResolvedValue({ availableCredits: 100 }),
         getSpendingSummary: vi.fn().mockResolvedValue({ totalSpent: 500 }),
+        getAgentsUsage: vi.fn().mockResolvedValue({ totalCost: 123, agents: [] }),
         getRunsSummary: vi.fn().mockResolvedValue({ totalRuns: 10 }),
         getUpcomingSchedules: vi.fn().mockResolvedValue([{ scheduleId: 1 }]),
         getAgent: vi.fn().mockResolvedValue({ id: 42, name: "Test Agent" }),
         getAgentVersions: vi.fn().mockResolvedValue([{ version: 1 }]),
         getAgentSchedules: vi.fn().mockResolvedValue([]),
+        getAgentCostBreakdown: vi.fn().mockResolvedValue({ agentId: 42, breakdown: [] }),
         getAgentRuns: vi.fn().mockResolvedValue([{ id: 100, status: "Completed" }]),
         getRunStatus: vi.fn().mockResolvedValue({ id: 100, status: "Running" }),
         getRunFiles: vi.fn().mockResolvedValue([{ id: 1, name: "output.csv" }]),
@@ -652,6 +654,20 @@ describe("MCP Resources", () => {
       expect(JSON.parse(result.text)).toEqual({ totalSpent: 500 });
     });
 
+    it("should read sequentum://billing/agents-usage", async () => {
+      const result = await readResource("sequentum://billing/agents-usage", mockApiClient as any);
+      expect(mockApiClient.getAgentsUsage).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        1,
+        50,
+        "cost",
+        1
+      );
+      expect(result.mimeType).toBe("application/json");
+      expect(JSON.parse(result.text)).toEqual({ totalCost: 123, agents: [] });
+    });
+
     it("should read sequentum://analytics/runs", async () => {
       const result = await readResource("sequentum://analytics/runs", mockApiClient as any);
       expect(mockApiClient.getRunsSummary).toHaveBeenCalled();
@@ -694,6 +710,17 @@ describe("MCP Resources", () => {
       expect(JSON.parse(result.text)).toEqual({ runId: 99, status: "Failed" });
     });
 
+    it("should read sequentum://agents/{agentId}/cost-breakdown", async () => {
+      const result = await readResource("sequentum://agents/42/cost-breakdown", mockApiClient as any);
+      expect(mockApiClient.getAgentCostBreakdown).toHaveBeenCalledWith(
+        42,
+        expect.any(String),
+        expect.any(String),
+        "day"
+      );
+      expect(JSON.parse(result.text)).toEqual({ agentId: 42, breakdown: [] });
+    });
+
     it("should throw for unknown resource URI", async () => {
       await expect(readResource("sequentum://unknown", mockApiClient as any)).rejects.toThrow(
         "Unknown resource URI: sequentum://unknown"
@@ -702,6 +729,12 @@ describe("MCP Resources", () => {
 
     it("should throw for malformed agent URI", async () => {
       await expect(readResource("sequentum://agents/abc", mockApiClient as any)).rejects.toThrow(
+        "Unknown resource URI"
+      );
+    });
+
+    it("should throw for zero-valued IDs in resource URIs", async () => {
+      await expect(readResource("sequentum://agents/0", mockApiClient as any)).rejects.toThrow(
         "Unknown resource URI"
       );
     });

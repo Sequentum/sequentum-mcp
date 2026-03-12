@@ -79,8 +79,111 @@ function summarizeAgents(agents: AgentApiModel[]) {
 /**
  * Type guard for paginated agent responses from the API.
  */
-function isPaginatedResponse(r: unknown): r is PaginatedAgentsResponse {
+export function isPaginatedResponse(r: unknown): r is PaginatedAgentsResponse {
   return r !== null && typeof r === 'object' && 'agents' in r && Array.isArray((r as PaginatedAgentsResponse).agents);
+}
+
+export interface ScheduleParams {
+  scheduleType: number | undefined;
+  startTime: string | undefined;
+  cronExpression: string | undefined;
+  runEveryCount: number | undefined;
+  runEveryPeriod: number | undefined;
+  timezone: string | undefined;
+  inputParameters: string | undefined;
+  isEnabled: boolean | undefined;
+  parallelism: number | undefined;
+  parallelMaxConcurrency: number | undefined;
+  parallelExport: string | undefined;
+  logLevel: string | undefined;
+  logMode: string | undefined;
+  isExclusive: boolean | undefined;
+  isWaitOnFailure: boolean | undefined;
+}
+
+export function parseScheduleParams(
+  params: Record<string, unknown>
+): ScheduleParams {
+  return {
+    scheduleType: validateNumber(params, "scheduleType", { required: false, min: 1, max: 3, integer: true }),
+    startTime: validateString(params, "startTime", false),
+    cronExpression: validateString(params, "cronExpression", false),
+    runEveryCount: validateNumber(params, "runEveryCount", { required: false, min: 1, integer: true }),
+    runEveryPeriod: validateNumber(params, "runEveryPeriod", { required: false, min: 1, max: 5, integer: true }),
+    timezone: validateString(params, "timezone", false),
+    inputParameters: validateJsonString(params, "inputParameters", false),
+    isEnabled: validateBoolean(params, "isEnabled", false),
+    parallelism: validateNumber(params, "parallelism", { required: false, min: 1, max: 50, integer: true }),
+    parallelMaxConcurrency: validateNumber(params, "parallelMaxConcurrency", { required: false, min: 1, integer: true }),
+    parallelExport: validateString(params, "parallelExport", false),
+    logLevel: validateString(params, "logLevel", false),
+    logMode: validateString(params, "logMode", false),
+    isExclusive: validateBoolean(params, "isExclusive", false),
+    isWaitOnFailure: validateBoolean(params, "isWaitOnFailure", false),
+  };
+}
+
+export function validateScheduleStartTime(
+  effectiveScheduleType: number | undefined,
+  startTime: string | undefined
+): void {
+  if (effectiveScheduleType === 1 && startTime) {
+    validateStartTimeInFuture(startTime, 1);
+  }
+
+  if (effectiveScheduleType === 2 && startTime) {
+    validateStartTimeInFuture(startTime, 0);
+  }
+}
+
+export function formatToolError(error: unknown): {
+  content: Array<{ type: "text"; text: string }>;
+  isError: true;
+} {
+  let errorMessage: string;
+  let errorPrefix = "Error";
+
+  if (error instanceof RateLimitError) {
+    errorPrefix = "Rate Limited";
+    const retryHint = error.retryAfterSeconds
+      ? ` Try again in ${error.retryAfterSeconds} seconds.`
+      : " Please wait a moment before retrying.";
+    errorMessage = `The Sequentum API rate limit has been reached.${retryHint}`;
+  } else if (error instanceof AuthenticationError) {
+    errorPrefix = "Authentication Error";
+    errorMessage = error.message;
+  } else if (error instanceof ApiRequestError) {
+    if (error.isUnauthorized) {
+      errorPrefix = "Authentication Failed";
+      errorMessage = "Your API key or OAuth token is invalid or has expired. Please check your credentials.";
+    } else if (error.isForbidden) {
+      errorPrefix = "Access Denied";
+      errorMessage = "You don't have permission to perform this action. Check your API key permissions.";
+    } else if (error.isNotFound) {
+      errorPrefix = "Not Found";
+      errorMessage = error.message;
+    } else if (error.isServerError) {
+      errorPrefix = "Server Error";
+      errorMessage = `The Sequentum API encountered an internal error (${error.statusCode}). This is a server-side issue — please try again later.`;
+    } else {
+      errorPrefix = `API Error (${error.statusCode})`;
+      errorMessage = error.message;
+    }
+  } else if (error instanceof Error) {
+    errorMessage = error.message;
+  } else {
+    errorMessage = "An unknown error occurred";
+  }
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: `${errorPrefix}: ${errorMessage}`,
+      },
+    ],
+    isError: true,
+  };
 }
 
 // ==========================================
@@ -88,6 +191,32 @@ function isPaginatedResponse(r: unknown): r is PaginatedAgentsResponse {
 // ==========================================
 
 const DEBUG = process.env.DEBUG === '1';
+
+function redactDebugArgs(args: unknown): unknown {
+  if (args === null || typeof args !== "object" || Array.isArray(args)) {
+    return args;
+  }
+
+  const safeArgs: Record<string, unknown> = { ...(args as Record<string, unknown>) };
+  const sensitiveFields = [
+    "inputParameters",
+    "apiKey",
+    "token",
+    "accessToken",
+    "refreshToken",
+    "password",
+    "secret",
+    "clientSecret",
+  ];
+
+  for (const field of sensitiveFields) {
+    if (field in safeArgs) {
+      safeArgs[field] = "[REDACTED]";
+    }
+  }
+
+  return safeArgs;
+}
 
 /**
  * Create a new MCP Server instance with all handlers registered.
@@ -123,10 +252,12 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
 
     if (DEBUG) {
       console.error(`[DEBUG] Tool called: ${name}`);
-      console.error(`[DEBUG] Args: ${JSON.stringify(args)}`);
+      console.error(`[DEBUG] Args: ${JSON.stringify(redactDebugArgs(args))}`);
     }
 
     try {
+      // TODO: Consider replacing this switch with a dispatch map (Record<string, HandlerFn>)
+      // to improve readability and testability as the tool count grows.
       switch (name) {
         // Agent Tools
         case "list_agents": {
@@ -172,14 +303,7 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
             filters.sortOrder = sortOrderStr === "desc" ? 1 : 0;
           }
 
-          if (DEBUG) {
-            console.error(`[DEBUG] Calling getAllAgents with filters: ${JSON.stringify(filters)}`);
-          }
           const response = await apiClient.getAllAgents(filters);
-
-          if (DEBUG) {
-            console.error(`[DEBUG] Response type: ${typeof response}, isArray: ${Array.isArray(response)}`);
-          }
 
           // Parse response — either a plain array (no pagination) or a PaginatedAgentsResponse
           let agents: AgentApiModel[];
@@ -198,9 +322,6 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
             throw new Error(`Unexpected response type: ${typeof response}`);
           }
 
-          if (DEBUG) {
-            console.error(`[DEBUG] getAllAgents returned ${agents.length} agents`);
-          }
           const summary = summarizeAgents(agents);
 
           // Include pagination info if available
@@ -485,21 +606,23 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
           const params = args as Record<string, unknown>;
           const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
           const name = validateString(params, "name")!;
-          const scheduleType = validateNumber(params, "scheduleType", { required: false, min: 1, max: 3, integer: true });
-          const startTime = validateString(params, "startTime", false);
-          const cronExpression = validateString(params, "cronExpression", false);
-          const runEveryCount = validateNumber(params, "runEveryCount", { required: false, min: 1, integer: true });
-          const runEveryPeriod = validateNumber(params, "runEveryPeriod", { required: false, min: 1, max: 5, integer: true });
-          const timezone = validateString(params, "timezone", false);
-          const inputParameters = validateJsonString(params, "inputParameters", false);
-          const isEnabled = validateBoolean(params, "isEnabled", false);
-          const parallelism = validateNumber(params, "parallelism", { required: false, min: 1, max: 50, integer: true });
-          const parallelMaxConcurrency = validateNumber(params, "parallelMaxConcurrency", { required: false, min: 1, integer: true });
-          const parallelExport = validateString(params, "parallelExport", false);
-          const logLevel = validateString(params, "logLevel", false);
-          const logMode = validateString(params, "logMode", false);
-          const isExclusive = validateBoolean(params, "isExclusive", false);
-          const isWaitOnFailure = validateBoolean(params, "isWaitOnFailure", false);
+          const {
+            scheduleType,
+            startTime,
+            cronExpression,
+            runEveryCount,
+            runEveryPeriod,
+            timezone,
+            inputParameters,
+            isEnabled,
+            parallelism,
+            parallelMaxConcurrency,
+            parallelExport,
+            logLevel,
+            logMode,
+            isExclusive,
+            isWaitOnFailure,
+          } = parseScheduleParams(params);
 
           // Validate schedule type specific parameters
           const effectiveScheduleType = scheduleType ?? 3; // Default to CRON
@@ -509,7 +632,6 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
             if (!startTime) {
               throw new Error("startTime is required when scheduleType is 1 (RunOnce)");
             }
-            validateStartTimeInFuture(startTime, 1);
           }
 
           // RunEvery (2): runEveryCount and runEveryPeriod are required, startTime is optional but must be in the future if provided
@@ -517,15 +639,14 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
             if (runEveryCount === undefined || runEveryPeriod === undefined) {
               throw new Error("runEveryCount and runEveryPeriod are required when scheduleType is 2 (RunEvery)");
             }
-            if (startTime) {
-              validateStartTimeInFuture(startTime, 0);
-            }
           }
 
           // CRON (3): cronExpression is required, startTime is not used
           if (effectiveScheduleType === 3 && !cronExpression) {
             throw new Error("cronExpression is required when scheduleType is 3 (CRON)");
           }
+
+          validateScheduleStartTime(effectiveScheduleType, startTime);
 
           const schedule = await apiClient.createAgentSchedule(agentId, {
             name,
@@ -590,21 +711,23 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
           const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
           const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
           const name = validateString(params, "name")!;
-          const scheduleType = validateNumber(params, "scheduleType", { required: false, min: 1, max: 3, integer: true });
-          const startTime = validateString(params, "startTime", false);
-          const cronExpression = validateString(params, "cronExpression", false);
-          const runEveryCount = validateNumber(params, "runEveryCount", { required: false, min: 1, integer: true });
-          const runEveryPeriod = validateNumber(params, "runEveryPeriod", { required: false, min: 1, max: 5, integer: true });
-          const timezone = validateString(params, "timezone", false);
-          const inputParameters = validateJsonString(params, "inputParameters", false);
-          const isEnabled = validateBoolean(params, "isEnabled", false);
-          const parallelism = validateNumber(params, "parallelism", { required: false, min: 1, max: 50, integer: true });
-          const parallelMaxConcurrency = validateNumber(params, "parallelMaxConcurrency", { required: false, min: 1, integer: true });
-          const parallelExport = validateString(params, "parallelExport", false);
-          const logLevel = validateString(params, "logLevel", false);
-          const logMode = validateString(params, "logMode", false);
-          const isExclusive = validateBoolean(params, "isExclusive", false);
-          const isWaitOnFailure = validateBoolean(params, "isWaitOnFailure", false);
+          const {
+            scheduleType,
+            startTime,
+            cronExpression,
+            runEveryCount,
+            runEveryPeriod,
+            timezone,
+            inputParameters,
+            isEnabled,
+            parallelism,
+            parallelMaxConcurrency,
+            parallelExport,
+            logLevel,
+            logMode,
+            isExclusive,
+            isWaitOnFailure,
+          } = parseScheduleParams(params);
 
           const hasCronFields = cronExpression !== undefined;
           const hasRunEveryFields = runEveryCount !== undefined || runEveryPeriod !== undefined;
@@ -624,12 +747,7 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
             else if (hasRunEveryFields) effectiveScheduleType = 2;
           }
 
-          if (effectiveScheduleType === 1 && startTime) {
-            validateStartTimeInFuture(startTime, 1);
-          }
-          if (effectiveScheduleType === 2 && startTime) {
-            validateStartTimeInFuture(startTime, 0);
-          }
+          validateScheduleStartTime(effectiveScheduleType, startTime);
 
           const updated = await apiClient.updateAgentSchedule(agentId, scheduleId, {
             name,
@@ -988,54 +1106,7 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
           throw new Error(`Unknown tool: ${name}`);
       }
     } catch (error) {
-      // Build a user-friendly error message based on the error type
-      let errorMessage: string;
-      let errorPrefix = "Error";
-
-      if (error instanceof RateLimitError) {
-        // 429 Too Many Requests — tell the AI to wait and retry
-        errorPrefix = "Rate Limited";
-        const retryHint = error.retryAfterSeconds
-          ? ` Try again in ${error.retryAfterSeconds} seconds.`
-          : " Please wait a moment before retrying.";
-        errorMessage = `The Sequentum API rate limit has been reached.${retryHint}`;
-      } else if (error instanceof AuthenticationError) {
-        // No credentials configured at all
-        errorPrefix = "Authentication Error";
-        errorMessage = error.message;
-      } else if (error instanceof ApiRequestError) {
-        // Typed HTTP error — provide context based on status code
-        if (error.isUnauthorized) {
-          errorPrefix = "Authentication Failed";
-          errorMessage = "Your API key or OAuth token is invalid or has expired. Please check your credentials.";
-        } else if (error.isForbidden) {
-          errorPrefix = "Access Denied";
-          errorMessage = "You don't have permission to perform this action. Check your API key permissions.";
-        } else if (error.isNotFound) {
-          errorPrefix = "Not Found";
-          errorMessage = error.message;
-        } else if (error.isServerError) {
-          errorPrefix = "Server Error";
-          errorMessage = `The Sequentum API encountered an internal error (${error.statusCode}). This is a server-side issue — please try again later.`;
-        } else {
-          errorPrefix = `API Error (${error.statusCode})`;
-          errorMessage = error.message;
-        }
-      } else if (error instanceof Error) {
-        errorMessage = error.message;
-      } else {
-        errorMessage = "An unknown error occurred";
-      }
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `${errorPrefix}: ${errorMessage}`,
-          },
-        ],
-        isError: true,
-      };
+      return formatToolError(error);
     }
   });
 
@@ -1082,7 +1153,7 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
 
     if (DEBUG) {
       console.error(`[DEBUG] Prompt requested: ${name}`);
-      console.error(`[DEBUG] Args: ${JSON.stringify(args)}`);
+      console.error(`[DEBUG] Args: ${JSON.stringify(redactDebugArgs(args))}`);
     }
 
     const messages = getPromptMessages(name, args);

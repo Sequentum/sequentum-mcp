@@ -385,12 +385,13 @@ export async function startHttpServer(
 
   // Start the HTTP server
   const httpServer = app.listen(httpPort, httpHost, () => {
-    console.error(`Sequentum MCP Server running on HTTP`);
-    console.error(`  URL: http://${httpHost}:${httpPort}/mcp`);
-    console.error(`  Transport: Streamable HTTP`);
-    console.error(`  Connected to: ${apiBaseUrl}`);
-    console.error(`  Health check: http://${httpHost}:${httpPort}/health`);
-    console.error(`  Max sessions: ${MAX_SESSIONS}`);
+    console.error(
+      `Sequentum MCP Server running on HTTP at http://${httpHost}:${httpPort}/mcp ` +
+      `(transport=streamable-http, health=http://${httpHost}:${httpPort}/health, maxSessions=${MAX_SESSIONS})`
+    );
+    if (DEBUG) {
+      console.error(`Connected to: ${apiBaseUrl}`);
+    }
   });
 
   // Graceful shutdown handler — closes all sessions, stops accepting

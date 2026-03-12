@@ -258,11 +258,14 @@ export async function readResource(
     };
   }
 
+  // TODO: Consider refactoring into a dispatch table for static URIs and a loop
+  // over template patterns to reduce boilerplate as the resource count grows.
+
   // Templated resources — match patterns and extract IDs
   let match: RegExpExecArray | null;
 
   // sequentum://agents/{agentId}/runs/{runId}/diagnostics
-  match = /^sequentum:\/\/agents\/(\d+)\/runs\/(\d+)\/diagnostics$/.exec(uri);
+  match = /^sequentum:\/\/agents\/([1-9]\d*)\/runs\/([1-9]\d*)\/diagnostics$/.exec(uri);
   if (match) {
     const agentId = parseInt(match[1], 10);
     const runId = parseInt(match[2], 10);
@@ -275,7 +278,7 @@ export async function readResource(
   }
 
   // sequentum://agents/{agentId}/runs/{runId}/files
-  match = /^sequentum:\/\/agents\/(\d+)\/runs\/(\d+)\/files$/.exec(uri);
+  match = /^sequentum:\/\/agents\/([1-9]\d*)\/runs\/([1-9]\d*)\/files$/.exec(uri);
   if (match) {
     const agentId = parseInt(match[1], 10);
     const runId = parseInt(match[2], 10);
@@ -288,7 +291,7 @@ export async function readResource(
   }
 
   // sequentum://agents/{agentId}/runs/{runId}  (must come after /diagnostics and /files)
-  match = /^sequentum:\/\/agents\/(\d+)\/runs\/(\d+)$/.exec(uri);
+  match = /^sequentum:\/\/agents\/([1-9]\d*)\/runs\/([1-9]\d*)$/.exec(uri);
   if (match) {
     const agentId = parseInt(match[1], 10);
     const runId = parseInt(match[2], 10);
@@ -301,7 +304,7 @@ export async function readResource(
   }
 
   // sequentum://agents/{agentId}/runs  (must come after specific run patterns)
-  match = /^sequentum:\/\/agents\/(\d+)\/runs$/.exec(uri);
+  match = /^sequentum:\/\/agents\/([1-9]\d*)\/runs$/.exec(uri);
   if (match) {
     const agentId = parseInt(match[1], 10);
     const runs = await apiClient.getAgentRuns(agentId);
@@ -313,7 +316,7 @@ export async function readResource(
   }
 
   // sequentum://agents/{agentId}/latest-failure
-  match = /^sequentum:\/\/agents\/(\d+)\/latest-failure$/.exec(uri);
+  match = /^sequentum:\/\/agents\/([1-9]\d*)\/latest-failure$/.exec(uri);
   if (match) {
     const agentId = parseInt(match[1], 10);
     const diagnostics = await apiClient.getLatestFailure(agentId);
@@ -325,7 +328,7 @@ export async function readResource(
   }
 
   // sequentum://agents/{agentId}/versions
-  match = /^sequentum:\/\/agents\/(\d+)\/versions$/.exec(uri);
+  match = /^sequentum:\/\/agents\/([1-9]\d*)\/versions$/.exec(uri);
   if (match) {
     const agentId = parseInt(match[1], 10);
     const versions = await apiClient.getAgentVersions(agentId);
@@ -337,7 +340,7 @@ export async function readResource(
   }
 
   // sequentum://agents/{agentId}/schedules
-  match = /^sequentum:\/\/agents\/(\d+)\/schedules$/.exec(uri);
+  match = /^sequentum:\/\/agents\/([1-9]\d*)\/schedules$/.exec(uri);
   if (match) {
     const agentId = parseInt(match[1], 10);
     const schedules = await apiClient.getAgentSchedules(agentId);
@@ -349,7 +352,7 @@ export async function readResource(
   }
 
   // sequentum://agents/{agentId}/cost-breakdown
-  match = /^sequentum:\/\/agents\/(\d+)\/cost-breakdown$/.exec(uri);
+  match = /^sequentum:\/\/agents\/([1-9]\d*)\/cost-breakdown$/.exec(uri);
   if (match) {
     const agentId = parseInt(match[1], 10);
     const { startDate, endDate } = getDefaultDateRange();
@@ -367,7 +370,7 @@ export async function readResource(
   }
 
   // sequentum://agents/{agentId}  (must come after /versions and /schedules)
-  match = /^sequentum:\/\/agents\/(\d+)$/.exec(uri);
+  match = /^sequentum:\/\/agents\/([1-9]\d*)$/.exec(uri);
   if (match) {
     const agentId = parseInt(match[1], 10);
     const agent = await apiClient.getAgent(agentId);
@@ -379,7 +382,7 @@ export async function readResource(
   }
 
   // sequentum://spaces/{spaceId}/agents
-  match = /^sequentum:\/\/spaces\/(\d+)\/agents$/.exec(uri);
+  match = /^sequentum:\/\/spaces\/([1-9]\d*)\/agents$/.exec(uri);
   if (match) {
     const spaceId = parseInt(match[1], 10);
     const agents = await apiClient.getSpaceAgents(spaceId);
@@ -391,7 +394,7 @@ export async function readResource(
   }
 
   // sequentum://spaces/{spaceId}  (must come after /agents)
-  match = /^sequentum:\/\/spaces\/(\d+)$/.exec(uri);
+  match = /^sequentum:\/\/spaces\/([1-9]\d*)$/.exec(uri);
   if (match) {
     const spaceId = parseInt(match[1], 10);
     const space = await apiClient.getSpace(spaceId);
