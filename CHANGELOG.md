@@ -1,5 +1,49 @@
 # Changelog
 
+## [1.2.0] - 2026-03-12
+
+### Added
+
+- **MCP Prompts** (9 reusable workflow templates):
+  - `debug-agent` -- Diagnose why an agent is failing
+  - `agent-health-check` -- Comprehensive health overview for an agent
+  - `spending-report` -- Spending and credits report
+  - `cost-analysis` -- Analyze costs across agents
+  - `run-and-monitor` -- Start an agent and monitor until completion
+  - `space-overview` -- Overview of all agents in a space
+  - `daily-operations-report` -- Daily operations report across all agents
+  - `schedule-agent` -- Walk through creating or reviewing schedules
+  - `compare-runs` -- Compare last successful vs failed run
+- **MCP Resources** (18 read-only, URI-addressable data endpoints):
+  - 7 static resources: agent list, spaces, credits balance, monthly spending, agent costs, recent runs summary, upcoming schedules
+  - 11 resource templates: agent detail, agent versions, agent schedules, agent cost breakdown, agent runs, run status, run files, run diagnostics, latest failure, space detail, space agents
+- **Schedule Management** tools:
+  - `get_agent_schedule` -- Get details of a specific schedule
+  - `update_agent_schedule` -- Update an existing schedule's timing, parameters, or settings
+  - `enable_agent_schedule` -- Enable a previously disabled schedule
+  - `disable_agent_schedule` -- Disable a schedule without deleting it
+- New `src/server/handlers.test.ts` with handler unit tests
+- Expanded test coverage for API client and index module
+- Documentation: `docs/prompts-reference.md` and `docs/resources-reference.md`
+
+### Changed
+
+- **Major architecture refactoring**: Split monolithic `src/index.ts` (~2000 lines) into a modular structure:
+  - `src/server/tools.ts` -- Tool definitions and schemas
+  - `src/server/handlers.ts` -- MCP server factory and tool handler dispatch
+  - `src/server/http-server.ts` -- HTTP/Streamable transport, session management, OAuth discovery
+  - `src/server/prompts.ts` -- Prompt definitions and message builders
+  - `src/server/resources.ts` -- Resource and resource template definitions with URI dispatcher
+  - `src/api/api-client.ts` -- API client (moved from `src/`)
+  - `src/api/types.ts` -- TypeScript interfaces and enums (moved from `src/`)
+  - `src/utils/validation.ts` -- Input validation helpers (moved from `src/`)
+  - `src/utils/oauth-metadata.ts` -- OAuth metadata builder (moved from `src/`)
+- Extracted shared validation logic into `src/utils/validation.ts` to eliminate duplicate code
+- Added URI validation for resource endpoints
+- Improved atomic session control in HTTP server
+- Updated `docs/tool-reference.md` with the 4 new schedule tools (36 total)
+- Updated `README.md` with prompts, resources sections and references to new documentation
+
 ## [1.1.4] - 2026-03-04
 
 ### Added
@@ -92,6 +136,7 @@
 
 ---
 
+[1.2.0]: https://github.com/Sequentum/sequentum-mcp/compare/v1.1.4...v1.2.0
 [1.1.4]: https://github.com/Sequentum/sequentum-mcp/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/Sequentum/sequentum-mcp/compare/v1.0.2...v1.1.3
 [1.0.2]: https://github.com/Sequentum/sequentum-mcp/compare/v1.0.1...v1.0.2

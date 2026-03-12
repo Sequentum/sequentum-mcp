@@ -1,0 +1,1164 @@
+/**
+ * MCP Server Factory and Tool Handlers
+ *
+ * Contains input validation helpers, response helpers, and the
+ * createMcpServer factory that wires tool definitions to their handlers.
+ */
+
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+import { SequentumApiClient } from "../api/api-client.js";
+import { AgentApiModel, AgentRunFileApiModel, AgentRunStatus, ConfigType, ListAgentsRequest, PaginatedAgentsResponse, ApiRequestError, RateLimitError, AuthenticationError, RunRemoveMethod } from "../api/types.js";
+import {
+  getDefaultDateRange,
+  validateBoolean,
+  validateDateRange,
+  validateEnum,
+  validateISODate,
+  validateJsonString,
+  validateNumber,
+  validateStartTimeInFuture,
+  validateString,
+} from "../utils/validation.js";
+import { tools } from "./tools.js";
+import { resources, resourceTemplates, readResource } from "./resources.js";
+import { prompts, getPromptMessages } from "./prompts.js";
+
+// ==========================================
+// Response Helpers
+// ==========================================
+
+/**
+ * Map RunStatus numeric value to human-readable string
+ */
+function getRunStatusLabel(status: number | undefined): string {
+  const statusMap: Record<number, string> = {
+    0: "Invalid",
+    1: "Running",
+    2: "Exporting",
+    3: "Starting",
+    4: "Queuing",
+    5: "Stopping",
+    6: "Failure",
+    7: "Failed",
+    8: "Stopped",
+    9: "Completed",
+    10: "Success",
+    11: "Skipped",
+    12: "Waiting",
+  };
+  if (status === undefined || status === null) {
+    return "Never Run";
+  }
+  return statusMap[status] ?? `Unknown (${status})`;
+}
+
+/**
+ * Transform agent list to summary format for display
+ */
+function summarizeAgents(agents: AgentApiModel[]) {
+  return agents.map((a) => ({
+    id: a.id,
+    name: a.name,
+    description: a.description,
+    status: getRunStatusLabel(a.status),
+    configType: a.configType,
+    version: a.version,
+    lastActivity: a.lastActivity,
+  }));
+}
+
+/**
+ * Type guard for paginated agent responses from the API.
+ */
+export function isPaginatedResponse(r: unknown): r is PaginatedAgentsResponse {
+  return r !== null && typeof r === 'object' && 'agents' in r && Array.isArray((r as PaginatedAgentsResponse).agents);
+}
+
+export interface ScheduleParams {
+  scheduleType: number | undefined;
+  startTime: string | undefined;
+  cronExpression: string | undefined;
+  runEveryCount: number | undefined;
+  runEveryPeriod: number | undefined;
+  timezone: string | undefined;
+  inputParameters: string | undefined;
+  isEnabled: boolean | undefined;
+  parallelism: number | undefined;
+  parallelMaxConcurrency: number | undefined;
+  parallelExport: string | undefined;
+  logLevel: string | undefined;
+  logMode: string | undefined;
+  isExclusive: boolean | undefined;
+  isWaitOnFailure: boolean | undefined;
+}
+
+export function parseScheduleParams(
+  params: Record<string, unknown>
+): ScheduleParams {
+  return {
+    scheduleType: validateNumber(params, "scheduleType", { required: false, min: 1, max: 3, integer: true }),
+    startTime: validateString(params, "startTime", false),
+    cronExpression: validateString(params, "cronExpression", false),
+    runEveryCount: validateNumber(params, "runEveryCount", { required: false, min: 1, integer: true }),
+    runEveryPeriod: validateNumber(params, "runEveryPeriod", { required: false, min: 1, max: 5, integer: true }),
+    timezone: validateString(params, "timezone", false),
+    inputParameters: validateJsonString(params, "inputParameters", false),
+    isEnabled: validateBoolean(params, "isEnabled", false),
+    parallelism: validateNumber(params, "parallelism", { required: false, min: 1, max: 50, integer: true }),
+    parallelMaxConcurrency: validateNumber(params, "parallelMaxConcurrency", { required: false, min: 1, integer: true }),
+    parallelExport: validateString(params, "parallelExport", false),
+    logLevel: validateString(params, "logLevel", false),
+    logMode: validateString(params, "logMode", false),
+    isExclusive: validateBoolean(params, "isExclusive", false),
+    isWaitOnFailure: validateBoolean(params, "isWaitOnFailure", false),
+  };
+}
+
+export function validateScheduleStartTime(
+  effectiveScheduleType: number | undefined,
+  startTime: string | undefined
+): void {
+  if (effectiveScheduleType === 1 && startTime) {
+    validateStartTimeInFuture(startTime, 1);
+  }
+
+  if (effectiveScheduleType === 2 && startTime) {
+    validateStartTimeInFuture(startTime, 0);
+  }
+}
+
+export function formatToolError(error: unknown): {
+  content: Array<{ type: "text"; text: string }>;
+  isError: true;
+} {
+  let errorMessage: string;
+  let errorPrefix = "Error";
+
+  if (error instanceof RateLimitError) {
+    errorPrefix = "Rate Limited";
+    const retryHint = error.retryAfterSeconds
+      ? ` Try again in ${error.retryAfterSeconds} seconds.`
+      : " Please wait a moment before retrying.";
+    errorMessage = `The Sequentum API rate limit has been reached.${retryHint}`;
+  } else if (error instanceof AuthenticationError) {
+    errorPrefix = "Authentication Error";
+    errorMessage = error.message;
+  } else if (error instanceof ApiRequestError) {
+    if (error.isUnauthorized) {
+      errorPrefix = "Authentication Failed";
+      errorMessage = "Your API key or OAuth token is invalid or has expired. Please check your credentials.";
+    } else if (error.isForbidden) {
+      errorPrefix = "Access Denied";
+      errorMessage = "You don't have permission to perform this action. Check your API key permissions.";
+    } else if (error.isNotFound) {
+      errorPrefix = "Not Found";
+      errorMessage = error.message;
+    } else if (error.isServerError) {
+      errorPrefix = "Server Error";
+      errorMessage = `The Sequentum API encountered an internal error (${error.statusCode}). This is a server-side issue — please try again later.`;
+    } else {
+      errorPrefix = `API Error (${error.statusCode})`;
+      errorMessage = error.message;
+    }
+  } else if (error instanceof Error) {
+    errorMessage = error.message;
+  } else {
+    errorMessage = "An unknown error occurred";
+  }
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: `${errorPrefix}: ${errorMessage}`,
+      },
+    ],
+    isError: true,
+  };
+}
+
+// ==========================================
+// Server Factory
+// ==========================================
+
+const DEBUG = process.env.DEBUG === '1';
+
+function redactDebugArgs(args: unknown): unknown {
+  if (args === null || typeof args !== "object" || Array.isArray(args)) {
+    return args;
+  }
+
+  const safeArgs: Record<string, unknown> = { ...(args as Record<string, unknown>) };
+  const sensitiveFields = [
+    "inputParameters",
+    "apiKey",
+    "token",
+    "accessToken",
+    "refreshToken",
+    "password",
+    "secret",
+    "clientSecret",
+  ];
+
+  for (const field of sensitiveFields) {
+    if (field in safeArgs) {
+      safeArgs[field] = "[REDACTED]";
+    }
+  }
+
+  return safeArgs;
+}
+
+/**
+ * Create a new MCP Server instance with all handlers registered.
+ * Each session in HTTP mode needs its own Server instance.
+ * 
+ * @param apiClient - The API client to use for this server instance
+ * @param version - The server version string from package.json
+ * @returns Configured MCP Server instance
+ */
+export function createMcpServer(apiClient: SequentumApiClient, version: string): Server {
+  const server = new Server(
+    {
+      name: "sequentum-mcp-server",
+      version,
+    },
+    {
+      capabilities: {
+        tools: {},
+        resources: {},
+        prompts: {},
+      },
+    }
+  );
+
+  // Handle tool listing
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools,
+  }));
+
+  // Handle tool execution
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+
+    if (DEBUG) {
+      console.error(`[DEBUG] Tool called: ${name}`);
+      console.error(`[DEBUG] Args: ${JSON.stringify(redactDebugArgs(args))}`);
+    }
+
+    try {
+      // TODO: Consider replacing this switch with a dispatch map (Record<string, HandlerFn>)
+      // to improve readability and testability as the tool count grows.
+      switch (name) {
+        // Agent Tools
+        case "list_agents": {
+          const params = args as Record<string, unknown>;
+          const statusNum = validateNumber(params, "status", { required: false, min: 0, max: 12, integer: true });
+          const spaceId = validateNumber(params, "spaceId", { required: false, min: 1, integer: true });
+          const search = validateString(params, "search", false);
+          const configTypeStr = validateString(params, "configType", false);
+          const sortColumn = validateString(params, "sortColumn", false);
+          const sortOrderStr = validateString(params, "sortOrder", false);
+          const pageIndex = validateNumber(params, "pageIndex", { required: false, min: 1, integer: true });
+          const recordsPerPage = validateNumber(params, "recordsPerPage", { required: false, min: 1, max: 100, integer: true });
+
+          // Build filters object - ALWAYS include pagination to ensure resource-efficient API calls
+          const filters: ListAgentsRequest = {
+            // Always enforce pagination with defaults (pageIndex is 1-based per API spec)
+            pageIndex: pageIndex ?? 1,
+            recordsPerPage: recordsPerPage ?? 50,
+          };
+
+          // Add other optional filters
+          // Status is now the RunStatus enum value (1=Running, 7=Failed, 9=Completed, etc.)
+          if (statusNum !== undefined) {
+            filters.status = statusNum as AgentRunStatus;
+          }
+          if (spaceId !== undefined) {
+            filters.spaceId = spaceId;
+          }
+          if (search) {
+            filters.search = search;
+          }
+          if (configTypeStr) {
+            filters.configType = configTypeStr as ConfigType;
+          }
+          if (sortColumn) {
+            filters.sortColumn = sortColumn;
+          }
+          if (sortOrderStr) {
+            if (sortOrderStr !== "asc" && sortOrderStr !== "desc") {
+              throw new Error(`Invalid parameter 'sortOrder': must be "asc" or "desc", got "${sortOrderStr}"`);
+            }
+            // Convert "asc"/"desc" to 0/1 as the API expects
+            filters.sortOrder = sortOrderStr === "desc" ? 1 : 0;
+          }
+
+          const response = await apiClient.getAllAgents(filters);
+
+          // Parse response — either a plain array (no pagination) or a PaginatedAgentsResponse
+          let agents: AgentApiModel[];
+          let paginationInfo: { totalRecordCount: number; pageIndex: number; recordsPerPage: number } | null = null;
+
+          if (Array.isArray(response)) {
+            agents = response;
+          } else if (isPaginatedResponse(response)) {
+            agents = response.agents;
+            paginationInfo = {
+              totalRecordCount: response.totalRecordCount,
+              pageIndex: filters.pageIndex ?? 1,
+              recordsPerPage: filters.recordsPerPage ?? 50,
+            };
+          } else {
+            throw new Error(`Unexpected response type: ${typeof response}`);
+          }
+
+          const summary = summarizeAgents(agents);
+
+          // Include pagination info if available
+          const result = paginationInfo ? {
+            agents: summary,
+            pagination: paginationInfo,
+          } : summary;
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_agent": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const agent = await apiClient.getAgent(agentId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(agent, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "search_agents": {
+          const params = args as Record<string, unknown>;
+          const query = validateString(params, "query")!;
+          if (!query.trim()) {
+            throw new Error("Search query cannot be empty");
+          }
+          const maxRecords = validateNumber(params, "maxRecords", { required: false, min: 1, max: 1000, integer: true });
+          const agents = await apiClient.searchAgents(query, maxRecords);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(summarizeAgents(agents), null, 2),
+              },
+            ],
+          };
+        }
+
+        // Run Tools
+        case "get_agent_runs": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const maxRecords = validateNumber(params, "maxRecords", { required: false, min: 1, max: 1000, integer: true });
+          const runs = await apiClient.getAgentRuns(agentId, maxRecords);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(runs, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_run_status": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
+          const status = await apiClient.getRunStatus(agentId, runId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(status, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "start_agent": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const inputParameters = validateJsonString(params, "inputParameters", false);
+          const isRunSynchronously = validateBoolean(params, "isRunSynchronously", false);
+          const timeout = validateNumber(params, "timeout", { required: false, min: 1, max: 3600, integer: true });
+          const parallelism = validateNumber(params, "parallelism", { required: false, min: 1, max: 50, integer: true });
+
+          const result = await apiClient.startAgent(agentId, {
+            inputParameters,
+            isRunSynchronously: isRunSynchronously ?? false,
+            timeout: timeout ?? 60,
+            parallelism: parallelism ?? 1,
+          });
+
+          if (typeof result === "string") {
+            // Synchronous run returned data directly
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: result,
+                },
+              ],
+            };
+          } else {
+            // Asynchronous run returned run info
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Agent started successfully.\n\n${JSON.stringify(result, null, 2)}`,
+                },
+              ],
+            };
+          }
+        }
+
+        case "stop_agent": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
+          await apiClient.stopAgent(agentId, runId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Successfully stopped run ${runId} for agent ${agentId}`,
+              },
+            ],
+          };
+        }
+
+        case "kill_agent": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
+          await apiClient.killAgent(agentId, runId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Kill command sent for run ${runId} of agent ${agentId}. If the agent was running, it will initiate graceful stop. If already stopping, it will force immediate termination.`,
+              },
+            ],
+          };
+        }
+
+        // Destructive Operations
+        case "delete_run": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
+          const removeMethod = validateEnum(
+            params,
+            "removeMethod",
+            ["RemoveEntireRun", "RemoveAllFiles", "RemoveAllFilesAndAgentInput"] as const,
+            false
+          ) as RunRemoveMethod | undefined;
+
+          await apiClient.deleteRun(agentId, runId, removeMethod);
+
+          const methodDescriptions: Record<RunRemoveMethod, string> = {
+            RemoveEntireRun: `Successfully deleted run ${runId} and all associated files from agent ${agentId}.`,
+            RemoveAllFiles: `Successfully removed all files for run ${runId} from agent ${agentId}. The run record has been preserved.`,
+            RemoveAllFilesAndAgentInput: `Successfully removed all files and agent input for run ${runId} from agent ${agentId}. The run record has been preserved.`,
+          };
+          const description =
+            (removeMethod ? methodDescriptions[removeMethod] : undefined) ??
+            `Successfully deleted run ${runId} and all associated files from agent ${agentId}.`;
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: description,
+              },
+            ],
+          };
+        }
+
+        // File Tools
+        case "get_run_files": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
+          const files = await apiClient.getRunFiles(agentId, runId);
+
+          if (files.length === 0) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "No files found for this run.",
+                },
+              ],
+            };
+          }
+
+          const summary = files.map((f: AgentRunFileApiModel) => ({
+            id: f.id,
+            name: f.name,
+            fileType: f.fileType,
+            fileSize: `${((f.fileSize ?? 0) / 1024).toFixed(2)} KB`,
+            created: f.created,
+          }));
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(summary, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_file_download_url": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
+          const fileId = validateNumber(params, "fileId", { min: 1, integer: true })!;
+          const result = await apiClient.downloadRunFile(agentId, runId, fileId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Download URL:\n${result.redirectUrl}\n\nNote: This URL is temporary and will expire.`,
+              },
+            ],
+          };
+        }
+
+        // Version Tools
+        case "get_agent_versions": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const versions = await apiClient.getAgentVersions(agentId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(versions, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "restore_agent_version": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const versionNumber = validateNumber(params, "versionNumber", { min: 1, integer: true })!;
+          const comments = validateString(params, "comments")!;
+          await apiClient.restoreAgentVersion(agentId, versionNumber, comments);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Successfully restored agent ${agentId} to version ${versionNumber}.\n\nA new version has been created based on version ${versionNumber}.`,
+              },
+            ],
+          };
+        }
+
+        // Schedule Tools
+        case "list_agent_schedules": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const schedules = await apiClient.getAgentSchedules(agentId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(schedules, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "create_agent_schedule": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const name = validateString(params, "name")!;
+          const {
+            scheduleType,
+            startTime,
+            cronExpression,
+            runEveryCount,
+            runEveryPeriod,
+            timezone,
+            inputParameters,
+            isEnabled,
+            parallelism,
+            parallelMaxConcurrency,
+            parallelExport,
+            logLevel,
+            logMode,
+            isExclusive,
+            isWaitOnFailure,
+          } = parseScheduleParams(params);
+
+          // Validate schedule type specific parameters
+          const effectiveScheduleType = scheduleType ?? 3; // Default to CRON
+
+          // RunOnce (1): startTime is required and must be at least 1 minute in the future
+          if (effectiveScheduleType === 1) {
+            if (!startTime) {
+              throw new Error("startTime is required when scheduleType is 1 (RunOnce)");
+            }
+          }
+
+          // RunEvery (2): runEveryCount and runEveryPeriod are required, startTime is optional but must be in the future if provided
+          if (effectiveScheduleType === 2) {
+            if (runEveryCount === undefined || runEveryPeriod === undefined) {
+              throw new Error("runEveryCount and runEveryPeriod are required when scheduleType is 2 (RunEvery)");
+            }
+          }
+
+          // CRON (3): cronExpression is required, startTime is not used
+          if (effectiveScheduleType === 3 && !cronExpression) {
+            throw new Error("cronExpression is required when scheduleType is 3 (CRON)");
+          }
+
+          validateScheduleStartTime(effectiveScheduleType, startTime);
+
+          const schedule = await apiClient.createAgentSchedule(agentId, {
+            name,
+            scheduleType: effectiveScheduleType,
+            startTime,
+            cronExpression,
+            runEveryCount,
+            runEveryPeriod,
+            timezone,
+            inputParameters,
+            isEnabled: isEnabled ?? true,
+            parallelism: parallelism ?? 1,
+            parallelMaxConcurrency,
+            parallelExport,
+            logLevel,
+            logMode,
+            isExclusive,
+            isWaitOnFailure,
+          });
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Schedule created successfully.\n\n${JSON.stringify(schedule, null, 2)}`,
+              },
+            ],
+          };
+        }
+
+        case "delete_agent_schedule": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
+          await apiClient.deleteAgentSchedule(agentId, scheduleId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Successfully deleted schedule ${scheduleId} from agent ${agentId}`,
+              },
+            ],
+          };
+        }
+
+        case "get_agent_schedule": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
+          const schedule = await apiClient.getAgentSchedule(agentId, scheduleId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(schedule, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "update_agent_schedule": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
+          const name = validateString(params, "name")!;
+          const {
+            scheduleType,
+            startTime,
+            cronExpression,
+            runEveryCount,
+            runEveryPeriod,
+            timezone,
+            inputParameters,
+            isEnabled,
+            parallelism,
+            parallelMaxConcurrency,
+            parallelExport,
+            logLevel,
+            logMode,
+            isExclusive,
+            isWaitOnFailure,
+          } = parseScheduleParams(params);
+
+          const hasCronFields = cronExpression !== undefined;
+          const hasRunEveryFields = runEveryCount !== undefined || runEveryPeriod !== undefined;
+
+          if (hasCronFields && hasRunEveryFields && scheduleType === undefined) {
+            throw new Error(
+              "Conflicting schedule fields: both cronExpression and runEveryCount/runEveryPeriod were provided without an explicit scheduleType. " +
+              "Specify scheduleType to clarify intent (2=RunEvery, 3=CRON)."
+            );
+          }
+
+          // Infer scheduleType from provided fields when not explicitly set,
+          // so the user doesn't have to redundantly specify it on every update.
+          let effectiveScheduleType = scheduleType;
+          if (effectiveScheduleType === undefined) {
+            if (hasCronFields) effectiveScheduleType = 3;
+            else if (hasRunEveryFields) effectiveScheduleType = 2;
+          }
+
+          validateScheduleStartTime(effectiveScheduleType, startTime);
+
+          const updated = await apiClient.updateAgentSchedule(agentId, scheduleId, {
+            name,
+            scheduleType: effectiveScheduleType,
+            startTime,
+            cronExpression,
+            runEveryCount,
+            runEveryPeriod,
+            timezone,
+            inputParameters,
+            isEnabled,
+            parallelism,
+            parallelMaxConcurrency,
+            parallelExport,
+            logLevel,
+            logMode,
+            isExclusive,
+            isWaitOnFailure,
+          });
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Schedule updated successfully.\n\n${JSON.stringify(updated, null, 2)}`,
+              },
+            ],
+          };
+        }
+
+        case "enable_agent_schedule": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
+          await apiClient.enableAgentSchedule(agentId, scheduleId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Successfully enabled schedule ${scheduleId} for agent ${agentId}. The schedule will now run according to its configuration.`,
+              },
+            ],
+          };
+        }
+
+        case "disable_agent_schedule": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
+          await apiClient.disableAgentSchedule(agentId, scheduleId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Successfully disabled schedule ${scheduleId} for agent ${agentId}. The schedule will not run until re-enabled.`,
+              },
+            ],
+          };
+        }
+
+        case "get_scheduled_runs": {
+          const params = args as Record<string, unknown>;
+          const startDate = validateString(params, "startDate", false);
+          const endDate = validateString(params, "endDate", false);
+          const schedules = await apiClient.getUpcomingSchedules(startDate, endDate);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(schedules, null, 2),
+              },
+            ],
+          };
+        }
+
+        // Billing/Credits Tools
+        case "get_credits_balance": {
+          const balance = await apiClient.getCreditsBalance();
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(balance, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_spending_summary": {
+          const params = args as Record<string, unknown>;
+          const startDate = validateString(params, "startDate", false);
+          const endDate = validateString(params, "endDate", false);
+          const spending = await apiClient.getSpendingSummary(startDate, endDate);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(spending, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_credit_history": {
+          const params = args as Record<string, unknown>;
+          const pageIndex = validateNumber(params, "pageIndex", { required: false, min: 1, integer: true });
+          const recordsPerPage = validateNumber(params, "recordsPerPage", { required: false, min: 1, max: 100, integer: true });
+          const history = await apiClient.getCreditHistory(pageIndex, recordsPerPage);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(history, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_agents_usage": {
+          const params = args as Record<string, unknown>;
+          const defaults = getDefaultDateRange();
+          const startDate = validateString(params, "startDate", false) ?? defaults.startDate;
+          const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
+          validateISODate(startDate, "startDate");
+          validateISODate(endDate, "endDate");
+          validateDateRange(startDate, endDate);
+
+          const pageIndex = validateNumber(params, "pageIndex", { required: false, min: 1, integer: true });
+          const recordsPerPage = validateNumber(params, "recordsPerPage", { required: false, min: 1, max: 1000, integer: true });
+          const sortColumn = validateString(params, "sortColumn", false);
+          const sortOrder = validateNumber(params, "sortOrder", { required: false, min: 0, max: 1, integer: true });
+          const name = validateString(params, "name", false);
+          const usageTypes = validateString(params, "usageTypes", false);
+
+          const result = await apiClient.getAgentsUsage(
+            startDate,
+            endDate,
+            pageIndex,
+            recordsPerPage,
+            sortColumn,
+            sortOrder,
+            name,
+            usageTypes
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_agent_cost_breakdown": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+
+          const defaults = getDefaultDateRange();
+          const startDate = validateString(params, "startDate", false) ?? defaults.startDate;
+          const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
+          validateISODate(startDate, "startDate");
+          validateISODate(endDate, "endDate");
+          validateDateRange(startDate, endDate);
+
+          const timeUnit = validateEnum(params, "timeUnit", ["day", "month"] as const, false);
+          const usageTypes = validateString(params, "usageTypes", false);
+
+          const result = await apiClient.getAgentCostBreakdown(
+            agentId,
+            startDate,
+            endDate,
+            timeUnit,
+            usageTypes
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_agent_runs_cost": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+
+          const defaults = getDefaultDateRange();
+          const startDate = validateString(params, "startDate", false) ?? defaults.startDate;
+          const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
+          validateISODate(startDate, "startDate");
+          validateISODate(endDate, "endDate");
+          validateDateRange(startDate, endDate);
+
+          const pageIndex = validateNumber(params, "pageIndex", { required: false, min: 1, integer: true });
+          const recordsPerPage = validateNumber(params, "recordsPerPage", { required: false, min: 1, max: 1000, integer: true });
+          const sortColumn = validateEnum(params, "sortColumn", ["date", "cost", "duration"] as const, false);
+          const sortOrder = validateNumber(params, "sortOrder", { required: false, min: 0, max: 1, integer: true });
+          const usageTypes = validateString(params, "usageTypes", false);
+
+          const result = await apiClient.getAgentRunsCost(
+            agentId,
+            startDate,
+            endDate,
+            pageIndex,
+            recordsPerPage,
+            sortColumn,
+            sortOrder,
+            usageTypes
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+
+        // Space Tools
+        case "list_spaces": {
+          const spaces = await apiClient.getAllSpaces();
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(spaces, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_space": {
+          const params = args as Record<string, unknown>;
+          const spaceId = validateNumber(params, "spaceId", { min: 1, integer: true })!;
+          const space = await apiClient.getSpace(spaceId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(space, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_space_agents": {
+          const params = args as Record<string, unknown>;
+          const spaceId = validateNumber(params, "spaceId", { min: 1, integer: true })!;
+          const agents = await apiClient.getSpaceAgents(spaceId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(agents, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "search_space_by_name": {
+          const params = args as Record<string, unknown>;
+          const name = validateString(params, "name")!;
+          const space = await apiClient.searchSpaceByName(name);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(space, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "run_space_agents": {
+          const params = args as Record<string, unknown>;
+          const spaceId = validateNumber(params, "spaceId", { min: 1, integer: true })!;
+          const inputParameters = validateJsonString(params, "inputParameters", false);
+          const result = await apiClient.runSpaceAgents(spaceId, inputParameters);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Started agents in space.\n\n${JSON.stringify(result, null, 2)}`,
+              },
+            ],
+          };
+        }
+
+        // Analytics Tools
+        case "get_runs_summary": {
+          const params = args as Record<string, unknown>;
+          const startDate = validateString(params, "startDate", false);
+          const endDate = validateString(params, "endDate", false);
+          const status = validateString(params, "status", false);
+          const includeDetails = validateBoolean(params, "includeDetails", false);
+          const summary = await apiClient.getRunsSummary(startDate, endDate, status, includeDetails);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(summary, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_records_summary": {
+          const params = args as Record<string, unknown>;
+          const startDate = validateString(params, "startDate", false);
+          const endDate = validateString(params, "endDate", false);
+          const agentId = validateNumber(params, "agentId", { required: false, min: 1, integer: true });
+          const summary = await apiClient.getRecordsSummary(startDate, endDate, agentId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(summary, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_run_diagnostics": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
+          const diagnostics = await apiClient.getRunDiagnostics(agentId, runId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(diagnostics, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_latest_failure": {
+          const params = args as Record<string, unknown>;
+          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+          const diagnostics = await apiClient.getLatestFailure(agentId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(diagnostics, null, 2),
+              },
+            ],
+          };
+        }
+
+        default:
+          throw new Error(`Unknown tool: ${name}`);
+      }
+    } catch (error) {
+      return formatToolError(error);
+    }
+  });
+
+  // ==========================================
+  // Resource Handlers
+  // ==========================================
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources,
+  }));
+
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+    resourceTemplates,
+  }));
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const { uri } = request.params;
+
+    if (DEBUG) {
+      console.error(`[DEBUG] Resource read: ${uri}`);
+    }
+
+    try {
+      const content = await readResource(uri, apiClient);
+      return {
+        contents: [content],
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
+      throw new Error(`Failed to read resource ${uri}: ${errorMessage}`);
+    }
+  });
+
+  // ==========================================
+  // Prompt Handlers
+  // ==========================================
+
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts,
+  }));
+
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+
+    if (DEBUG) {
+      console.error(`[DEBUG] Prompt requested: ${name}`);
+      console.error(`[DEBUG] Args: ${JSON.stringify(redactDebugArgs(args))}`);
+    }
+
+    const messages = getPromptMessages(name, args);
+    return { messages };
+  });
+
+  return server;
+}
