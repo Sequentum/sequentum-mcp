@@ -1,6 +1,6 @@
 # Tool Reference
 
-The Sequentum MCP Server provides tools across 8 categories for managing web scraping agents, runs, schedules, and more. These tools become available once you connect to the server -- either via the [remote OAuth setup](../README.md#getting-started) at `https://mcp.sequentum.com/mcp` or the [local API key setup](../README.md#alternative-local-setup-api-key).
+The Sequentum MCP Server provides 36 tools across 8 categories for managing web scraping agents, runs, schedules, and more. These tools become available once you connect to the server -- either via the [remote OAuth setup](../README.md#getting-started) at `https://mcp.sequentum.com/mcp` or the [local API key setup](../README.md#alternative-local-setup-api-key).
 
 > **Pagination:** Tools that return lists (`list_agents`, `get_agent_runs`, `get_credit_history`, `get_agents_usage`, `get_agent_runs_cost`) support pagination via `pageIndex` (1-based) and `recordsPerPage`. When the result is paginated, the response includes the total count so you know if more pages are available.
 
@@ -27,7 +27,11 @@ The Sequentum MCP Server provides tools across 8 categories for managing web scr
 | [`restore_agent_version`](#restore_agent_version) | Restore an agent to a previous version |
 | **Schedule Management** | |
 | [`list_agent_schedules`](#list_agent_schedules) | List scheduled tasks for an agent |
+| [`get_agent_schedule`](#get_agent_schedule) | Get details of a specific schedule |
 | [`create_agent_schedule`](#create_agent_schedule) | Create a schedule (cron, interval, or one-time) |
+| [`update_agent_schedule`](#update_agent_schedule) | Update an existing schedule's settings |
+| [`enable_agent_schedule`](#enable_agent_schedule) | Enable a previously disabled schedule |
+| [`disable_agent_schedule`](#disable_agent_schedule) | Disable a schedule without deleting it |
 | [`delete_agent_schedule`](#delete_agent_schedule) | Remove a schedule from an agent |
 | [`get_scheduled_runs`](#get_scheduled_runs) | Get upcoming scheduled runs across all agents |
 | **Billing & Credits** | |
@@ -472,7 +476,34 @@ Show schedules for the Amazon scraper
 Is this agent scheduled?
 ```
 
-> **See also:** [`create_agent_schedule`](#create_agent_schedule) to add a new schedule, [`delete_agent_schedule`](#delete_agent_schedule) to remove one.
+> **See also:** [`get_agent_schedule`](#get_agent_schedule) for details on a specific schedule, [`create_agent_schedule`](#create_agent_schedule) to add a new schedule, [`delete_agent_schedule`](#delete_agent_schedule) to remove one.
+
+---
+
+### get_agent_schedule
+
+Get details of a specific schedule for an agent, including its full configuration and run parameters.
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `agentId` | number | Yes | The unique ID of the agent. |
+| `scheduleId` | number | Yes | The schedule ID. Get this from `list_agent_schedules`. |
+
+#### Returns
+
+Full schedule details with `id`, `name`, `cronExpression`/`schedule`, `nextRunTime`, `isEnabled`, `timezone`, and run parameters.
+
+#### Example Prompts
+
+```
+Show me schedule 456 for agent 123
+What are the settings for this schedule?
+Get schedule details
+```
+
+> **See also:** [`update_agent_schedule`](#update_agent_schedule) to modify the schedule, [`enable_agent_schedule`](#enable_agent_schedule) / [`disable_agent_schedule`](#disable_agent_schedule) to toggle it.
 
 ---
 
@@ -521,6 +552,107 @@ Schedule agent 123 to run every Monday at 9am
 Create a daily schedule for the price scraper
 Run agent 456 every 6 hours
 ```
+
+---
+
+### update_agent_schedule
+
+Update an existing schedule for an agent. Modify timing, parameters, or other settings. Supports the same three schedule types as `create_agent_schedule`.
+
+If `scheduleType` is not explicitly provided, it is inferred from the fields you supply (e.g., providing `cronExpression` implies CRON type).
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `agentId` | number | Yes | The unique ID of the agent. |
+| `scheduleId` | number | Yes | The schedule ID to update. Get this from `list_agent_schedules`. |
+| `name` | string | Yes | Schedule name. |
+| `scheduleType` | number | No | 1=RunOnce, 2=RunEvery, 3=CRON. Inferred from fields if not set. |
+| `startTime` | string | Conditional | ISO 8601 UTC datetime. Required for RunOnce, optional for RunEvery. |
+| `cronExpression` | string | Conditional | For CRON: `'min hr day mo wkday'`. Example: `'0 10 * * *'` = daily 10am. |
+| `runEveryCount` | number | Conditional | For RunEvery: interval count. |
+| `runEveryPeriod` | number | Conditional | For RunEvery: 1=min, 2=hr, 3=day, 4=wk, 5=mo. |
+| `timezone` | string | No | Timezone (e.g., `'America/New_York'`). |
+| `inputParameters` | string | No | JSON input parameters for runs. |
+| `isEnabled` | boolean | No | Whether the schedule is active. |
+| `parallelism` | number | No | Parallel instances. |
+| `parallelMaxConcurrency` | number | No | Maximum concurrent parallel instances. |
+| `parallelExport` | string | No | `Combined` or `Separated`. |
+| `logLevel` | string | No | `Fatal`, `Error`, `Warning`, or `Info`. |
+| `logMode` | string | No | `Text` or `TextAndHtml`. |
+| `isExclusive` | boolean | No | Prevent concurrent runs. |
+| `isWaitOnFailure` | boolean | No | Wait before retrying after failure. |
+
+#### Returns
+
+Updated schedule details with `id`, `name`, `nextRunTime`, `cronExpression`/`schedule`, `timezone`, `isEnabled`.
+
+#### Example Prompts
+
+```
+Change the schedule to run at 10am instead
+Update the cron expression for schedule 456
+Modify the timezone on that schedule
+```
+
+> **See also:** [`get_agent_schedule`](#get_agent_schedule) to view current settings before updating.
+
+---
+
+### enable_agent_schedule
+
+Enable a previously disabled schedule so it resumes running according to its configuration.
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `agentId` | number | Yes | The unique ID of the agent. |
+| `scheduleId` | number | Yes | The schedule ID to enable. Get this from `list_agent_schedules`. |
+
+#### Returns
+
+Confirmation that the schedule was enabled.
+
+#### Example Prompts
+
+```
+Turn on schedule 456 for agent 123
+Re-enable the Monday schedule
+Activate that schedule
+```
+
+> **See also:** [`disable_agent_schedule`](#disable_agent_schedule) to deactivate a schedule, [`list_agent_schedules`](#list_agent_schedules) to check current `isEnabled` status.
+
+---
+
+### disable_agent_schedule
+
+Disable a schedule so it will not run until re-enabled. The schedule configuration is preserved but inactive.
+
+Unlike `delete_agent_schedule`, this keeps the schedule intact for later reactivation.
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `agentId` | number | Yes | The unique ID of the agent. |
+| `scheduleId` | number | Yes | The schedule ID to disable. Get this from `list_agent_schedules`. |
+
+#### Returns
+
+Confirmation that the schedule was disabled.
+
+#### Example Prompts
+
+```
+Pause the daily schedule for agent 123
+Turn off schedule 456 temporarily
+Disable that schedule
+```
+
+> **See also:** [`enable_agent_schedule`](#enable_agent_schedule) to reactivate, [`delete_agent_schedule`](#delete_agent_schedule) to permanently remove.
 
 ---
 

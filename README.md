@@ -5,7 +5,7 @@
 
 The [Sequentum MCP Server](https://mcp.sequentum.com) connects your AI coding assistant to Sequentum using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction), giving your AI tools direct access to web scraping agents, run management, scheduling, analytics, and more. Sequentum hosts and manages a remote MCP server with OAuth authentication, so there's nothing to install.
 
-## [Tool Reference](./docs/tool-reference.md) | [Troubleshooting](./docs/troubleshooting.md) | [Changelog](./CHANGELOG.md)
+## [Tool Reference](./docs/tool-reference.md) | [Prompts Reference](./docs/prompts-reference.md) | [Resources Reference](./docs/resources-reference.md) | [Troubleshooting](./docs/troubleshooting.md) | [Changelog](./CHANGELOG.md)
 
 ## Key Features
 
@@ -202,7 +202,7 @@ How much did I spend on server time vs exports last week?
 
 ## Available Tools
 
-The Sequentum MCP Server provides tools across 8 categories for interacting with the Sequentum platform. See the [Tool Reference](./docs/tool-reference.md) for detailed documentation.
+The Sequentum MCP Server provides 36 tools across 8 categories for interacting with the Sequentum platform. See the [Tool Reference](./docs/tool-reference.md) for detailed documentation.
 
 <!-- BEGIN AUTO GENERATED TOOLS -->
 
@@ -223,9 +223,13 @@ The Sequentum MCP Server provides tools across 8 categories for interacting with
 - **Version Management** (2 tools)
   - [`get_agent_versions`](docs/tool-reference.md#get_agent_versions)
   - [`restore_agent_version`](docs/tool-reference.md#restore_agent_version)
-- **Schedule Management** (4 tools)
+- **Schedule Management** (8 tools)
   - [`list_agent_schedules`](docs/tool-reference.md#list_agent_schedules)
+  - [`get_agent_schedule`](docs/tool-reference.md#get_agent_schedule)
   - [`create_agent_schedule`](docs/tool-reference.md#create_agent_schedule)
+  - [`update_agent_schedule`](docs/tool-reference.md#update_agent_schedule)
+  - [`enable_agent_schedule`](docs/tool-reference.md#enable_agent_schedule)
+  - [`disable_agent_schedule`](docs/tool-reference.md#disable_agent_schedule)
   - [`delete_agent_schedule`](docs/tool-reference.md#delete_agent_schedule)
   - [`get_scheduled_runs`](docs/tool-reference.md#get_scheduled_runs)
 - **Billing & Credits** (6 tools)
@@ -248,6 +252,57 @@ The Sequentum MCP Server provides tools across 8 categories for interacting with
   - [`get_latest_failure`](docs/tool-reference.md#get_latest_failure)
 
 <!-- END AUTO GENERATED TOOLS -->
+
+## Available Prompts
+
+The server includes 9 reusable prompt templates that guide the AI through common multi-step workflows. See the [Prompts Reference](./docs/prompts-reference.md) for detailed documentation.
+
+<!-- BEGIN AUTO GENERATED PROMPTS -->
+
+- **Debugging & Diagnostics**
+  - [`debug-agent`](docs/prompts-reference.md#debug-agent) -- Diagnose why an agent is failing
+  - [`compare-runs`](docs/prompts-reference.md#compare-runs) -- Compare last successful vs failed run
+- **Health & Monitoring**
+  - [`agent-health-check`](docs/prompts-reference.md#agent-health-check) -- Comprehensive health overview for an agent
+  - [`daily-operations-report`](docs/prompts-reference.md#daily-operations-report) -- Daily ops report across all agents
+  - [`space-overview`](docs/prompts-reference.md#space-overview) -- Overview of all agents in a space
+- **Execution**
+  - [`run-and-monitor`](docs/prompts-reference.md#run-and-monitor) -- Start an agent and monitor until completion
+  - [`schedule-agent`](docs/prompts-reference.md#schedule-agent) -- Walk through creating a schedule
+- **Billing & Costs**
+  - [`spending-report`](docs/prompts-reference.md#spending-report) -- Spending and credits report
+  - [`cost-analysis`](docs/prompts-reference.md#cost-analysis) -- Analyze costs across agents
+
+<!-- END AUTO GENERATED PROMPTS -->
+
+## Available Resources
+
+The server exposes 18 read-only resources (7 static + 11 templates) that AI clients can browse and pull into context. See the [Resources Reference](./docs/resources-reference.md) for detailed documentation.
+
+<!-- BEGIN AUTO GENERATED RESOURCES -->
+
+- **Static Resources** (7)
+  - [`sequentum://agents`](docs/resources-reference.md#agent-list) -- First page of all agents
+  - [`sequentum://spaces`](docs/resources-reference.md#spaces) -- All accessible spaces
+  - [`sequentum://billing/balance`](docs/resources-reference.md#credits-balance) -- Current credits balance
+  - [`sequentum://billing/spending`](docs/resources-reference.md#monthly-spending) -- Monthly spending summary
+  - [`sequentum://billing/agents-usage`](docs/resources-reference.md#agent-costs-current-month) -- Top agents by cost
+  - [`sequentum://analytics/runs`](docs/resources-reference.md#recent-runs-summary) -- Runs in the last 24 hours
+  - [`sequentum://analytics/upcoming-schedules`](docs/resources-reference.md#upcoming-schedules) -- Scheduled runs for next 7 days
+- **Resource Templates** (11)
+  - [`sequentum://agents/{agentId}`](docs/resources-reference.md#agent-detail) -- Agent detail with configuration
+  - [`sequentum://agents/{agentId}/versions`](docs/resources-reference.md#agent-versions) -- Agent version history
+  - [`sequentum://agents/{agentId}/schedules`](docs/resources-reference.md#agent-schedules) -- Agent scheduled tasks
+  - [`sequentum://agents/{agentId}/cost-breakdown`](docs/resources-reference.md#agent-cost-breakdown) -- Agent cost by usage type
+  - [`sequentum://agents/{agentId}/runs`](docs/resources-reference.md#agent-runs) -- Agent run history
+  - [`sequentum://agents/{agentId}/runs/{runId}`](docs/resources-reference.md#run-status) -- Specific run status
+  - [`sequentum://agents/{agentId}/runs/{runId}/files`](docs/resources-reference.md#run-files) -- Run output files
+  - [`sequentum://agents/{agentId}/runs/{runId}/diagnostics`](docs/resources-reference.md#run-diagnostics) -- Run error diagnostics
+  - [`sequentum://agents/{agentId}/latest-failure`](docs/resources-reference.md#latest-failure) -- Most recent failure diagnostics
+  - [`sequentum://spaces/{spaceId}`](docs/resources-reference.md#space-detail) -- Space details
+  - [`sequentum://spaces/{spaceId}/agents`](docs/resources-reference.md#space-agents) -- Agents in a space
+
+<!-- END AUTO GENERATED RESOURCES -->
 
 ## Troubleshooting
 
