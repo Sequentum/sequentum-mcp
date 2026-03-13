@@ -3,11 +3,26 @@
  * Contains reusable validation functions that can be shared across modules
  */
 
+export interface NumberValidationOptions {
+  required?: boolean;
+  /** Minimum allowed value (inclusive) */
+  min?: number;
+  /** Maximum allowed value (inclusive) */
+  max?: number;
+  /** If true, value must be an integer (no decimals) */
+  integer?: boolean;
+}
+
 export function validateNumber(
   args: Record<string, unknown>,
   field: string,
-  required: boolean = true
+  requiredOrOptions: boolean | NumberValidationOptions = true
 ): number | undefined {
+  const opts: NumberValidationOptions = typeof requiredOrOptions === "boolean"
+    ? { required: requiredOrOptions }
+    : requiredOrOptions;
+  const required = opts.required ?? true;
+
   const value = args[field];
   if (value === undefined || value === null) {
     if (required) {
@@ -18,6 +33,21 @@ export function validateNumber(
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error(
       `Invalid parameter '${field}': expected a number, got ${typeof value}`
+    );
+  }
+  if (opts.integer && !Number.isInteger(value)) {
+    throw new Error(
+      `Invalid parameter '${field}': expected an integer, got ${value}`
+    );
+  }
+  if (opts.min !== undefined && value < opts.min) {
+    throw new Error(
+      `Invalid parameter '${field}': must be >= ${opts.min}, got ${value}`
+    );
+  }
+  if (opts.max !== undefined && value > opts.max) {
+    throw new Error(
+      `Invalid parameter '${field}': must be <= ${opts.max}, got ${value}`
     );
   }
   return value;
@@ -61,6 +91,28 @@ export function validateEnum<T extends string>(
     );
   }
   return raw as T;
+}
+
+/**
+ * Validate that a string is valid JSON. Returns the string as-is if valid.
+ * Used for inputParameters fields to catch malformed JSON before sending to the API.
+ */
+export function validateJsonString(
+  args: Record<string, unknown>,
+  field: string,
+  required: boolean = false
+): string | undefined {
+  const value = validateString(args, field, required);
+  if (value === undefined) return undefined;
+
+  try {
+    JSON.parse(value);
+  } catch {
+    throw new Error(
+      `Invalid parameter '${field}': must be a valid JSON string. Got: ${value.length > 100 ? value.substring(0, 100) + "..." : value}`
+    );
+  }
+  return value;
 }
 
 export function validateBoolean(
