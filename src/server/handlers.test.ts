@@ -6,6 +6,7 @@ import {
   parseScheduleParams,
   validateScheduleStartTime,
 } from "./handlers.js";
+import { tools } from "./tools.js";
 import {
   ApiRequestError,
   AuthenticationError,

@@ -59,13 +59,58 @@ export async function startHttpServer(
   // Parse JSON bodies
   app.use(express.json());
 
-  // CORS middleware - required for browser-based clients like MCP Inspector
+  // Build the Origin allowlist from ALLOWED_ORIGINS env var (comma-separated) or hardcoded defaults.
+  // Requests without an Origin header (native MCP clients: Cursor, Claude Desktop, Claude Code)
+  // are always allowed through — Origin is only sent by browsers.
+  function buildAllowedOrigins(): (string | RegExp)[] {
+    const fromEnv = process.env.ALLOWED_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean);
+    if (fromEnv?.length) return fromEnv;
+    const base: (string | RegExp)[] = [
+      "https://claude.ai",
+      "https://claude.com",
+      /^https:\/\/[a-z0-9-]+\.claude\.(ai|com)$/,
+      "https://dashboard.sequentum.com",
+      "https://mcp.sequentum.com",
+    ];
+    if (DEBUG) {
+      base.push(/^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/);
+    }
+    return base;
+  }
+
+  const ALLOWED_ORIGINS = buildAllowedOrigins();
+
+  function isAllowedOrigin(origin: string): boolean {
+    return ALLOWED_ORIGINS.some((entry) =>
+      typeof entry === "string" ? entry === origin : entry.test(origin)
+    );
+  }
+
+  // CORS middleware - required for browser-based clients like MCP Inspector.
+  // Reflects allowlisted origins; blocks /mcp requests from non-allowlisted browser origins.
   app.use((req: Request, res: Response, next) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    const origin = req.headers.origin;
+
+    if (origin) {
+      if (isAllowedOrigin(origin)) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Vary", "Origin");
+      } else if (req.path.startsWith("/mcp") && req.method !== "OPTIONS") {
+        // Reject MCP requests from non-allowlisted browser origins.
+        // OPTIONS preflights are handled below (browser will block the actual request).
+        res.status(403).json({
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Forbidden: origin not allowed" },
+          id: null,
+        });
+        return;
+      }
+    }
+
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, mcp-session-id");
     res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
-    
+
     // Handle preflight requests
     if (req.method === "OPTIONS") {
       res.status(204).end();

@@ -324,6 +324,12 @@ The server exposes 18 read-only resources (7 static + 11 templates) that AI clie
 
 For more troubleshooting help, see the [Troubleshooting Guide](./docs/troubleshooting.md).
 
+## Privacy Policy
+
+The Sequentum MCP Server accesses your Sequentum account data — including agent metadata, run history, scheduled tasks, billing information, and output files — solely to fulfill the requests you make through your AI assistant. This data is transmitted directly between your MCP client and the Sequentum API; it is not stored, logged, or shared with third parties by the MCP server itself.
+
+For the full Sequentum privacy policy, see [https://sequentum.com/privacy](https://sequentum.com/privacy).
+
 ## Links
 
 - [Sequentum MCP Server](https://mcp.sequentum.com)
