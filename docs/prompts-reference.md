@@ -21,6 +21,9 @@ The Sequentum MCP Server provides 9 prompts -- reusable instruction templates th
 | **Billing & Costs** | | |
 | [`spending-report`](#spending-report) | Spending and credits report | *(none)* |
 | [`cost-analysis`](#cost-analysis) | Analyze costs across agents | *(none)* |
+| **Agent Building** | | |
+| [`build-agent-from-prompt`](#build-agent-from-prompt) | Build a new agent from a natural language description | `prompt` (required), `spaceName` (optional), `pollingPreference` (optional) |
+| [`inspect-agent-draft`](#inspect-agent-draft) | Check the status of a build session and show the resulting agent | `sessionId` (required), `pollingPreference` (optional) |
 
 ---
 
@@ -290,3 +293,78 @@ Analyze my costs
 Which agents are costing the most and why?
 Give me a cost breakdown
 ```
+
+---
+
+## Agent Building
+
+### build-agent-from-prompt
+
+Build a new web scraping agent from a natural language description using the AI agent builder. Starts a build session and polls until the agent is ready or an error occurs. The agent is saved to the workspace automatically once the AI completes the build.
+
+#### Arguments
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `prompt` | string | Yes | Natural language description of the automation to build. Must be 10–5000 characters. |
+| `spaceName` | string | No | Name of the space to save the agent to. Resolved to a `spaceId` via `search_space_by_name`. Uses the default space if omitted. |
+| `pollingPreference` | string | No | Hint for how aggressively to poll `get_agent_build_status`. Examples: `"fast"` (every 2–3s), `"normal"` (start ~5s, back off to ~15s), `"slow"` (every 30s), or free-form (`"poll every 5 seconds"`, `"be patient, this is a big site"`). If omitted, a moderate cadence with backoff is used. |
+
+#### Workflow
+
+1. *(If `spaceName` provided)* Uses `search_space_by_name` to resolve the name to a `spaceId`.
+2. Uses `start_agent_build` with the given `prompt` (and `spaceId` if resolved). Returns a `sessionId` immediately.
+3. Polls `get_agent_build_status` until status reaches a terminal value (cadence follows `pollingPreference` if provided, otherwise defaults to a moderate backoff):
+   - `processing` → keep polling.
+   - `completed` → agent was saved successfully. Reports `agentId` and `agentName` to the user. Done.
+   - `ready` → agent exists and is accessible. Reports `agentId` and `agentName`. Done.
+   - `error` → reports the error to the user. If an agent was partially created, advises the user to delete it via the standard agents API.
+   - `cancelled` → reports the build was aborted early.
+4. If the build succeeded (`completed` or `ready`), uses `get_agent` with the `agentId` to show the full agent details.
+5. Reminds the user the agent is accessible via `list_agents` and all other agent tools.
+
+#### Example Invocations
+
+```
+Build an agent to scrape laptop prices from Amazon
+Create a scraper for job listings on LinkedIn
+Build me a news scraper for TechCrunch in my "Research" space
+Build a scraper for amazon.com (pollingPreference: fast)
+Build a scraper for a slow legacy site (pollingPreference: be patient, expect a few minutes)
+```
+
+> **See also:** [`inspect-agent-draft`](#inspect-agent-draft) to check on an existing session. [`start_agent_build`](tool-reference.md#start_agent_build) for the raw tool.
+
+---
+
+### inspect-agent-draft
+
+Check the current status of an agent build session and present the resulting agent once it is available.
+
+#### Arguments
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `sessionId` | string | Yes | The session ID returned by `start_agent_build`. |
+| `pollingPreference` | string | No | Hint for how aggressively to poll if the session is still in progress. Same format as the argument on [`build-agent-from-prompt`](#build-agent-from-prompt). If omitted, a moderate cadence with backoff is used. |
+
+#### Workflow
+
+1. Uses `get_agent_build_status` to get the current status of the session.
+   - `processing` → reports that the AI is still building; continues polling using `pollingPreference` if provided, otherwise a moderate cadence with backoff.
+   - `error` → reports the error. The session is over. If an agent was partially created, advises the user to delete it via the standard agents API.
+   - `cancelled` → reports the build was aborted early. Any agent saved before the abort remains in the workspace.
+   - `completed` → agent was saved successfully; shows `agentId` / `agentName`. Done.
+   - `ready` → agent exists and is accessible; shows `agentId` / `agentName`. Done.
+2. If `status` is `completed` or `ready` and `agentId` is populated, uses `get_agent` to fetch the full agent details (name, description, configType, input parameters).
+3. Presents the agent details to the user and reminds them it is accessible via `list_agents` and all other agent tools.
+
+#### Example Invocations
+
+```
+What's the status of my build session sess-abc-123?
+inspect-agent-draft sessionId=sess-xyz
+Show me the draft for session sess-abc-123
+```
+
+> **See also:** [`build-agent-from-prompt`](#build-agent-from-prompt) to run the full workflow end-to-end.

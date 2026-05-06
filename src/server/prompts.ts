@@ -120,6 +120,67 @@ export const prompts: Prompt[] = [
       },
     ],
   },
+
+  // Agent Building Prompts
+
+  {
+    name: "build-agent-from-prompt",
+    description:
+      "Build a new web scraping agent from a natural language description using the AI agent builder. " +
+      "Starts a build session and polls until the agent is ready or an error occurs. " +
+      "The agent is saved to the workspace automatically once the AI completes the build.",
+    arguments: [
+      {
+        name: "prompt",
+        description:
+          "Natural language description of the automation to build. " +
+          "Be specific: include the target website, data to extract, and any filters. " +
+          "Must be between 10 and 5000 characters.",
+        required: true,
+      },
+      {
+        name: "spaceName",
+        description:
+          "Optional name of the space to save the agent to. " +
+          "If omitted, the default space is used.",
+        required: false,
+      },
+      {
+        name: "pollingPreference",
+        description:
+          "Optional hint for how aggressively to poll get_agent_build_status. " +
+          "Examples: 'fast' (every 2–3s, for short builds), " +
+          "'normal' (start ~5s, back off to ~15s), " +
+          "'slow' (every 30s, for long-running builds), " +
+          "or a free-form instruction like 'poll every 5 seconds' or 'be patient, this is a big site'. " +
+          "If omitted, a moderate cadence with backoff is used.",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "inspect-agent-draft",
+    description:
+      "Inspect the current state of an in-progress agent build session. " +
+      "Shows the draft agent details once the AI has finished building, " +
+      "so the user can decide whether to save or discard it.",
+    arguments: [
+      {
+        name: "sessionId",
+        description: "The session ID returned by start_agent_build.",
+        required: true,
+      },
+      {
+        name: "pollingPreference",
+        description:
+          "Optional hint for how aggressively to poll get_agent_build_status if the session is still in progress. " +
+          "Examples: 'fast' (every 2–3s), 'normal' (start ~5s, back off to ~15s), 'slow' (every 30s), " +
+          "or a free-form instruction like 'poll every 5 seconds'. " +
+          "If omitted, a moderate cadence with backoff is used.",
+        required: false,
+      },
+    ],
+  },
 ];
 
 // ==========================================
@@ -333,6 +394,86 @@ export function getPromptMessages(
               `4. For the failed run, use get_run_diagnostics to get detailed failure information.\n` +
               `5. Compare the two runs side-by-side: status, runtime duration, records extracted, records exported, error count, page loads, and any error messages.\n` +
               `6. Summarize the differences and suggest likely causes for the failure based on what changed between the successful and failed runs.`,
+          },
+        },
+      ];
+    }
+
+    case "build-agent-from-prompt": {
+      const prompt = args?.prompt;
+      if (!prompt) {
+        throw new Error("Missing required argument: prompt");
+      }
+      const spaceName = args?.spaceName;
+      const pollingPreference = args?.pollingPreference;
+      const spaceStep = spaceName
+        ? `1. Use search_space_by_name to find the space "${spaceName}" and get its spaceId.\n`
+        : "";
+      const spaceNote = spaceName
+        ? `Use the spaceId from step 1 in start_agent_build.`
+        : `No spaceName was provided — omit spaceId and the default space will be used.`;
+      const stepOffset = spaceName ? 1 : 0;
+      const pollingDirective = pollingPreference
+        ? `IMPORTANT POLLING DIRECTIVE FROM USER: ${pollingPreference}. Honor this preference for the cadence of get_agent_build_status calls in step ${stepOffset + 2}.\n\n`
+        : "";
+      return [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text:
+              `Build a new agent using this description: "${prompt}"\n\n` +
+              pollingDirective +
+              `Follow these steps:\n\n` +
+              spaceStep +
+              `${stepOffset + 1}. Use start_agent_build with prompt="${prompt}". ${spaceNote} ` +
+              `This returns a sessionId immediately. The agent is saved to the workspace as soon as the AI creates it.\n` +
+              `${stepOffset + 2}. Poll get_agent_build_status with the sessionId. ` +
+              (pollingPreference
+                ? `Use the polling cadence from the user's directive above.\n`
+                : `Use a moderate cadence with backoff (e.g., start ~5s, back off to ~15–30s; never wait more than ~30s between polls).\n`) +
+              `   - status="processing": keep polling.\n` +
+              `   - status="completed": the agent was saved successfully. Report agentId and agentName to the user. Done — stop polling.\n` +
+              `   - status="ready": the agent exists but may not be fully saved yet. Report agentId and agentName. Stop polling — no further action required.\n` +
+              `   - status="error": report the error field to the user. The session is over. If an agent was partially created, advise the user to delete it via the agents API.\n` +
+              `   - status="cancelled": report that the build was aborted early.\n` +
+              `${stepOffset + 3}. If the build succeeded (completed or ready), use get_agent with the agentId to show the user their new agent's details.\n` +
+              `${stepOffset + 4}. Remind the user the agent is now accessible via list_agents and all other agent tools.`,
+          },
+        },
+      ];
+    }
+
+    case "inspect-agent-draft": {
+      const sessionId = args?.sessionId;
+      if (!sessionId) {
+        throw new Error("Missing required argument: sessionId");
+      }
+      const pollingPreference = args?.pollingPreference;
+      const pollingDirective = pollingPreference
+        ? `IMPORTANT POLLING DIRECTIVE FROM USER: ${pollingPreference}. If the session is still in progress and you continue polling, honor this cadence.\n\n`
+        : "";
+      const processingNote = pollingPreference
+        ? `report that the AI is still building and continue polling using the cadence from the user's directive above.`
+        : `report that the AI is still building and suggest polling again shortly (moderate cadence with backoff; never wait more than ~30s between polls).`;
+      return [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text:
+              `Inspect the agent build session "${sessionId}". ` +
+              pollingDirective +
+              `Follow these steps:\n\n` +
+              `1. Use get_agent_build_status with sessionId="${sessionId}" to get the current status.\n` +
+              `   - status="processing": ${processingNote}\n` +
+              `   - status="error": report the error field to the user. The session is over. If an agent was partially created, advise the user to delete it via the agents API.\n` +
+              `   - status="cancelled": report that the build was aborted early. Any agent saved before the abort remains in the workspace.\n` +
+              `   - status="completed": the agent was saved successfully — show agentId and agentName. Done.\n` +
+              `   - status="ready": the agent exists but may not be fully saved yet — show agentId and agentName. Stop polling.\n` +
+              `2. If status is "completed" or "ready" and agentId is populated, use get_agent with that agentId to fetch the full agent details ` +
+              `(name, description, configType, input parameters).\n` +
+              `3. Present the agent details to the user and remind them it is accessible via list_agents and all other agent tools.`,
           },
         },
       ];

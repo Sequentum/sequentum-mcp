@@ -1,6 +1,6 @@
 # Tool Reference
 
-The Sequentum MCP Server provides 36 tools across 8 categories for managing web scraping agents, runs, schedules, and more. These tools become available once you connect to the server -- either via the [remote OAuth setup](../README.md#getting-started) at `https://mcp.sequentum.com/mcp` or the [local API key setup](../README.md#alternative-local-setup-api-key).
+The Sequentum MCP Server provides 39 tools across 9 categories for managing web scraping agents, runs, schedules, and more. These tools become available once you connect to the server -- either via the [remote OAuth setup](../README.md#getting-started) at `https://mcp.sequentum.com/mcp` or the [local API key setup](../README.md#alternative-local-setup-api-key).
 
 > **Pagination:** Tools that return lists (`list_agents`, `get_agent_runs`, `get_credit_history`, `get_agents_usage`, `get_agent_runs_cost`) support pagination via `pageIndex` (1-based) and `recordsPerPage`. When the result is paginated, the response includes the total count so you know if more pages are available.
 
@@ -52,6 +52,10 @@ The Sequentum MCP Server provides 36 tools across 8 categories for managing web 
 | [`get_records_summary`](#get_records_summary) | Get records extracted/exported in a date range |
 | [`get_run_diagnostics`](#get_run_diagnostics) | Get error details and suggested fixes for a run |
 | [`get_latest_failure`](#get_latest_failure) | Get diagnostics for the most recent failure |
+| **Agent Builder** | |
+| [`start_agent_build`](#start_agent_build) | Start an AI-powered agent build session from a prompt |
+| [`get_agent_build_status`](#get_agent_build_status) | Poll the status of an agent build session |
+| [`stop_agent_build`](#stop_agent_build) | Stop an agent build session (draft is NOT removed) |
 
 ---
 
@@ -1159,3 +1163,105 @@ Show the last error for the Amazon scraper
 | 10 | Success | Completed without errors |
 | 11 | Skipped | Skipped execution |
 | 12 | Waiting | Waiting for resources |
+
+---
+
+## Agent Builder
+
+Tools for building new web scraping agents from natural language prompts using the AI agent builder. The workflow is asynchronous: start a session, poll for status until a terminal value is returned, then optionally retrieve the agent details. The session tears down automatically once building is complete.
+
+> **Tip:** Use the [`build-agent-from-prompt`](prompts-reference.md#build-agent-from-prompt) prompt to orchestrate the full workflow automatically.
+
+### start_agent_build
+
+Start a new AI-powered agent building session from a natural language description. Returns immediately with a `sessionId` — building happens asynchronously. The agent is saved to your workspace as soon as the AI creates it.
+
+**Next step:** Poll `get_agent_build_status` until status reaches `completed`, `ready`, or `error`. Optionally call `stop_agent_build` to abort early while still in `processing`.
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `prompt` | string | Yes | Natural language description of the automation to build. Must be 10–5000 characters. |
+| `spaceId` | number | No | Space ID to associate the agent with. Uses the default space if omitted. |
+
+#### Returns
+
+```json
+{
+  "sessionId": "sess-abc-123"
+}
+```
+
+#### Example
+
+```json
+{
+  "name": "start_agent_build",
+  "arguments": {
+    "prompt": "Scrape product names, prices, and ratings from amazon.com/s?k=laptops",
+    "spaceId": 3
+  }
+}
+```
+
+---
+
+### get_agent_build_status
+
+Poll the current status of an agent building session. Call this repeatedly until status reaches a terminal value, then stop polling — no further calls are required.
+
+**Status values:**
+- `processing` — AI is still building. Keep polling.
+- `ready` — AI finished its turn. `agentId` and `agentName` are now in the response, but the agent may not be fully saved yet. Stop polling.
+- `completed` — Agent was saved successfully. `agentId` and `agentName` are populated. Stop polling.
+- `error` — Build failed. Check the `error` field.
+- `cancelled` — `stop_agent_build` was called while processing.
+
+> **Note:** Stop polling on any of: `completed`, `ready`, `error`, `cancelled`. The session tears down automatically after reaching a terminal status.
+
+> **Polling cadence:** Build duration is highly variable (seconds to several minutes). If the user has expressed a polling preference (e.g., *"poll quickly"*, *"be patient"*, *"every N seconds"*), honor it. Otherwise default to a moderate cadence with backoff (e.g., start ~5s, back off to ~15–30s) and avoid waiting longer than ~30s between polls so the user gets timely feedback when the build completes. The [`build-agent-from-prompt`](prompts-reference.md#build-agent-from-prompt) and [`inspect-agent-draft`](prompts-reference.md#inspect-agent-draft) prompts accept a `pollingPreference` argument that gets forwarded into the model's instructions.
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sessionId` | string | Yes | Session ID returned by `start_agent_build`. |
+
+#### Returns
+
+```json
+{
+  "status": "completed",
+  "agentId": 42,
+  "agentName": "Amazon Laptop Scraper"
+}
+```
+
+---
+
+### stop_agent_build
+
+Abort an in-progress agent building session early. **Optional** — only needed if you want to cancel before the build completes. Has no effect once the session has already reached a terminal status.
+
+Any agent already saved to your workspace before the abort remains there — use the standard agents API to delete it if unwanted. Returns 204 No Content.
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sessionId` | string | Yes | Session ID returned by `start_agent_build`. |
+
+#### Returns
+
+No content (HTTP 204).
+
+### Agent Builder Session Status Values
+
+| Value | Description |
+|-------|-------------|
+| `processing` | AI is building the agent. Keep polling. |
+| `ready` | AI finished its turn; `agentId`/`agentName` are available. Session may still be wrapping up. |
+| `completed` | Agent was saved successfully. `agentId` and `agentName` are populated. |
+| `error` | Build failed. The `error` field contains the reason. |
+| `cancelled` | `stop_agent_build` was called while processing. |

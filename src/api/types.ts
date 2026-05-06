@@ -661,3 +661,55 @@ export interface RunStatsApiModel {
  * - oauth2: Receives Bearer tokens via Authorization header (HTTP mode)
  */
 export type AuthMode = "apikey" | "oauth2";
+
+// ==========================================
+// Agent Builder Types
+// ==========================================
+
+/**
+ * All observable status values for an agent builder session.
+ * Serialized as lowercase strings on the wire.
+ *
+ * processing → ready → completed (happy path)
+ * processing → error           (build failed)
+ * any        → cancelled       (stop was called)
+ */
+export type AgentBuilderSessionStatus =
+  | "processing"
+  | "ready"
+  | "completed"
+  | "error"
+  | "cancelled";
+
+/** Request to start a new agent building session via the external API. */
+export interface ExternalStartAgentBuildRequest {
+  /** Natural language prompt (10–5000 chars, trimmed). */
+  prompt: string;
+  /** Optional space ID. Uses the default space if omitted. */
+  spaceId?: number;
+}
+
+/** Response from POST /agent-builder/start. */
+export interface ExternalStartAgentBuildResponse {
+  /** Session ID to use for status polling and subsequent calls. Required, non-empty. */
+  sessionId: string;
+}
+
+/** Response from GET /agent-builder/{sessionId}/status. */
+export interface ExternalSessionStatusResponse {
+  /** Current session status. */
+  status: AgentBuilderSessionStatus;
+  /**
+   * Permanent workspace-wide ID of the agent. Always present when status is "completed" or "ready".
+   * Absent while "processing". This is the same ID accepted by get_agent, run_agent,
+   * get_input_parameters, get_agent_runs, schedule tools, and every other endpoint that takes an agentId.
+   */
+  agentId?: number;
+  /**
+   * Name of the agent. Always present when status is "completed" or "ready".
+   * Absent while "processing".
+   */
+  agentName?: string;
+  /** Error message when status is "error". */
+  error?: string;
+}

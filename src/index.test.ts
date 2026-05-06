@@ -748,7 +748,7 @@ describe("MCP Resources", () => {
 describe("MCP Prompts", () => {
   describe("prompt definitions", () => {
     it("should define 9 prompts", () => {
-      expect(prompts).toHaveLength(9);
+      expect(prompts).toHaveLength(11);
     });
 
     it("should include debug-agent prompt with agentName argument", () => {
@@ -943,6 +943,115 @@ describe("MCP Prompts", () => {
     it("should throw for compare-runs without agentName", () => {
       expect(() => getPromptMessages("compare-runs", {})).toThrow("Missing required argument: agentName");
       expect(() => getPromptMessages("compare-runs", undefined)).toThrow("Missing required argument: agentName");
+    });
+
+    it("should include build-agent-from-prompt with prompt + optional spaceName + optional pollingPreference", () => {
+      const prompt = prompts.find((p) => p.name === "build-agent-from-prompt");
+      expect(prompt).toBeDefined();
+      expect(prompt!.arguments).toHaveLength(3);
+      const promptArg = prompt!.arguments!.find((a) => a.name === "prompt");
+      const spaceNameArg = prompt!.arguments!.find((a) => a.name === "spaceName");
+      const pollingArg = prompt!.arguments!.find((a) => a.name === "pollingPreference");
+      expect(promptArg?.required).toBe(true);
+      expect(spaceNameArg?.required).toBe(false);
+      expect(pollingArg?.required).toBe(false);
+    });
+
+    it("should include inspect-agent-draft with sessionId + optional pollingPreference", () => {
+      const prompt = prompts.find((p) => p.name === "inspect-agent-draft");
+      expect(prompt).toBeDefined();
+      expect(prompt!.arguments).toHaveLength(2);
+      const sessionIdArg = prompt!.arguments!.find((a) => a.name === "sessionId");
+      const pollingArg = prompt!.arguments!.find((a) => a.name === "pollingPreference");
+      expect(sessionIdArg?.required).toBe(true);
+      expect(pollingArg?.required).toBe(false);
+    });
+
+    it("should return messages for build-agent-from-prompt with prompt only", () => {
+      const messages = getPromptMessages("build-agent-from-prompt", {
+        prompt: "Scrape prices from amazon.com",
+      });
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe("user");
+      const text = (messages[0].content as { text: string }).text;
+      expect(text).toContain("Scrape prices from amazon.com");
+      expect(text).toContain("start_agent_build");
+      expect(text).toContain("get_agent_build_status");
+      expect(text).toContain("get_agent");
+    });
+
+    it("should include search_space_by_name step when spaceName is provided", () => {
+      const messages = getPromptMessages("build-agent-from-prompt", {
+        prompt: "Scrape prices from amazon.com",
+        spaceName: "My Space",
+      });
+      expect(messages).toHaveLength(1);
+      const text = (messages[0].content as { text: string }).text;
+      expect(text).toContain("search_space_by_name");
+      expect(text).toContain("My Space");
+    });
+
+    it("should embed pollingPreference into build-agent-from-prompt when provided", () => {
+      const messages = getPromptMessages("build-agent-from-prompt", {
+        prompt: "Scrape prices from amazon.com",
+        pollingPreference: "poll every 3 seconds",
+      });
+      const text = (messages[0].content as { text: string }).text;
+      expect(text).toContain("IMPORTANT POLLING DIRECTIVE FROM USER");
+      expect(text).toContain("poll every 3 seconds");
+      expect(text).toContain("Use the polling cadence from the user's directive above");
+      expect(text).not.toContain("moderate cadence with backoff");
+    });
+
+    it("should fall back to default polling guidance for build-agent-from-prompt when pollingPreference is omitted", () => {
+      const messages = getPromptMessages("build-agent-from-prompt", {
+        prompt: "Scrape prices from amazon.com",
+      });
+      const text = (messages[0].content as { text: string }).text;
+      expect(text).not.toContain("IMPORTANT POLLING DIRECTIVE FROM USER");
+      expect(text).toContain("moderate cadence with backoff");
+    });
+
+    it("should throw for build-agent-from-prompt without prompt", () => {
+      expect(() => getPromptMessages("build-agent-from-prompt", {})).toThrow("Missing required argument: prompt");
+      expect(() => getPromptMessages("build-agent-from-prompt", undefined)).toThrow("Missing required argument: prompt");
+    });
+
+    it("should return messages for inspect-agent-draft with sessionId", () => {
+      const messages = getPromptMessages("inspect-agent-draft", {
+        sessionId: "sess-abc-123",
+      });
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe("user");
+      const text = (messages[0].content as { text: string }).text;
+      expect(text).toContain("sess-abc-123");
+      expect(text).toContain("get_agent_build_status");
+      expect(text).toContain("get_agent");
+    });
+
+    it("should embed pollingPreference into inspect-agent-draft when provided", () => {
+      const messages = getPromptMessages("inspect-agent-draft", {
+        sessionId: "sess-abc-123",
+        pollingPreference: "be patient, this is a big site",
+      });
+      const text = (messages[0].content as { text: string }).text;
+      expect(text).toContain("IMPORTANT POLLING DIRECTIVE FROM USER");
+      expect(text).toContain("be patient, this is a big site");
+      expect(text).toContain("cadence from the user's directive above");
+    });
+
+    it("should fall back to default polling guidance for inspect-agent-draft when pollingPreference is omitted", () => {
+      const messages = getPromptMessages("inspect-agent-draft", {
+        sessionId: "sess-abc-123",
+      });
+      const text = (messages[0].content as { text: string }).text;
+      expect(text).not.toContain("IMPORTANT POLLING DIRECTIVE FROM USER");
+      expect(text).toContain("moderate cadence with backoff");
+    });
+
+    it("should throw for inspect-agent-draft without sessionId", () => {
+      expect(() => getPromptMessages("inspect-agent-draft", {})).toThrow("Missing required argument: sessionId");
+      expect(() => getPromptMessages("inspect-agent-draft", undefined)).toThrow("Missing required argument: sessionId");
     });
 
     it("should throw for unknown prompt name", () => {
@@ -1236,5 +1345,72 @@ describe("validateBoolean", () => {
     expect(() => validateBoolean({ flag: 1 }, "flag")).toThrow(
       /expected a boolean/
     );
+  });
+});
+
+// ==========================================
+// validateString length options Tests
+// ==========================================
+
+describe("validateString length options", () => {
+  it("accepts a string within minLength and maxLength bounds", () => {
+    expect(
+      validateString({ prompt: "Hello world" }, "prompt", {
+        required: true,
+        minLength: 5,
+        maxLength: 20,
+      })
+    ).toBe("Hello world");
+  });
+
+  it("throws when the string is shorter than minLength", () => {
+    expect(() =>
+      validateString({ prompt: "Hi" }, "prompt", { minLength: 10 })
+    ).toThrow(/must be at least 10 character/);
+  });
+
+  it("throws when the string is longer than maxLength", () => {
+    expect(() =>
+      validateString({ prompt: "A".repeat(101) }, "prompt", { maxLength: 100 })
+    ).toThrow(/must be at most 100 character/);
+  });
+
+  it("trims the value before the length check when trim=true", () => {
+    expect(
+      validateString({ prompt: "   Hello world   " }, "prompt", {
+        minLength: 5,
+        trim: true,
+      })
+    ).toBe("Hello world");
+  });
+
+  it("returns the trimmed value when trim=true and within bounds", () => {
+    const result = validateString({ x: "  abc  " }, "x", { trim: true });
+    expect(result).toBe("abc");
+  });
+
+  it("rejects a value that is within maxLength only after trimming with trim=false (no trim)", () => {
+    expect(() =>
+      validateString({ prompt: "  x  " }, "prompt", {
+        maxLength: 4,
+        trim: false,
+      })
+    ).toThrow(/must be at most 4 character/);
+  });
+
+  it("is backward compatible with boolean required=true argument", () => {
+    expect(validateString({ name: "Alice" }, "name", true)).toBe("Alice");
+    expect(() => validateString({}, "name", true)).toThrow(/Missing required parameter: name/);
+  });
+
+  it("is backward compatible with boolean required=false argument", () => {
+    expect(validateString({}, "name", false)).toBeUndefined();
+    expect(validateString({ name: "Bob" }, "name", false)).toBe("Bob");
+  });
+
+  it("defaults required to true when using the options object form with no required key", () => {
+    expect(() =>
+      validateString({}, "prompt", { minLength: 10 })
+    ).toThrow(/Missing required parameter: prompt/);
   });
 });

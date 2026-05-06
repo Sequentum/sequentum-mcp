@@ -1102,6 +1102,56 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
           };
         }
 
+        // Agent Builder Tools
+
+        case "start_agent_build": {
+          const params = args as Record<string, unknown>;
+          const prompt = validateString(params, "prompt", {
+            required: true,
+            minLength: 10,
+            maxLength: 5000,
+            trim: true,
+          })!;
+          const spaceId = validateNumber(params, "spaceId", { required: false, min: 1, integer: true });
+          const response = await apiClient.startAgentBuild({ prompt, spaceId });
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(response, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_agent_build_status": {
+          const params = args as Record<string, unknown>;
+          const sessionId = validateString(params, "sessionId")!;
+          const status = await apiClient.getAgentBuildStatus(sessionId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(status, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "stop_agent_build": {
+          const params = args as Record<string, unknown>;
+          const sessionId = validateString(params, "sessionId")!;
+          await apiClient.stopAgentBuild(sessionId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Successfully stopped agent build session ${sessionId}. The session is closed and AI resources have been released. Any agent draft created during the build remains in your workspace — use the standard agents API to delete it if no longer needed.`,
+              },
+            ],
+          };
+        }
+
         default:
           throw new Error(`Unknown tool: ${name}`);
       }

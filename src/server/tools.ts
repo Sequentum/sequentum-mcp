@@ -71,11 +71,11 @@ export const tools: Tool[] = [
       "USE AFTER list_agents or search_agents when you need full details for a specific agent. " +
       "Answers: 'Tell me about agent X', 'What parameters does this agent need?', 'Show agent configuration'. " +
       "Returns: Full agent details including inputParameters (what inputs the agent accepts), description, documentation, startUrl. " +
-      "REQUIRED: You must have the agentId first (get it from list_agents or search_agents).",
+      "REQUIRED: You must have the agentId first (get it from list_agents, search_agents, or get_agent_build_status when building a new agent).",
     inputSchema: {
       type: "object" as const,
       properties: {
-        agentId: { type: "number", description: "The unique ID of the agent. Get this from list_agents or search_agents." },
+        agentId: { type: "number", description: "The unique ID of the agent. Get this from list_agents, search_agents, or get_agent_build_status (when building a new agent)." },
       },
       required: ["agentId"],
     },
@@ -116,7 +116,7 @@ export const tools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        agentId: { type: "number", description: "The unique ID of the agent. Get this from list_agents or search_agents." },
+        agentId: { type: "number", description: "The unique ID of the agent. Get this from list_agents, search_agents, or get_agent_build_status (when building a new agent)." },
         maxRecords: { type: "number", description: "Maximum number of runs to return. Default: 50. Use smaller values for faster response." },
       },
       required: ["agentId"],
@@ -153,12 +153,12 @@ export const tools: Tool[] = [
       "(2) SYNC: Set isRunSynchronously=true to wait and get scraped data directly (best for quick agents <60s). " +
       "Answers: 'Run agent X', 'Start the scraper', 'Execute the Amazon agent', 'Scrape this website'. " +
       "Returns: In async mode: {runId, status}. In sync mode: Scraped data directly as JSON/text. " +
-      "REQUIRED: Get agentId first using list_agents or search_agents. " +
+      "REQUIRED: Get agentId first using list_agents, search_agents, or get_agent_build_status (when building a new agent). " +
       "TIP: Use get_agent first to check what inputParameters the agent accepts before running.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        agentId: { type: "number", description: "The unique ID of the agent to run. Get this from list_agents or search_agents." },
+        agentId: { type: "number", description: "The unique ID of the agent to run. Get this from list_agents, search_agents, or get_agent_build_status (when building a new agent)." },
         inputParameters: { type: "string", description: "JSON string of input parameters. Check agent's inputParameters with get_agent to see what's accepted. Example: '{\"url\": \"https://example.com\"}'" },
         isRunSynchronously: { type: "boolean", description: "If true, wait for completion and return scraped data. If false (default), return immediately with runId. Use true only for quick agents." },
         timeout: { type: "number", description: "Timeout in seconds for synchronous runs. Only used when isRunSynchronously=true. Default: 60." },
@@ -363,7 +363,7 @@ export const tools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        agentId: { type: "number", description: "The unique ID of the agent to schedule. Get this from list_agents or search_agents." },
+        agentId: { type: "number", description: "The unique ID of the agent to schedule. Get this from list_agents, search_agents, or get_agent_build_status (when building a new agent)." },
         name: { type: "string", description: "A descriptive name for the schedule (e.g., 'Daily Morning Run')." },
         scheduleType: { 
           type: "number", 
@@ -879,12 +879,103 @@ export const tools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        agentId: { type: "number", description: "The unique ID of the agent. Get this from list_agents or search_agents." },
+        agentId: { type: "number", description: "The unique ID of the agent. Get this from list_agents, search_agents, or get_agent_build_status (when building a new agent)." },
       },
       required: ["agentId"],
     },
     annotations: {
       readOnlyHint: true,
+    },
+  },
+
+  // Agent Builder Tools
+
+  {
+    name: "start_agent_build",
+    description:
+      "Start a new AI-powered agent building session from a natural language prompt. " +
+      "The agent is built asynchronously — this call returns immediately with a sessionId. " +
+      "The agent is saved to your workspace as soon as the AI creates it. " +
+      "NEXT STEP: Poll get_agent_build_status until status reaches 'completed', 'ready', or 'error' — then stop polling; the session tears down automatically. " +
+      "Optionally call stop_agent_build to abort early while still in 'processing'. " +
+      "If spaceName is known, resolve it to a spaceId via search_space_by_name first.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        prompt: {
+          type: "string",
+          description:
+            "Natural language description of the automation to build. " +
+            "Be specific: include the target website, data to extract, and any filters. " +
+            "Must be between 10 and 5000 characters (trimmed). " +
+            "Example: 'Scrape product names, prices, and ratings from amazon.com/s?k=laptops'.",
+          minLength: 10,
+          maxLength: 5000,
+        },
+        spaceId: {
+          type: "number",
+          description:
+            "Optional space ID to associate the agent with. Use search_space_by_name to get the ID from a name. " +
+            "If omitted, the default space is used.",
+        },
+      },
+      required: ["prompt"],
+    },
+    annotations: {
+      readOnlyHint: false,
+    },
+  },
+  {
+    name: "get_agent_build_status",
+    description:
+      "Poll the status of an agent building session. Call this repeatedly until status reaches a terminal value, then stop polling. " +
+      "Status values: " +
+      "'processing' (AI still building — keep polling); " +
+      "'ready' (AI finished its turn — agentId and agentName are now in the response, but the agent may not be fully saved yet); " +
+      "'completed' (agent was saved successfully — agentId and agentName are populated); " +
+      "'error' (build failed — check the error field); " +
+      "'cancelled' (stop_agent_build was called while processing). " +
+      "STOP POLLING on any of: completed, ready, error, cancelled. " +
+      "Subsequent calls after a terminal status may return the same response or 404 — both mean the build is done. " +
+      "The session tears down automatically after reaching a terminal status. " +
+      "AGENT ID NOTE: The agentId returned in this response is the agent's permanent workspace ID — " +
+      "the same ID used by get_agent, run_agent, get_input_parameters, get_agent_runs, schedule tools, and every other endpoint that takes an agentId. " +
+      "POLLING CADENCE: build duration is highly variable (seconds to several minutes). " +
+      "If the user has expressed a polling preference (e.g., 'poll quickly', 'be patient', 'every N seconds'), honor it. " +
+      "Otherwise default to a moderate cadence with backoff (e.g., start ~5s, back off to ~15–30s) and avoid waiting longer than ~30s between polls so the user gets timely feedback when the build completes.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "The session ID returned by start_agent_build.",
+        },
+      },
+      required: ["sessionId"],
+    },
+    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "stop_agent_build",
+    description:
+      "Abort an in-progress agent building session early. Optional — only needed if you want to cancel before the build completes. " +
+      "Has no effect once the session has already reached a terminal status (completed, ready, error, or cancelled). " +
+      "Any agent already saved to your workspace before the abort remains there — use the standard agents API to delete it if unwanted. " +
+      "Returns 204 No Content.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "The session ID returned by start_agent_build.",
+        },
+      },
+      required: ["sessionId"],
+    },
+    annotations: {
+      readOnlyHint: false,
     },
   },
 ];
