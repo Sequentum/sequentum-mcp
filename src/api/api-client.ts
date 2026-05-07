@@ -32,6 +32,9 @@ import {
   ApiRequestError,
   RateLimitError,
   RunRemoveMethod,
+  ExternalStartAgentBuildRequest,
+  ExternalStartAgentBuildResponse,
+  ExternalSessionStatusResponse,
 } from "./types.js";
 
 /** Default retry configuration for transient failures */
@@ -1022,6 +1025,59 @@ export class SequentumApiClient {
   async getLatestFailure(agentId: number): Promise<RunDiagnosticsApiModel> {
     return this.request<RunDiagnosticsApiModel>(
       `/api/v1/analytics/agents/${agentId}/latest-failure`
+    );
+  }
+
+  // ==========================================
+  // Agent Builder Operations
+  // ==========================================
+
+  /**
+   * Start a new agent building session.
+   * Returns immediately with a sessionId — building runs asynchronously.
+   * Poll getAgentBuildStatus until status reaches a terminal value: "completed", "ready", "error", or "cancelled".
+   * @param request - The prompt and optional spaceId
+   */
+  async startAgentBuild(
+    request: ExternalStartAgentBuildRequest
+  ): Promise<ExternalStartAgentBuildResponse> {
+    return this.request<ExternalStartAgentBuildResponse>(
+      `/api/v1/agent-builder/start`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          prompt: request.prompt,
+          ...(request.spaceId !== undefined && { spaceId: request.spaceId }),
+        }),
+      }
+    );
+  }
+
+  /**
+   * Get the current status of an agent building session.
+   * Lightweight polling endpoint — call this until status reaches a terminal value: "completed", "ready", "error", or "cancelled".
+   * @param sessionId - The session ID returned from startAgentBuild
+   */
+  async getAgentBuildStatus(
+    sessionId: string
+  ): Promise<ExternalSessionStatusResponse> {
+    return this.request<ExternalSessionStatusResponse>(
+      `/api/v1/agent-builder/${encodeURIComponent(sessionId)}/status`
+    );
+  }
+
+  /**
+   * Abort an in-progress agent building session early.
+   * Has no effect once the session has already reached a terminal status.
+   * The agent draft (if already created) persists in the workspace — use
+   * the standard agents API to delete it if unwanted.
+   * Returns 204 No Content on success.
+   * @param sessionId - The session ID
+   */
+  async stopAgentBuild(sessionId: string): Promise<void> {
+    await this.requestVoid(
+      `/api/v1/agent-builder/${encodeURIComponent(sessionId)}/stop`,
+      { method: "POST" }
     );
   }
 }

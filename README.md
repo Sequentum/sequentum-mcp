@@ -202,7 +202,7 @@ How much did I spend on server time vs exports last week?
 
 ## Available Tools
 
-The Sequentum MCP Server provides 36 tools across 8 categories for interacting with the Sequentum platform. See the [Tool Reference](./docs/tool-reference.md) for detailed documentation.
+The Sequentum MCP Server provides 39 tools across 9 categories for interacting with the Sequentum platform. See the [Tool Reference](./docs/tool-reference.md) for detailed documentation.
 
 <!-- BEGIN AUTO GENERATED TOOLS -->
 
@@ -250,6 +250,10 @@ The Sequentum MCP Server provides 36 tools across 8 categories for interacting w
   - [`get_records_summary`](docs/tool-reference.md#get_records_summary)
   - [`get_run_diagnostics`](docs/tool-reference.md#get_run_diagnostics)
   - [`get_latest_failure`](docs/tool-reference.md#get_latest_failure)
+- **Agent Builder** (3 tools)
+  - [`start_agent_build`](docs/tool-reference.md#start_agent_build)
+  - [`get_agent_build_status`](docs/tool-reference.md#get_agent_build_status)
+  - [`stop_agent_build`](docs/tool-reference.md#stop_agent_build)
 
 <!-- END AUTO GENERATED TOOLS -->
 
@@ -272,6 +276,9 @@ The server includes 9 reusable prompt templates that guide the AI through common
 - **Billing & Costs**
   - [`spending-report`](docs/prompts-reference.md#spending-report) -- Spending and credits report
   - [`cost-analysis`](docs/prompts-reference.md#cost-analysis) -- Analyze costs across agents
+- **Agent Building**
+  - [`build-agent-from-prompt`](docs/prompts-reference.md#build-agent-from-prompt) -- Build a new agent from a natural language description
+  - [`inspect-agent-draft`](docs/prompts-reference.md#inspect-agent-draft) -- Inspect a build session and decide whether to save or discard
 
 <!-- END AUTO GENERATED PROMPTS -->
 

@@ -53,11 +53,27 @@ export function validateNumber(
   return value;
 }
 
+export interface StringValidationOptions {
+  required?: boolean;
+  /** Minimum allowed length (inclusive), checked after optional trim */
+  minLength?: number;
+  /** Maximum allowed length (inclusive), checked after optional trim */
+  maxLength?: number;
+  /** If true, trim whitespace before returning and before length checks */
+  trim?: boolean;
+}
+
 export function validateString(
   args: Record<string, unknown>,
   field: string,
-  required: boolean = true
+  requiredOrOptions: boolean | StringValidationOptions = true
 ): string | undefined {
+  const opts: StringValidationOptions =
+    typeof requiredOrOptions === "boolean"
+      ? { required: requiredOrOptions }
+      : requiredOrOptions;
+  const required = opts.required ?? true;
+
   const value = args[field];
   if (value === undefined || value === null) {
     if (required) {
@@ -70,7 +86,21 @@ export function validateString(
       `Invalid parameter '${field}': expected a string, got ${typeof value}`
     );
   }
-  return value;
+
+  const result = opts.trim ? value.trim() : value;
+
+  if (opts.minLength !== undefined && result.length < opts.minLength) {
+    throw new Error(
+      `Invalid parameter '${field}': must be at least ${opts.minLength} ${opts.minLength === 1 ? "character" : "characters"}, got ${result.length}`
+    );
+  }
+  if (opts.maxLength !== undefined && result.length > opts.maxLength) {
+    throw new Error(
+      `Invalid parameter '${field}': must be at most ${opts.maxLength} ${opts.maxLength === 1 ? "character" : "characters"}, got ${result.length}`
+    );
+  }
+
+  return result;
 }
 
 export function validateEnum<T extends string>(

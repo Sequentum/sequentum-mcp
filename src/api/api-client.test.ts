@@ -2434,3 +2434,226 @@ describe("AuthenticationError", () => {
     expect(genericError instanceof AuthenticationError).toBe(false);
   });
 });
+
+// ==========================================
+// Agent Builder Tests
+// ==========================================
+
+describe("SequentumApiClient - Agent Builder", () => {
+  let client: SequentumApiClient;
+  const mockBaseUrl = "https://api.example.com";
+  const mockApiKey = "sk-test-key-123";
+
+  beforeEach(() => {
+    client = new SequentumApiClient(mockBaseUrl, mockApiKey);
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe("startAgentBuild", () => {
+    it("should POST to /agent-builder/start with prompt and return sessionId", async () => {
+      const mockResponse = { sessionId: "sess-abc-123" };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockResponse,
+      } as Response);
+
+      const result = await client.startAgentBuild({
+        prompt: "Scrape prices from amazon.com",
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent-builder/start",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            prompt: "Scrape prices from amazon.com",
+          }),
+        })
+      );
+      expect(result).toEqual(mockResponse);
+    });
+
+    it("should include spaceId in the request body when provided", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ sessionId: "sess-xyz" }),
+      } as Response);
+
+      await client.startAgentBuild({ prompt: "Extract product data", spaceId: 7 });
+
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: JSON.stringify({ prompt: "Extract product data", spaceId: 7 }),
+        })
+      );
+    });
+
+    it("should throw ApiRequestError on 400 Bad Request", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        text: async () => '{"message": "Prompt is too short"}',
+      } as Response);
+
+      await expect(
+        client.startAgentBuild({ prompt: "hi" })
+      ).rejects.toThrow("Prompt is too short");
+    });
+
+    it("should throw ApiRequestError on 401 Unauthorized", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        text: async () => '{"message": "Invalid API key"}',
+      } as Response);
+
+      await expect(
+        client.startAgentBuild({ prompt: "Scrape prices from amazon.com" })
+      ).rejects.toThrow("Invalid API key");
+    });
+  });
+
+  describe("getAgentBuildStatus", () => {
+    it("should GET /agent-builder/{sessionId}/status and return status response", async () => {
+      const mockStatus = {
+        status: "processing",
+        agentId: null,
+        agentName: null,
+        error: null,
+      };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockStatus,
+      } as Response);
+
+      const result = await client.getAgentBuildStatus("sess-abc-123");
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent-builder/sess-abc-123/status",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockStatus);
+    });
+
+    it("should return ready status with agentId and agentName when draft exists", async () => {
+      const mockStatus = {
+        status: "ready",
+        agentId: 42,
+        agentName: "Amazon Price Scraper",
+        error: null,
+      };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockStatus,
+      } as Response);
+
+      const result = await client.getAgentBuildStatus("sess-abc-123");
+      expect(result.status).toBe("ready");
+      expect(result.agentId).toBe(42);
+      expect(result.agentName).toBe("Amazon Price Scraper");
+    });
+
+    it("should URL-encode the sessionId in the path", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ status: "processing" }),
+      } as Response);
+
+      await client.getAgentBuildStatus("sess/with/slashes");
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent-builder/sess%2Fwith%2Fslashes/status",
+        expect.any(Object)
+      );
+    });
+
+    it("should throw ApiRequestError on 404 Not Found", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        text: async () => '{"message": "Session not found"}',
+      } as Response);
+
+      await expect(client.getAgentBuildStatus("bad-id")).rejects.toThrow(
+        "Session not found"
+      );
+    });
+  });
+
+  describe("stopAgentBuild", () => {
+    it("should POST to /agent-builder/{sessionId}/stop and handle 204 No Content", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+      } as Response);
+
+      await expect(client.stopAgentBuild("sess-abc-123")).resolves.toBeUndefined();
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent-builder/sess-abc-123/stop",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+
+    it("should URL-encode the sessionId in the path", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+      } as Response);
+
+      await client.stopAgentBuild("sess/with/slashes");
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent-builder/sess%2Fwith%2Fslashes/stop",
+        expect.any(Object)
+      );
+    });
+
+    it("should throw ApiRequestError on 404 Not Found", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        text: async () => '{"message": "Session not found"}',
+      } as Response);
+
+      await expect(client.stopAgentBuild("bad-id")).rejects.toThrow(
+        "Session not found"
+      );
+    });
+
+    it("should throw ApiRequestError on 401 Unauthorized", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        text: async () => '{"message": "Invalid API key"}',
+      } as Response);
+
+      await expect(client.stopAgentBuild("sess-abc-123")).rejects.toThrow(
+        "Invalid API key"
+      );
+    });
+  });
+});

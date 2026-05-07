@@ -61,6 +61,7 @@ export const tools: Tool[] = [
       required: [],
     },
     annotations: {
+      title: "List Agents",
       readOnlyHint: true,
     },
   },
@@ -71,15 +72,16 @@ export const tools: Tool[] = [
       "USE AFTER list_agents or search_agents when you need full details for a specific agent. " +
       "Answers: 'Tell me about agent X', 'What parameters does this agent need?', 'Show agent configuration'. " +
       "Returns: Full agent details including inputParameters (what inputs the agent accepts), description, documentation, startUrl. " +
-      "REQUIRED: You must have the agentId first (get it from list_agents or search_agents).",
+      "REQUIRED: You must have the agentId first (get it from list_agents, search_agents, or get_agent_build_status when building a new agent).",
     inputSchema: {
       type: "object" as const,
       properties: {
-        agentId: { type: "number", description: "The unique ID of the agent. Get this from list_agents or search_agents." },
+        agentId: { type: "number", description: "The unique ID of the agent. Get this from list_agents, search_agents, or get_agent_build_status (when building a new agent)." },
       },
       required: ["agentId"],
     },
     annotations: {
+      title: "Get Agent",
       readOnlyHint: true,
     },
   },
@@ -100,6 +102,7 @@ export const tools: Tool[] = [
       required: ["query"],
     },
     annotations: {
+      title: "Search Agents",
       readOnlyHint: true,
     },
   },
@@ -116,12 +119,13 @@ export const tools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        agentId: { type: "number", description: "The unique ID of the agent. Get this from list_agents or search_agents." },
+        agentId: { type: "number", description: "The unique ID of the agent. Get this from list_agents, search_agents, or get_agent_build_status (when building a new agent)." },
         maxRecords: { type: "number", description: "Maximum number of runs to return. Default: 50. Use smaller values for faster response." },
       },
       required: ["agentId"],
     },
     annotations: {
+      title: "Get Agent Runs",
       readOnlyHint: true,
     },
   },
@@ -142,6 +146,7 @@ export const tools: Tool[] = [
       required: ["agentId", "runId"],
     },
     annotations: {
+      title: "Get Run Status",
       readOnlyHint: true,
     },
   },
@@ -153,12 +158,12 @@ export const tools: Tool[] = [
       "(2) SYNC: Set isRunSynchronously=true to wait and get scraped data directly (best for quick agents <60s). " +
       "Answers: 'Run agent X', 'Start the scraper', 'Execute the Amazon agent', 'Scrape this website'. " +
       "Returns: In async mode: {runId, status}. In sync mode: Scraped data directly as JSON/text. " +
-      "REQUIRED: Get agentId first using list_agents or search_agents. " +
+      "REQUIRED: Get agentId first using list_agents, search_agents, or get_agent_build_status (when building a new agent). " +
       "TIP: Use get_agent first to check what inputParameters the agent accepts before running.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        agentId: { type: "number", description: "The unique ID of the agent to run. Get this from list_agents or search_agents." },
+        agentId: { type: "number", description: "The unique ID of the agent to run. Get this from list_agents, search_agents, or get_agent_build_status (when building a new agent)." },
         inputParameters: { type: "string", description: "JSON string of input parameters. Check agent's inputParameters with get_agent to see what's accepted. Example: '{\"url\": \"https://example.com\"}'" },
         isRunSynchronously: { type: "boolean", description: "If true, wait for completion and return scraped data. If false (default), return immediately with runId. Use true only for quick agents." },
         timeout: { type: "number", description: "Timeout in seconds for synchronous runs. Only used when isRunSynchronously=true. Default: 60." },
@@ -167,6 +172,7 @@ export const tools: Tool[] = [
       required: ["agentId"],
     },
     annotations: {
+      title: "Start Agent",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -186,6 +192,7 @@ export const tools: Tool[] = [
       required: ["agentId", "runId"],
     },
     annotations: {
+      title: "Stop Agent",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -208,6 +215,7 @@ export const tools: Tool[] = [
       required: ["agentId", "runId"],
     },
     annotations: {
+      title: "Kill Agent",
       readOnlyHint: false,
       destructiveHint: true,
     },
@@ -240,6 +248,7 @@ export const tools: Tool[] = [
       required: ["agentId", "runId"],
     },
     annotations: {
+      title: "Delete Run",
       readOnlyHint: false,
       destructiveHint: true,
     },
@@ -263,6 +272,7 @@ export const tools: Tool[] = [
       required: ["agentId", "runId"],
     },
     annotations: {
+      title: "Get Run Files",
       readOnlyHint: true,
     },
   },
@@ -284,6 +294,7 @@ export const tools: Tool[] = [
       required: ["agentId", "runId", "fileId"],
     },
     annotations: {
+      title: "Get File Download URL",
       readOnlyHint: true,
     },
   },
@@ -304,6 +315,7 @@ export const tools: Tool[] = [
       required: ["agentId"],
     },
     annotations: {
+      title: "Get Agent Versions",
       readOnlyHint: true,
     },
   },
@@ -324,6 +336,7 @@ export const tools: Tool[] = [
       required: ["agentId", "versionNumber", "comments"],
     },
     annotations: {
+      title: "Restore Agent Version",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -345,6 +358,7 @@ export const tools: Tool[] = [
       required: ["agentId"],
     },
     annotations: {
+      title: "List Agent Schedules",
       readOnlyHint: true,
     },
   },
@@ -363,7 +377,7 @@ export const tools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        agentId: { type: "number", description: "The unique ID of the agent to schedule. Get this from list_agents or search_agents." },
+        agentId: { type: "number", description: "The unique ID of the agent to schedule. Get this from list_agents, search_agents, or get_agent_build_status (when building a new agent)." },
         name: { type: "string", description: "A descriptive name for the schedule (e.g., 'Daily Morning Run')." },
         scheduleType: { 
           type: "number", 
@@ -421,6 +435,7 @@ export const tools: Tool[] = [
       required: ["agentId", "name"],
     },
     annotations: {
+      title: "Create Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -440,6 +455,7 @@ export const tools: Tool[] = [
       required: ["agentId", "scheduleId"],
     },
     annotations: {
+      title: "Delete Agent Schedule",
       readOnlyHint: false,
       destructiveHint: true,
     },
@@ -459,6 +475,7 @@ export const tools: Tool[] = [
       required: ["agentId", "scheduleId"],
     },
     annotations: {
+      title: "Get Agent Schedule",
       readOnlyHint: true,
     },
   },
@@ -531,6 +548,7 @@ export const tools: Tool[] = [
       required: ["agentId", "scheduleId", "name"],
     },
     annotations: {
+      title: "Update Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -550,6 +568,7 @@ export const tools: Tool[] = [
       required: ["agentId", "scheduleId"],
     },
     annotations: {
+      title: "Enable Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -569,6 +588,7 @@ export const tools: Tool[] = [
       required: ["agentId", "scheduleId"],
     },
     annotations: {
+      title: "Disable Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -589,6 +609,7 @@ export const tools: Tool[] = [
       required: [],
     },
     annotations: {
+      title: "Get Scheduled Runs",
       readOnlyHint: true,
     },
   },
@@ -602,6 +623,7 @@ export const tools: Tool[] = [
       "Returns: availableCredits, organizationId, retrievedAt timestamp.",
     inputSchema: { type: "object" as const, properties: {}, required: [] },
     annotations: {
+      title: "Get Credits Balance",
       readOnlyHint: true,
     },
   },
@@ -621,6 +643,7 @@ export const tools: Tool[] = [
       required: [],
     },
     annotations: {
+      title: "Get Spending Summary",
       readOnlyHint: true,
     },
   },
@@ -639,6 +662,7 @@ export const tools: Tool[] = [
       required: [],
     },
     annotations: {
+      title: "Get Credit History",
       readOnlyHint: true,
     },
   },
@@ -666,6 +690,7 @@ export const tools: Tool[] = [
       required: [],
     },
     annotations: {
+      title: "Get Agents Usage",
       readOnlyHint: true,
     },
   },
@@ -689,6 +714,7 @@ export const tools: Tool[] = [
       required: ["agentId"],
     },
     annotations: {
+      title: "Get Agent Cost Breakdown",
       readOnlyHint: true,
     },
   },
@@ -715,6 +741,7 @@ export const tools: Tool[] = [
       required: ["agentId"],
     },
     annotations: {
+      title: "Get Agent Runs Cost",
       readOnlyHint: true,
     },
   },
@@ -729,6 +756,7 @@ export const tools: Tool[] = [
       "USE THIS to find spaceId before using get_space_agents or filtering list_agents by space.",
     inputSchema: { type: "object" as const, properties: {}, required: [] },
     annotations: {
+      title: "List Spaces",
       readOnlyHint: true,
     },
   },
@@ -746,6 +774,7 @@ export const tools: Tool[] = [
       required: ["spaceId"],
     },
     annotations: {
+      title: "Get Space",
       readOnlyHint: true,
     },
   },
@@ -764,6 +793,7 @@ export const tools: Tool[] = [
       required: ["spaceId"],
     },
     annotations: {
+      title: "Get Space Agents",
       readOnlyHint: true,
     },
   },
@@ -782,6 +812,7 @@ export const tools: Tool[] = [
       required: ["name"],
     },
     annotations: {
+      title: "Search Space by Name",
       readOnlyHint: true,
     },
   },
@@ -801,6 +832,7 @@ export const tools: Tool[] = [
       required: ["spaceId"],
     },
     annotations: {
+      title: "Run Space Agents",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -826,6 +858,7 @@ export const tools: Tool[] = [
       required: [],
     },
     annotations: {
+      title: "Get Runs Summary",
       readOnlyHint: true,
     },
   },
@@ -846,6 +879,7 @@ export const tools: Tool[] = [
       required: [],
     },
     annotations: {
+      title: "Get Records Summary",
       readOnlyHint: true,
     },
   },
@@ -865,6 +899,7 @@ export const tools: Tool[] = [
       required: ["agentId", "runId"],
     },
     annotations: {
+      title: "Get Run Diagnostics",
       readOnlyHint: true,
     },
   },
@@ -879,12 +914,100 @@ export const tools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        agentId: { type: "number", description: "The unique ID of the agent. Get this from list_agents or search_agents." },
+        agentId: { type: "number", description: "The unique ID of the agent. Get this from list_agents, search_agents, or get_agent_build_status (when building a new agent)." },
       },
       required: ["agentId"],
     },
     annotations: {
+      title: "Get Latest Failure",
       readOnlyHint: true,
+    },
+  },
+
+  // Agent Builder Tools
+
+  {
+    name: "start_agent_build",
+    description:
+      "Start a new AI-powered agent building session from a natural language prompt. " +
+      "The agent is built asynchronously — this call returns immediately with a sessionId. " +
+      "The agent is saved to your workspace as soon as the AI creates it. " +
+      "NEXT STEP: Poll get_agent_build_status until status reaches 'completed', 'ready', or 'error' — then stop polling; the session tears down automatically. " +
+      "Optionally call stop_agent_build to abort early while still in 'processing'. " +
+      "If spaceName is known, resolve it to a spaceId via search_space_by_name first.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        prompt: {
+          type: "string",
+          description:
+            "Natural language description of the automation to build. " +
+            "Be specific: include the target website, data to extract, and any filters. " +
+            "Must be between 10 and 5000 characters (trimmed). " +
+            "Example: 'Scrape product names, prices, and ratings from amazon.com/s?k=laptops'.",
+          minLength: 10,
+          maxLength: 5000,
+        },
+        spaceId: {
+          type: "number",
+          description:
+            "Optional space ID to associate the agent with. Use search_space_by_name to get the ID from a name. " +
+            "If omitted, the default space is used.",
+        },
+      },
+      required: ["prompt"],
+    },
+    annotations: {
+      title: "Build Agent from Prompt",
+      readOnlyHint: false,
+      destructiveHint: false,
+    },
+  },
+  {
+    name: "get_agent_build_status",
+    description:
+      "Poll the status of an agent building session. " +
+      "Returns { status, agentId?, agentName?, error? }. " +
+      "status: 'processing' (keep polling) | 'ready' | 'completed' | 'error' | 'cancelled'. " +
+      "STOP POLLING on: completed, ready, error, or cancelled — the session tears down automatically. " +
+      "The returned agentId is the permanent workspace ID usable with get_agent, run_agent, schedule tools, and every other endpoint that takes an agentId. " +
+      "POLLING CADENCE: honor any user-expressed preference (e.g., 'poll quickly', 'every N seconds'); otherwise use moderate backoff (~5s start, max ~30s between polls).",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "The session ID returned by start_agent_build.",
+        },
+      },
+      required: ["sessionId"],
+    },
+    annotations: {
+      title: "Get Agent Build Status",
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "stop_agent_build",
+    description:
+      "Abort an in-progress agent building session early. Optional — only needed if you want to cancel before the build completes. " +
+      "Has no effect once the session has already reached a terminal status (completed, ready, error, or cancelled). " +
+      "Any agent already saved to your workspace before the abort remains there — use the standard agents API to delete it if unwanted. " +
+      "Returns 204 No Content.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "The session ID returned by start_agent_build.",
+        },
+      },
+      required: ["sessionId"],
+    },
+    annotations: {
+      title: "Stop Agent Build",
+      readOnlyHint: false,
+      destructiveHint: false,
     },
   },
 ];
