@@ -4,6 +4,32 @@
 
 ### Added
 
+- **Claude Connectors Directory support:**
+  - `title` annotation added to all 39 tools — required by Anthropic's Connectors Directory submission.
+  - `destructiveHint: false` explicitly set on `start_agent_build` and `stop_agent_build` (previously defaulted to `true` because `readOnlyHint: false` was set without `destructiveHint`).
+  - Origin-header allowlist (`buildAllowedOrigins()` in `src/server/http-server.ts`) replaces the previous wildcard `Access-Control-Allow-Origin: *`. Permits Claude domains (`claude.ai`, `claude.com`, and subdomain wildcards), Sequentum domains, and (when `DEBUG=1`) localhost. Configurable at runtime via the `ALLOWED_ORIGINS` env var. Requests from non-allowlisted browser origins to `/mcp` receive 403; requests without an `Origin` header (native MCP clients such as Cursor, Claude Desktop, Claude Code) pass through unaffected.
+  - Privacy Policy section added to `README.md` with a plain-language data-handling summary and a link to `https://www.sequentum.com/privacy-policy`.
+
+### Security
+
+- Prompt arguments (`prompt`, `spaceName`, `sessionId`, `pollingPreference`) in `src/server/prompts.ts` are now sanitized before interpolation: newlines stripped, trimmed, and enforced per-argument length limits. Reduces prompt-injection surface via user-controlled strings.
+- `pollingPreference` de-elevated from an `IMPORTANT DIRECTIVE` banner to an advisory instruction, reducing its authority in the model's context.
+- `get_agent_build_status` handler now wraps raw backend `error` messages with a generic user-facing string (`"Build failed. Please review your prompt and try again."`). Raw error is still logged at `DEBUG=1` for operators. Prevents leakage of backend stack traces or internal endpoint paths to clients.
+- `sessionId` parameter validated with `maxLength: 256` at both agent-builder handler call sites.
+- `stop_agent_build` handler now returns structured JSON (`{ stopped: true, sessionId }`) instead of free-form English prose, consistent with all other tool handlers.
+- `redactDebugArgs` in `src/server/handlers.ts` extended to mask `prompt` and `comments` fields in addition to existing sensitive keys.
+
+### Tests
+
+- Annotation regression tests added to `src/server/handlers.test.ts`: every tool must have a non-empty `title`, every tool must have `readOnlyHint` defined, and every write tool must have `destructiveHint` explicitly defined.
+- Handler-dispatch tests added for the three agent-builder tools via `InMemoryTransport` + `Client`: `start_agent_build` rejects prompts below `minLength: 10`; `get_agent_build_status` sanitizes the `error` field; `stop_agent_build` returns the expected JSON shape.
+
+---
+
+## [1.3.0] - TBD
+
+### Added
+
 - **Agent Builder tools** (3 new tools):
   - `start_agent_build` — Start an AI-powered agent build session from a natural language prompt. The agent is saved to the workspace automatically once the AI creates it.
   - `get_agent_build_status` — Poll the status of an agent build session. Stop polling on any terminal status: `completed`, `ready`, `error`, or `cancelled`. The session tears down automatically.
