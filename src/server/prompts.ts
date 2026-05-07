@@ -455,11 +455,8 @@ export function getPromptMessages(
             text:
               `Build a new agent using this description: \`${prompt}\`\n\n` +
               pollingDirective +
+              `Before calling any tool: apply the PROMPT-HANDLING POLICY from start_agent_build — pass through only what the user stated, do not invent details; if you cannot proceed without one, ask a clarifying question instead.\n\n` +
               `Follow these steps:\n\n` +
-              `0. Before calling start_agent_build: ensure the prompt you intend to send contains only what the user stated (in this turn or in earlier clarifications). ` +
-              `Trivial normalizations (e.g. adding 'https://') are fine. ` +
-              `Do NOT add fields, formatting rules, or scraping techniques the user did not mention — those are the agent builder's job. ` +
-              `If you cannot proceed without inventing such a detail, ask one clarifying question instead of inventing it.\n\n` +
               spaceStep +
               `${stepOffset + 1}. Use start_agent_build with prompt=\`${prompt}\`. ${spaceNote} ` +
               `This returns a sessionId immediately. The agent is saved to the workspace as soon as the AI creates it.\n` +
