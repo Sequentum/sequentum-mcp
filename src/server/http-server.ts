@@ -13,6 +13,7 @@ import rateLimit from "express-rate-limit";
 import { SequentumApiClient } from "../api/api-client.js";
 import { createMcpServer } from "./handlers.js";
 import { buildOAuthMetadata, SUPPORTED_SCOPES } from "../utils/oauth-metadata.js";
+import { buildAllowedOrigins, isAllowedOrigin } from "./cors.js";
 
 const DEBUG = process.env.DEBUG === '1';
 
@@ -59,13 +60,39 @@ export async function startHttpServer(
   // Parse JSON bodies
   app.use(express.json());
 
-  // CORS middleware - required for browser-based clients like MCP Inspector
+  const ALLOWED_ORIGINS = buildAllowedOrigins(process.env, DEBUG);
+
+  // CORS middleware - required for browser-based clients like MCP Inspector.
+  // Reflects allowlisted origins; blocks /mcp requests from non-allowlisted browser origins.
   app.use((req: Request, res: Response, next) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    // We consult the Origin header on every request to decide what CORS headers
+    // to set, so every response varies by Origin.  Setting Vary unconditionally
+    // prevents intermediate caches (CDN, proxy) from serving a response cached
+    // for one origin to a different origin.  res.vary() appends and dedupes, so
+    // it is safe even if another middleware also sets Vary.
+    res.vary("Origin");
+
+    const origin = req.headers.origin;
+
+    if (origin) {
+      if (isAllowedOrigin(origin, ALLOWED_ORIGINS)) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+      } else if ((req.path === "/mcp" || req.path.startsWith("/mcp/")) && req.method !== "OPTIONS") {
+        // Reject MCP requests from non-allowlisted browser origins.
+        // OPTIONS preflights are handled below (browser will block the actual request).
+        res.status(403).json({
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Forbidden: origin not allowed" },
+          id: null,
+        });
+        return;
+      }
+    }
+
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, mcp-session-id");
     res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
-    
+
     // Handle preflight requests
     if (req.method === "OPTIONS") {
       res.status(204).end();
