@@ -102,6 +102,18 @@ describe("isAllowedOrigin (exact matches)", () => {
   it("allows https://mcp.sequentum.com", () => {
     expect(allowed("https://mcp.sequentum.com")).toBe(true);
   });
+
+  it("allows https://chatgpt.com", () => {
+    expect(allowed("https://chatgpt.com")).toBe(true);
+  });
+
+  it("rejects https://chat.openai.com (retired origin — redirects to chatgpt.com)", () => {
+    expect(allowed("https://chat.openai.com")).toBe(false);
+  });
+
+  it("allows https://platform.openai.com", () => {
+    expect(allowed("https://platform.openai.com")).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -123,6 +135,28 @@ describe("isAllowedOrigin (claude subdomain regex)", () => {
 
   it("allows multi-level subdomain under claude.com", () => {
     expect(allowed("https://connectors.us.claude.com")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isAllowedOrigin — chatgpt subdomain regex
+// ---------------------------------------------------------------------------
+
+describe("isAllowedOrigin (chatgpt subdomain regex)", () => {
+  it("allows single-level subdomain under chatgpt.com", () => {
+    expect(allowed("https://connector.chatgpt.com")).toBe(true);
+  });
+
+  it("allows multi-level subdomain under chatgpt.com", () => {
+    expect(allowed("https://api.connector.chatgpt.com")).toBe(true);
+  });
+
+  it("rejects https://chatgpt.com.evil.com (apex is evil.com)", () => {
+    expect(allowed("https://chatgpt.com.evil.com")).toBe(false);
+  });
+
+  it("rejects https://notchatgpt.com (no chatgpt. label)", () => {
+    expect(allowed("https://notchatgpt.com")).toBe(false);
   });
 });
 

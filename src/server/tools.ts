@@ -175,6 +175,8 @@ export const tools: Tool[] = [
       title: "Start Agent",
       readOnlyHint: false,
       destructiveHint: false,
+      // Runs a scraping agent against an arbitrary user-supplied URL — open-world by definition.
+      openWorldHint: true,
     },
   },
   {
@@ -195,6 +197,7 @@ export const tools: Tool[] = [
       title: "Stop Agent",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -218,6 +221,7 @@ export const tools: Tool[] = [
       title: "Kill Agent",
       readOnlyHint: false,
       destructiveHint: true,
+      openWorldHint: false,
     },
   },
 
@@ -251,6 +255,7 @@ export const tools: Tool[] = [
       title: "Delete Run",
       readOnlyHint: false,
       destructiveHint: true,
+      openWorldHint: false,
     },
   },
 
@@ -339,6 +344,7 @@ export const tools: Tool[] = [
       title: "Restore Agent Version",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
 
@@ -438,6 +444,7 @@ export const tools: Tool[] = [
       title: "Create Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -458,6 +465,7 @@ export const tools: Tool[] = [
       title: "Delete Agent Schedule",
       readOnlyHint: false,
       destructiveHint: true,
+      openWorldHint: false,
     },
   },
   {
@@ -551,6 +559,7 @@ export const tools: Tool[] = [
       title: "Update Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -571,6 +580,7 @@ export const tools: Tool[] = [
       title: "Enable Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -591,6 +601,7 @@ export const tools: Tool[] = [
       title: "Disable Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -835,6 +846,8 @@ export const tools: Tool[] = [
       title: "Run Space Agents",
       readOnlyHint: false,
       destructiveHint: false,
+      // Batch-runs agents that each scrape external websites — open-world for the same reason as start_agent.
+      openWorldHint: true,
     },
   },
 
@@ -961,6 +974,8 @@ export const tools: Tool[] = [
       title: "Build Agent from Prompt",
       readOnlyHint: false,
       destructiveHint: false,
+      // Build pipeline fetches the target website to learn its structure — open-world.
+      openWorldHint: true,
     },
   },
   {
@@ -1008,6 +1023,7 @@ export const tools: Tool[] = [
       title: "Stop Agent Build",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
 ];
