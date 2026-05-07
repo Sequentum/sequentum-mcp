@@ -200,6 +200,8 @@ function redactDebugArgs(args: unknown): unknown {
   const safeArgs: Record<string, unknown> = { ...(args as Record<string, unknown>) };
   const sensitiveFields = [
     "inputParameters",
+    "prompt",
+    "comments",
     "apiKey",
     "token",
     "accessToken",
@@ -1126,13 +1128,28 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
 
         case "get_agent_build_status": {
           const params = args as Record<string, unknown>;
-          const sessionId = validateString(params, "sessionId")!;
+          // maxLength:256 guards against oversized session IDs being forwarded to the API (#7)
+          const sessionId = validateString(params, "sessionId", { required: true, maxLength: 256 })!;
           const status = await apiClient.getAgentBuildStatus(sessionId);
+
+          // The backend's `error` field is a raw ex.Message passthrough that can contain
+          // stack traces, internal endpoint paths, upstream LLM URLs, and similar. Replace
+          // it with a fixed user-facing string; log the raw value at DEBUG only (#6).
+          if (DEBUG && status.status === "error" && status.error) {
+            console.error(`[DEBUG] Agent build session ${sessionId} failed: ${status.error}`);
+          }
+          const sanitized = {
+            ...status,
+            error: status.status === "error"
+              ? "Build failed. Please review your prompt and try again."
+              : undefined,
+          };
+
           return {
             content: [
               {
                 type: "text",
-                text: JSON.stringify(status, null, 2),
+                text: JSON.stringify(sanitized, null, 2),
               },
             ],
           };
@@ -1140,13 +1157,15 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
 
         case "stop_agent_build": {
           const params = args as Record<string, unknown>;
-          const sessionId = validateString(params, "sessionId")!;
+          // maxLength:256 guards against oversized session IDs (#7)
+          const sessionId = validateString(params, "sessionId", { required: true, maxLength: 256 })!;
           await apiClient.stopAgentBuild(sessionId);
+          // Return structured JSON consistent with every other tool handler (#8)
           return {
             content: [
               {
                 type: "text",
-                text: `Successfully stopped agent build session ${sessionId}. The session is closed and AI resources have been released. Any agent draft created during the build remains in your workspace — use the standard agents API to delete it if no longer needed.`,
+                text: JSON.stringify({ stopped: true, sessionId }, null, 2),
               },
             ],
           };

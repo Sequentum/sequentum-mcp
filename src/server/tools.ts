@@ -61,6 +61,7 @@ export const tools: Tool[] = [
       required: [],
     },
     annotations: {
+      title: "List Agents",
       readOnlyHint: true,
     },
   },
@@ -80,6 +81,7 @@ export const tools: Tool[] = [
       required: ["agentId"],
     },
     annotations: {
+      title: "Get Agent",
       readOnlyHint: true,
     },
   },
@@ -100,6 +102,7 @@ export const tools: Tool[] = [
       required: ["query"],
     },
     annotations: {
+      title: "Search Agents",
       readOnlyHint: true,
     },
   },
@@ -122,6 +125,7 @@ export const tools: Tool[] = [
       required: ["agentId"],
     },
     annotations: {
+      title: "Get Agent Runs",
       readOnlyHint: true,
     },
   },
@@ -142,6 +146,7 @@ export const tools: Tool[] = [
       required: ["agentId", "runId"],
     },
     annotations: {
+      title: "Get Run Status",
       readOnlyHint: true,
     },
   },
@@ -167,6 +172,7 @@ export const tools: Tool[] = [
       required: ["agentId"],
     },
     annotations: {
+      title: "Start Agent",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -186,6 +192,7 @@ export const tools: Tool[] = [
       required: ["agentId", "runId"],
     },
     annotations: {
+      title: "Stop Agent",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -208,6 +215,7 @@ export const tools: Tool[] = [
       required: ["agentId", "runId"],
     },
     annotations: {
+      title: "Kill Agent",
       readOnlyHint: false,
       destructiveHint: true,
     },
@@ -240,6 +248,7 @@ export const tools: Tool[] = [
       required: ["agentId", "runId"],
     },
     annotations: {
+      title: "Delete Run",
       readOnlyHint: false,
       destructiveHint: true,
     },
@@ -263,6 +272,7 @@ export const tools: Tool[] = [
       required: ["agentId", "runId"],
     },
     annotations: {
+      title: "Get Run Files",
       readOnlyHint: true,
     },
   },
@@ -284,6 +294,7 @@ export const tools: Tool[] = [
       required: ["agentId", "runId", "fileId"],
     },
     annotations: {
+      title: "Get File Download URL",
       readOnlyHint: true,
     },
   },
@@ -304,6 +315,7 @@ export const tools: Tool[] = [
       required: ["agentId"],
     },
     annotations: {
+      title: "Get Agent Versions",
       readOnlyHint: true,
     },
   },
@@ -324,6 +336,7 @@ export const tools: Tool[] = [
       required: ["agentId", "versionNumber", "comments"],
     },
     annotations: {
+      title: "Restore Agent Version",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -345,6 +358,7 @@ export const tools: Tool[] = [
       required: ["agentId"],
     },
     annotations: {
+      title: "List Agent Schedules",
       readOnlyHint: true,
     },
   },
@@ -421,6 +435,7 @@ export const tools: Tool[] = [
       required: ["agentId", "name"],
     },
     annotations: {
+      title: "Create Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -440,6 +455,7 @@ export const tools: Tool[] = [
       required: ["agentId", "scheduleId"],
     },
     annotations: {
+      title: "Delete Agent Schedule",
       readOnlyHint: false,
       destructiveHint: true,
     },
@@ -459,6 +475,7 @@ export const tools: Tool[] = [
       required: ["agentId", "scheduleId"],
     },
     annotations: {
+      title: "Get Agent Schedule",
       readOnlyHint: true,
     },
   },
@@ -531,6 +548,7 @@ export const tools: Tool[] = [
       required: ["agentId", "scheduleId", "name"],
     },
     annotations: {
+      title: "Update Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -550,6 +568,7 @@ export const tools: Tool[] = [
       required: ["agentId", "scheduleId"],
     },
     annotations: {
+      title: "Enable Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -569,6 +588,7 @@ export const tools: Tool[] = [
       required: ["agentId", "scheduleId"],
     },
     annotations: {
+      title: "Disable Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -589,6 +609,7 @@ export const tools: Tool[] = [
       required: [],
     },
     annotations: {
+      title: "Get Scheduled Runs",
       readOnlyHint: true,
     },
   },
@@ -602,6 +623,7 @@ export const tools: Tool[] = [
       "Returns: availableCredits, organizationId, retrievedAt timestamp.",
     inputSchema: { type: "object" as const, properties: {}, required: [] },
     annotations: {
+      title: "Get Credits Balance",
       readOnlyHint: true,
     },
   },
@@ -621,6 +643,7 @@ export const tools: Tool[] = [
       required: [],
     },
     annotations: {
+      title: "Get Spending Summary",
       readOnlyHint: true,
     },
   },
@@ -639,6 +662,7 @@ export const tools: Tool[] = [
       required: [],
     },
     annotations: {
+      title: "Get Credit History",
       readOnlyHint: true,
     },
   },
@@ -666,6 +690,7 @@ export const tools: Tool[] = [
       required: [],
     },
     annotations: {
+      title: "Get Agents Usage",
       readOnlyHint: true,
     },
   },
@@ -689,6 +714,7 @@ export const tools: Tool[] = [
       required: ["agentId"],
     },
     annotations: {
+      title: "Get Agent Cost Breakdown",
       readOnlyHint: true,
     },
   },
@@ -715,6 +741,7 @@ export const tools: Tool[] = [
       required: ["agentId"],
     },
     annotations: {
+      title: "Get Agent Runs Cost",
       readOnlyHint: true,
     },
   },
@@ -729,6 +756,7 @@ export const tools: Tool[] = [
       "USE THIS to find spaceId before using get_space_agents or filtering list_agents by space.",
     inputSchema: { type: "object" as const, properties: {}, required: [] },
     annotations: {
+      title: "List Spaces",
       readOnlyHint: true,
     },
   },
@@ -746,6 +774,7 @@ export const tools: Tool[] = [
       required: ["spaceId"],
     },
     annotations: {
+      title: "Get Space",
       readOnlyHint: true,
     },
   },
@@ -764,6 +793,7 @@ export const tools: Tool[] = [
       required: ["spaceId"],
     },
     annotations: {
+      title: "Get Space Agents",
       readOnlyHint: true,
     },
   },
@@ -782,6 +812,7 @@ export const tools: Tool[] = [
       required: ["name"],
     },
     annotations: {
+      title: "Search Space by Name",
       readOnlyHint: true,
     },
   },
@@ -801,6 +832,7 @@ export const tools: Tool[] = [
       required: ["spaceId"],
     },
     annotations: {
+      title: "Run Space Agents",
       readOnlyHint: false,
       destructiveHint: false,
     },
@@ -826,6 +858,7 @@ export const tools: Tool[] = [
       required: [],
     },
     annotations: {
+      title: "Get Runs Summary",
       readOnlyHint: true,
     },
   },
@@ -846,6 +879,7 @@ export const tools: Tool[] = [
       required: [],
     },
     annotations: {
+      title: "Get Records Summary",
       readOnlyHint: true,
     },
   },
@@ -865,6 +899,7 @@ export const tools: Tool[] = [
       required: ["agentId", "runId"],
     },
     annotations: {
+      title: "Get Run Diagnostics",
       readOnlyHint: true,
     },
   },
@@ -884,6 +919,7 @@ export const tools: Tool[] = [
       required: ["agentId"],
     },
     annotations: {
+      title: "Get Latest Failure",
       readOnlyHint: true,
     },
   },
@@ -922,27 +958,20 @@ export const tools: Tool[] = [
       required: ["prompt"],
     },
     annotations: {
+      title: "Build Agent from Prompt",
       readOnlyHint: false,
+      destructiveHint: false,
     },
   },
   {
     name: "get_agent_build_status",
     description:
-      "Poll the status of an agent building session. Call this repeatedly until status reaches a terminal value, then stop polling. " +
-      "Status values: " +
-      "'processing' (AI still building — keep polling); " +
-      "'ready' (AI finished its turn — agentId and agentName are now in the response, but the agent may not be fully saved yet); " +
-      "'completed' (agent was saved successfully — agentId and agentName are populated); " +
-      "'error' (build failed — check the error field); " +
-      "'cancelled' (stop_agent_build was called while processing). " +
-      "STOP POLLING on any of: completed, ready, error, cancelled. " +
-      "Subsequent calls after a terminal status may return the same response or 404 — both mean the build is done. " +
-      "The session tears down automatically after reaching a terminal status. " +
-      "AGENT ID NOTE: The agentId returned in this response is the agent's permanent workspace ID — " +
-      "the same ID used by get_agent, run_agent, get_input_parameters, get_agent_runs, schedule tools, and every other endpoint that takes an agentId. " +
-      "POLLING CADENCE: build duration is highly variable (seconds to several minutes). " +
-      "If the user has expressed a polling preference (e.g., 'poll quickly', 'be patient', 'every N seconds'), honor it. " +
-      "Otherwise default to a moderate cadence with backoff (e.g., start ~5s, back off to ~15–30s) and avoid waiting longer than ~30s between polls so the user gets timely feedback when the build completes.",
+      "Poll the status of an agent building session. " +
+      "Returns { status, agentId?, agentName?, error? }. " +
+      "status: 'processing' (keep polling) | 'ready' | 'completed' | 'error' | 'cancelled'. " +
+      "STOP POLLING on: completed, ready, error, or cancelled — the session tears down automatically. " +
+      "The returned agentId is the permanent workspace ID usable with get_agent, run_agent, schedule tools, and every other endpoint that takes an agentId. " +
+      "POLLING CADENCE: honor any user-expressed preference (e.g., 'poll quickly', 'every N seconds'); otherwise use moderate backoff (~5s start, max ~30s between polls).",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -954,6 +983,7 @@ export const tools: Tool[] = [
       required: ["sessionId"],
     },
     annotations: {
+      title: "Get Agent Build Status",
       readOnlyHint: true,
     },
   },
@@ -975,7 +1005,9 @@ export const tools: Tool[] = [
       required: ["sessionId"],
     },
     annotations: {
+      title: "Stop Agent Build",
       readOnlyHint: false,
+      destructiveHint: false,
     },
   },
 ];

@@ -1035,7 +1035,7 @@ export class SequentumApiClient {
   /**
    * Start a new agent building session.
    * Returns immediately with a sessionId — building runs asynchronously.
-   * Poll getAgentBuildStatus until status is "ready" or "error".
+   * Poll getAgentBuildStatus until status reaches a terminal value: "completed", "ready", "error", or "cancelled".
    * @param request - The prompt and optional spaceId
    */
   async startAgentBuild(
@@ -1047,7 +1047,7 @@ export class SequentumApiClient {
         method: "POST",
         body: JSON.stringify({
           prompt: request.prompt,
-          spaceId: request.spaceId,
+          ...(request.spaceId !== undefined && { spaceId: request.spaceId }),
         }),
       }
     );
@@ -1055,7 +1055,7 @@ export class SequentumApiClient {
 
   /**
    * Get the current status of an agent building session.
-   * Lightweight polling endpoint — call this until status is "ready", "error", or "cancelled".
+   * Lightweight polling endpoint — call this until status reaches a terminal value: "completed", "ready", "error", or "cancelled".
    * @param sessionId - The session ID returned from startAgentBuild
    */
   async getAgentBuildStatus(

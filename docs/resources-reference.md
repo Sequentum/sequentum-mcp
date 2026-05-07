@@ -297,4 +297,4 @@ List of agents belonging to a specific space. Shows id, name, status, configType
 
 ## See Also: Agent Builder
 
-The Agent Builder does not expose any resources — agent build sessions are transient and accessed via tools only. Once you save a finished agent via [`finish_agent_build`](./tool-reference.md#finish_agent_build), the saved agent becomes accessible through the existing `sequentum://agents/{agentId}` resource template and all other agent resources described in this document.
+The Agent Builder does not expose any resources — agent build sessions are transient and accessed via tools only. Once a build session reaches a terminal status (`completed` or `ready` in [`get_agent_build_status`](./tool-reference.md#get_agent_build_status)), the resulting agent becomes accessible through the existing `sequentum://agents/{agentId}` resource template and all other agent resources described in this document.

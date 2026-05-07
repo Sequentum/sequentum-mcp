@@ -91,12 +91,12 @@ export function validateString(
 
   if (opts.minLength !== undefined && result.length < opts.minLength) {
     throw new Error(
-      `Invalid parameter '${field}': must be at least ${opts.minLength} character(s), got ${result.length}`
+      `Invalid parameter '${field}': must be at least ${opts.minLength} ${opts.minLength === 1 ? "character" : "characters"}, got ${result.length}`
     );
   }
   if (opts.maxLength !== undefined && result.length > opts.maxLength) {
     throw new Error(
-      `Invalid parameter '${field}': must be at most ${opts.maxLength} character(s), got ${result.length}`
+      `Invalid parameter '${field}': must be at most ${opts.maxLength} ${opts.maxLength === 1 ? "character" : "characters"}, got ${result.length}`
     );
   }
 

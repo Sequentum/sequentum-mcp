@@ -2474,7 +2474,6 @@ describe("SequentumApiClient - Agent Builder", () => {
           method: "POST",
           body: JSON.stringify({
             prompt: "Scrape prices from amazon.com",
-            spaceId: undefined,
           }),
         })
       );

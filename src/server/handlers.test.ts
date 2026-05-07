@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createMcpServer,
   formatToolError,
   isPaginatedResponse,
   parseScheduleParams,
@@ -10,6 +11,10 @@ import {
   AuthenticationError,
   RateLimitError,
 } from "../api/types.js";
+import { tools } from "./tools.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { SequentumApiClient } from "../api/api-client.js";
 
 describe("isPaginatedResponse", () => {
   it("returns true for paginated agent responses", () => {
@@ -205,5 +210,119 @@ describe("validateScheduleStartTime", () => {
     expect(() => validateScheduleStartTime(undefined, undefined)).not.toThrow();
     expect(() => validateScheduleStartTime(1, undefined)).not.toThrow();
     expect(() => validateScheduleStartTime(3, "2026-03-01T09:59:59Z")).not.toThrow();
+  });
+});
+
+// ==========================================
+// Tool Annotation Regression Tests
+// ==========================================
+
+describe("tool annotations", () => {
+  it("every tool has a non-empty title", () => {
+    for (const tool of tools) {
+      expect(
+        tool.annotations?.title,
+        `Tool "${tool.name}" is missing annotations.title`
+      ).toBeTruthy();
+    }
+  });
+
+  it("every tool has readOnlyHint defined", () => {
+    for (const tool of tools) {
+      expect(
+        tool.annotations?.readOnlyHint,
+        `Tool "${tool.name}" is missing annotations.readOnlyHint`
+      ).toBeDefined();
+    }
+  });
+
+  it("every write tool has destructiveHint explicitly defined", () => {
+    const writeTools = tools.filter((t) => t.annotations?.readOnlyHint === false);
+    for (const tool of writeTools) {
+      expect(
+        tool.annotations?.destructiveHint,
+        `Write tool "${tool.name}" is missing annotations.destructiveHint`
+      ).toBeDefined();
+    }
+  });
+});
+
+// ==========================================
+// Agent Builder Handler Dispatch Tests
+// ==========================================
+
+function makeMinimalMockClient(overrides: Partial<SequentumApiClient> = {}): SequentumApiClient {
+  return {
+    startAgentBuild: vi.fn(),
+    getAgentBuildStatus: vi.fn(),
+    stopAgentBuild: vi.fn(),
+    ...overrides,
+  } as unknown as SequentumApiClient;
+}
+
+describe("agent builder handler dispatch", () => {
+  let client: Client;
+  let mockApiClient: SequentumApiClient;
+
+  beforeEach(async () => {
+    mockApiClient = makeMinimalMockClient();
+    const server = createMcpServer(mockApiClient, "test");
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    client = new Client({ name: "test-client", version: "1.0" });
+    await client.connect(clientTransport);
+  });
+
+  afterEach(async () => {
+    await client.close();
+  });
+
+  describe("start_agent_build", () => {
+    it("rejects a prompt shorter than 10 characters", async () => {
+      const result = await client.callTool({
+        name: "start_agent_build",
+        arguments: { prompt: "short" },
+      });
+      expect(result.isError).toBe(true);
+      expect((result.content[0] as { text: string }).text).toMatch(/at least 10/i);
+    });
+  });
+
+  describe("get_agent_build_status", () => {
+    it("replaces a raw backend error with a generic user-facing message", async () => {
+      vi.mocked(mockApiClient.getAgentBuildStatus).mockResolvedValueOnce({
+        status: "error",
+        error: "NullReferenceException at BuildOrchestrator.cs:42",
+        agentId: null,
+        agentName: null,
+      } as unknown as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>);
+
+      const result = await client.callTool({
+        name: "get_agent_build_status",
+        arguments: { sessionId: "sess-test-123" },
+      });
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse((result.content[0] as { text: string }).text);
+      expect(parsed.error).toBe("Build failed. Please review your prompt and try again.");
+      expect(parsed.error).not.toContain("NullReferenceException");
+    });
+  });
+
+  describe("stop_agent_build", () => {
+    it("returns parseable JSON with stopped:true and the correct sessionId", async () => {
+      vi.mocked(mockApiClient.stopAgentBuild).mockResolvedValueOnce(
+        undefined as unknown as Awaited<ReturnType<SequentumApiClient["stopAgentBuild"]>>
+      );
+
+      const result = await client.callTool({
+        name: "stop_agent_build",
+        arguments: { sessionId: "sess-stop-456" },
+      });
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse((result.content[0] as { text: string }).text);
+      expect(parsed).toEqual({ stopped: true, sessionId: "sess-stop-456" });
+    });
   });
 });
