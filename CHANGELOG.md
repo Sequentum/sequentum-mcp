@@ -28,7 +28,7 @@
 
 ### Tests
 
-- Annotation regression tests added to `src/server/handlers.test.ts`: every tool must have a non-empty `title`, every tool must have `readOnlyHint` defined, and every write tool must have `destructiveHint` explicitly defined.
+- Annotation regression tests added to `src/server/handlers.test.ts`: every tool must have a non-empty `title`, every tool must have `readOnlyHint` defined, and every write tool must have both `destructiveHint` and `openWorldHint` explicitly defined.
 - Handler-dispatch tests added for the three agent-builder tools via `InMemoryTransport` + `Client`: `start_agent_build` rejects prompts below `minLength: 10`; `get_agent_build_status` sanitizes the `error` field; `stop_agent_build` returns the expected JSON shape.
 
 ---
