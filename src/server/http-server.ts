@@ -13,6 +13,7 @@ import rateLimit from "express-rate-limit";
 import { SequentumApiClient } from "../api/api-client.js";
 import { createMcpServer } from "./handlers.js";
 import { buildOAuthMetadata, SUPPORTED_SCOPES } from "../utils/oauth-metadata.js";
+import { buildAllowedOrigins, isAllowedOrigin } from "./cors.js";
 
 const DEBUG = process.env.DEBUG === '1';
 
@@ -59,43 +60,24 @@ export async function startHttpServer(
   // Parse JSON bodies
   app.use(express.json());
 
-  // Build the Origin allowlist from ALLOWED_ORIGINS env var (comma-separated) or hardcoded defaults.
-  // Requests without an Origin header (native MCP clients: Cursor, Claude Desktop, Claude Code)
-  // are always allowed through — Origin is only sent by browsers.
-  function buildAllowedOrigins(): (string | RegExp)[] {
-    const fromEnv = process.env.ALLOWED_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean);
-    if (fromEnv?.length) return fromEnv;
-    const base: (string | RegExp)[] = [
-      "https://claude.ai",
-      "https://claude.com",
-      /^https:\/\/[a-z0-9-]+\.claude\.(ai|com)$/,
-      "https://dashboard.sequentum.com",
-      "https://mcp.sequentum.com",
-    ];
-    if (DEBUG) {
-      base.push(/^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/);
-    }
-    return base;
-  }
-
-  const ALLOWED_ORIGINS = buildAllowedOrigins();
-
-  function isAllowedOrigin(origin: string): boolean {
-    return ALLOWED_ORIGINS.some((entry) =>
-      typeof entry === "string" ? entry === origin : entry.test(origin)
-    );
-  }
+  const ALLOWED_ORIGINS = buildAllowedOrigins(process.env, DEBUG);
 
   // CORS middleware - required for browser-based clients like MCP Inspector.
   // Reflects allowlisted origins; blocks /mcp requests from non-allowlisted browser origins.
   app.use((req: Request, res: Response, next) => {
+    // We consult the Origin header on every request to decide what CORS headers
+    // to set, so every response varies by Origin.  Setting Vary unconditionally
+    // prevents intermediate caches (CDN, proxy) from serving a response cached
+    // for one origin to a different origin.  res.vary() appends and dedupes, so
+    // it is safe even if another middleware also sets Vary.
+    res.vary("Origin");
+
     const origin = req.headers.origin;
 
     if (origin) {
-      if (isAllowedOrigin(origin)) {
+      if (isAllowedOrigin(origin, ALLOWED_ORIGINS)) {
         res.setHeader("Access-Control-Allow-Origin", origin);
-        res.setHeader("Vary", "Origin");
-      } else if (req.path.startsWith("/mcp") && req.method !== "OPTIONS") {
+      } else if ((req.path === "/mcp" || req.path.startsWith("/mcp/")) && req.method !== "OPTIONS") {
         // Reject MCP requests from non-allowlisted browser origins.
         // OPTIONS preflights are handled below (browser will block the actual request).
         res.status(403).json({
