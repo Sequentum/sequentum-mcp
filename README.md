@@ -328,7 +328,7 @@ For more troubleshooting help, see the [Troubleshooting Guide](./docs/troublesho
 
 The Sequentum MCP Server accesses your Sequentum account data — including agent metadata, run history, scheduled tasks, billing information, and output files — solely to fulfill the requests you make through your AI assistant. This data is transmitted directly between your MCP client and the Sequentum API; it is not stored, logged, or shared with third parties by the MCP server itself.
 
-For the full Sequentum privacy policy, see [https://sequentum.com/privacy](https://sequentum.com/privacy).
+For the full Sequentum privacy policy, see [https://www.sequentum.com/privacy-policy](https://www.sequentum.com/privacy-policy).
 
 ## Links
 
