@@ -85,6 +85,17 @@ Then, each team member connects individually:
 
 Once configured, enable the Sequentum connector in individual conversations via the **"+"** button on the lower left of the chat interface, then select **"Connectors"**.
 
+### ChatGPT
+
+> **Note:** While the Sequentum app is pending directory approval, you can connect via Developer Mode. Apps & Connectors → Developer Mode is currently available on **Plus, Pro, Business, Enterprise, and Education** plans (Education is web-only). On Business / Enterprise / Education accounts, only **workspace owners and admins** can access Advanced settings — regular members will not see the option. See [OpenAI's Developer Mode documentation](https://platform.openai.com/docs/developer-mode) for current eligibility.
+
+1. In ChatGPT, go to **Settings** > **Apps & Connectors** > **Advanced settings** and enable **Developer mode**.
+2. Navigate to **Settings** > **Apps & Connectors** and click **Create app** (it appears once Developer mode is enabled).
+3. Enter the connector name `Sequentum` and URL: `https://mcp.sequentum.com/mcp`
+4. Click **Create**. You'll be prompted to sign in with your Sequentum account via OAuth.
+
+Once connected, enable Sequentum in a conversation via the **+** button near the message composer, then select your connector from the list.
+
 ### Claude Code
 
 Run the following command in your terminal:
@@ -329,9 +340,10 @@ For more troubleshooting help, see the [Troubleshooting Guide](./docs/troublesho
 When the MCP server is accessed from a browser (e.g. the Claude web app or the ChatGPT connector), it checks the `Origin` header against an allowlist.  By default the following origins are permitted:
 
 - `https://claude.ai`, `https://claude.com`, and all subdomains (e.g. `team.claude.ai`)
+- `https://chatgpt.com`, `https://platform.openai.com`, and all subdomains under `chatgpt.com` (e.g. `connector.chatgpt.com`)
 - `https://dashboard.sequentum.com`
 - `https://mcp.sequentum.com`
-- `http://localhost:<port>` and `http://127.0.0.1:<port>` when `DEBUG=1`
+- `http://localhost:<port>`, `http://127.0.0.1:<port>`, and `http://[::1]:<port>` when `DEBUG=1`
 
 To add your own origins (e.g. an internal dashboard), set the `ALLOWED_ORIGINS` environment variable to a comma-separated list of exact origins:
 
@@ -339,7 +351,7 @@ To add your own origins (e.g. an internal dashboard), set the `ALLOWED_ORIGINS` 
 ALLOWED_ORIGINS="https://my-dashboard.example.com,https://other.example.com"
 ```
 
-These origins are **appended** to the defaults — Claude and Sequentum access is preserved.  Wildcards and regular expressions are not supported via the env var; if you need a subdomain wildcard, add a `RegExp` entry directly in `src/server/cors.ts`.
+These origins are **appended** to the defaults — Claude, ChatGPT, and Sequentum access is preserved.  Wildcards and regular expressions are not supported via the env var; if you need a subdomain wildcard, add a `RegExp` entry directly in `src/server/cors.ts`.
 
 > **Note:** `Origin` matching is case-sensitive and does not include a path or query string.  Native MCP clients (Cursor, Claude Desktop, Claude Code) send no `Origin` header and are not affected by this allowlist.
 
