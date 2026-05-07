@@ -38,12 +38,18 @@ export function buildAllowedOrigins(
     // Anthropic-owned.
     /^https:\/\/(?:[a-z0-9-]+\.)+claude\.(ai|com)$/,
     "https://chatgpt.com",
-    "https://chat.openai.com",
-    "https://platform.openai.com",
     // Allow any depth of subdomains under OpenAI-owned chatgpt.com (e.g.
     // connector.chatgpt.com).  Same DNS-label rule and trust rationale as the
     // Claude pattern above.
     /^https:\/\/(?:[a-z0-9-]+\.)+chatgpt\.com$/,
+    // platform.openai.com is the developer console for ChatGPT App registration
+    // and is the only openai.com subdomain we need.  We deliberately do NOT allow
+    // *.openai.com here: openai.com is OpenAI's corporate domain and hosts many
+    // non-ChatGPT properties (Sora, status, marketing, careers, etc.) whose
+    // browser contexts have no reason to reach this MCP server.  If a new
+    // ChatGPT-specific subdomain is needed in future, add it explicitly so the
+    // trust scope stays auditable.
+    "https://platform.openai.com",
     "https://dashboard.sequentum.com",
     "https://mcp.sequentum.com",
   ];

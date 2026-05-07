@@ -175,7 +175,8 @@ export const tools: Tool[] = [
       title: "Start Agent",
       readOnlyHint: false,
       destructiveHint: false,
-      openWorldHint: false,
+      // Runs a scraping agent against an arbitrary user-supplied URL — open-world by definition.
+      openWorldHint: true,
     },
   },
   {
@@ -845,7 +846,8 @@ export const tools: Tool[] = [
       title: "Run Space Agents",
       readOnlyHint: false,
       destructiveHint: false,
-      openWorldHint: false,
+      // Batch-runs agents that each scrape external websites — open-world for the same reason as start_agent.
+      openWorldHint: true,
     },
   },
 
@@ -972,7 +974,8 @@ export const tools: Tool[] = [
       title: "Build Agent from Prompt",
       readOnlyHint: false,
       destructiveHint: false,
-      openWorldHint: false,
+      // Build pipeline fetches the target website to learn its structure — open-world.
+      openWorldHint: true,
     },
   },
   {

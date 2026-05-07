@@ -236,24 +236,100 @@ describe("tool annotations", () => {
     }
   });
 
-  it("every write tool has destructiveHint explicitly defined", () => {
+  // Per-tool expectation tables.  Each entry documents intent and acts as a
+  // regression guard — changing a value here requires a deliberate edit.
+  //
+  // openWorldHint: true  → tool can write to arbitrary URLs/files/resources
+  //                        (open-world: scrapes the external web)
+  // openWorldHint: false → tool only mutates Sequentum's own account state
+  //                        (closed-world: bounded to our API)
+  //
+  // See MCP Apps SDK guidance (search "openWorldHint"):
+  // https://developers.openai.com/apps-sdk/build/mcp-server
+  const expectedOpenWorldHint: Record<string, boolean> = {
+    // Open-world: run/build agents that scrape arbitrary user-supplied URLs.
+    start_agent:       true,
+    start_agent_build: true,
+    run_space_agents:  true,
+    // Closed-world: mutate Sequentum's internal state only.
+    stop_agent:             false,
+    kill_agent:             false,
+    delete_run:             false,
+    restore_agent_version:  false,
+    create_agent_schedule:  false,
+    update_agent_schedule:  false,
+    enable_agent_schedule:  false,
+    disable_agent_schedule: false,
+    delete_agent_schedule:  false,
+    stop_agent_build:       false,
+  };
+
+  // destructiveHint: true  → can delete, overwrite, or have irreversible side effects
+  // destructiveHint: false → reversible / additive action
+  const expectedDestructiveHint: Record<string, boolean> = {
+    kill_agent:             true,
+    delete_run:             true,
+    delete_agent_schedule:  true,
+    start_agent:            false,
+    stop_agent:             false,
+    restore_agent_version:  false,
+    create_agent_schedule:  false,
+    update_agent_schedule:  false,
+    enable_agent_schedule:  false,
+    disable_agent_schedule: false,
+    run_space_agents:       false,
+    start_agent_build:      false,
+    stop_agent_build:       false,
+  };
+
+  function assertPerToolAnnotation(
+    annotationName: string,
+    expected: Record<string, boolean>,
+    getValue: (tool: (typeof tools)[number]) => boolean | undefined,
+  ) {
     const writeTools = tools.filter((t) => t.annotations?.readOnlyHint === false);
+
+    // Every write tool must appear in the table (catches new tools that were
+    // added without a classification decision).
     for (const tool of writeTools) {
       expect(
-        tool.annotations?.destructiveHint,
-        `Write tool "${tool.name}" is missing annotations.destructiveHint`
-      ).toBeDefined();
+        Object.prototype.hasOwnProperty.call(expected, tool.name),
+        `Write tool "${tool.name}" is not in expected${annotationName} — add it ` +
+          `with the correct value and a comment explaining the choice.`,
+      ).toBe(true);
+
+      expect(
+        getValue(tool),
+        `Write tool "${tool.name}": ${annotationName} should be ` +
+          `${expected[tool.name]} but got ${getValue(tool)}.`,
+      ).toBe(expected[tool.name]);
     }
+
+    // The table must not reference tools that no longer exist (catches renames
+    // or deletions that left stale entries).
+    for (const name of Object.keys(expected)) {
+      expect(
+        writeTools.some((t) => t.name === name),
+        `expected${annotationName} references "${name}" but no write tool ` +
+          `by that name exists — remove the stale entry.`,
+      ).toBe(true);
+    }
+  }
+
+  it("every write tool has the correct openWorldHint value", () => {
+    assertPerToolAnnotation(
+      "OpenWorldHint",
+      expectedOpenWorldHint,
+      (t) => t.annotations?.openWorldHint,
+    );
   });
 
-  it("every write tool has openWorldHint explicitly defined", () => {
-    const writeTools = tools.filter((t) => t.annotations?.readOnlyHint === false);
-    for (const tool of writeTools) {
-      expect(
-        tool.annotations?.openWorldHint,
-        `Write tool "${tool.name}" is missing annotations.openWorldHint`
-      ).toBeDefined();
-    }
+  it("every write tool has the correct destructiveHint value", () => {
+    assertPerToolAnnotation(
+      "DestructiveHint",
+      expectedDestructiveHint,
+      (t) => t.annotations?.destructiveHint,
+    );
   });
 });
 

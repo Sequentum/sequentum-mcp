@@ -107,8 +107,8 @@ describe("isAllowedOrigin (exact matches)", () => {
     expect(allowed("https://chatgpt.com")).toBe(true);
   });
 
-  it("allows https://chat.openai.com", () => {
-    expect(allowed("https://chat.openai.com")).toBe(true);
+  it("rejects https://chat.openai.com (retired origin — redirects to chatgpt.com)", () => {
+    expect(allowed("https://chat.openai.com")).toBe(false);
   });
 
   it("allows https://platform.openai.com", () => {

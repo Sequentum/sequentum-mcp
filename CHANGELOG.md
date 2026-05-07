@@ -5,8 +5,8 @@
 ### Added
 
 - **ChatGPT Apps support:**
-  - CORS allowlist extended in `src/server/cors.ts` to permit `https://chatgpt.com`, `https://chat.openai.com`, `https://platform.openai.com`, and any subdomain depth under `chatgpt.com` (e.g. `connector.chatgpt.com`). Same multi-level subdomain pattern and trust rationale as the Claude entries.
-  - `openWorldHint: false` added to all 13 write tools (`start_agent`, `stop_agent`, `kill_agent`, `delete_run`, `restore_agent_version`, `create_agent_schedule`, `update_agent_schedule`, `enable_agent_schedule`, `disable_agent_schedule`, `delete_agent_schedule`, `run_space_agents`, `start_agent_build`, `stop_agent_build`). Required by OpenAI's ChatGPT App submission review.
+  - CORS allowlist extended in `src/server/cors.ts` to permit `https://chatgpt.com`, `https://platform.openai.com`, and any subdomain depth under `chatgpt.com` (e.g. `connector.chatgpt.com`). `https://chat.openai.com` is intentionally omitted — OpenAI retired that origin in mid-2024 and redirects it to `chatgpt.com`; no live ChatGPT surface issues that Origin header. Same multi-level subdomain pattern and trust rationale as the Claude entries.
+  - `openWorldHint` added to all 13 write tools per the MCP spec. Tools that scrape arbitrary external websites on behalf of the caller (`start_agent`, `run_space_agents`, `start_agent_build`) are `true`. Tools that only mutate Sequentum's internal state (`stop_agent`, `kill_agent`, `delete_run`, `restore_agent_version`, schedule CRUD, `stop_agent_build`) are `false`. Required by OpenAI's ChatGPT App submission review.
   - ChatGPT setup instructions added to `README.md` under "Set Up Your Client".
 - **Claude Connectors Directory support:**
   - Origin-header allowlist (`src/server/cors.ts`) replaces the previous wildcard `Access-Control-Allow-Origin: *`. Permits Claude domains (`claude.ai`, `claude.com`, and all subdomain depths), Sequentum domains, and (when `DEBUG=1`) localhost / `127.0.0.1` / `[::1]`. Additional exact-match origins can be appended at startup via `ALLOWED_ORIGINS` (comma-separated; defaults are always preserved — see README). Requests from non-allowlisted browser origins to `/mcp` receive 403; requests without an `Origin` header (native MCP clients such as Cursor, Claude Desktop, Claude Code) pass through unaffected. `Vary: Origin` is set unconditionally so intermediate caches cannot conflate responses across origins.
@@ -43,7 +43,7 @@
 
 ### Tests
 
-- Annotation regression tests added to `src/server/handlers.test.ts`: every tool must have a non-empty `title`, every tool must have `readOnlyHint` defined, and every write tool must have both `destructiveHint` and `openWorldHint` explicitly defined.
+- Annotation regression tests strengthened in `src/server/handlers.test.ts`: every tool must have a non-empty `title` and `readOnlyHint` defined. Write-tool annotations are now validated against per-tool expectation tables — `openWorldHint` and `destructiveHint` must match an explicit expected value, not just be defined. Adding a new write tool without classifying both hints fails the build; changing an existing value without updating the table also fails.
 - Handler-dispatch tests added for the three agent-builder tools via `InMemoryTransport` + `Client`: `start_agent_build` rejects prompts below `minLength: 10`; `get_agent_build_status` sanitizes the `error` field; `stop_agent_build` returns the expected JSON shape.
 - CORS regression tests added in `src/server/cors.test.ts` covering exact-origin matches, claude/chatgpt subdomain depth (single and multi-level), `ALLOWED_ORIGINS` env-var append semantics, debug-mode localhost / IPv6 loopback, and adversarial rejections (e.g. `https://claude.ai.evil.com`, `https://notclaude.ai`, wrong scheme, uppercase).
 
