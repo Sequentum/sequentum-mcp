@@ -69,6 +69,10 @@ export async function startHttpServer(
       "https://claude.ai",
       "https://claude.com",
       /^https:\/\/[a-z0-9-]+\.claude\.(ai|com)$/,
+      "https://chatgpt.com",
+      "https://chat.openai.com",
+      /^https:\/\/[a-z0-9-]+\.chatgpt\.com$/,
+      "https://platform.openai.com",
       "https://dashboard.sequentum.com",
       "https://mcp.sequentum.com",
     ];

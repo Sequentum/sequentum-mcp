@@ -85,6 +85,17 @@ Then, each team member connects individually:
 
 Once configured, enable the Sequentum connector in individual conversations via the **"+"** button on the lower left of the chat interface, then select **"Connectors"**.
 
+### ChatGPT
+
+> **Note:** While the Sequentum app is pending directory approval, you can connect via Developer Mode on any ChatGPT plan.
+
+1. In ChatGPT, go to **Settings** > **Apps & Connectors** > **Advanced settings** and enable **Developer mode**.
+2. Navigate to **Settings** > **Apps & Connectors** and click **Create**.
+3. Enter the connector name `Sequentum` and URL: `https://mcp.sequentum.com/mcp`
+4. Click **Create**. You'll be prompted to sign in with your Sequentum account via OAuth.
+
+Once connected, enable Sequentum in a conversation via the **+** button near the message composer, then select your connector from the list.
+
 ### Claude Code
 
 Run the following command in your terminal:

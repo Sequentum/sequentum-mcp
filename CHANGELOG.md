@@ -4,6 +4,13 @@
 
 ### Added
 
+- **ChatGPT Apps support:**
+  - CORS allowlist extended to permit `chatgpt.com`, `chat.openai.com`, `*.chatgpt.com`, and `platform.openai.com` origins, enabling ChatGPT's widget runtime and API Playground to connect to the MCP server.
+  - `openWorldHint: false` added to all 13 write tools (`start_agent`, `stop_agent`, `kill_agent`, `delete_run`, `restore_agent_version`, `create_agent_schedule`, `update_agent_schedule`, `enable_agent_schedule`, `disable_agent_schedule`, `delete_agent_schedule`, `run_space_agents`, `start_agent_build`, `stop_agent_build`). Required by OpenAI's ChatGPT App submission review.
+  - New `openWorldHint` annotation regression test in `src/server/handlers.test.ts` — all write tools must declare this field.
+  - ChatGPT setup instructions added to `README.md` under "Set Up Your Client".
+  - `docs/chatgpt-apps-submission-plan.md` — full requirements and submission checklist for OpenAI's ChatGPT App Directory.
+
 - **Claude Connectors Directory support:**
   - `title` annotation added to all 39 tools — required by Anthropic's Connectors Directory submission.
   - `destructiveHint: false` explicitly set on `start_agent_build` and `stop_agent_build` (previously defaulted to `true` because `readOnlyHint: false` was set without `destructiveHint`).

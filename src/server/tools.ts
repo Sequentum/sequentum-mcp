@@ -175,6 +175,7 @@ export const tools: Tool[] = [
       title: "Start Agent",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -195,6 +196,7 @@ export const tools: Tool[] = [
       title: "Stop Agent",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -218,6 +220,7 @@ export const tools: Tool[] = [
       title: "Kill Agent",
       readOnlyHint: false,
       destructiveHint: true,
+      openWorldHint: false,
     },
   },
 
@@ -251,6 +254,7 @@ export const tools: Tool[] = [
       title: "Delete Run",
       readOnlyHint: false,
       destructiveHint: true,
+      openWorldHint: false,
     },
   },
 
@@ -339,6 +343,7 @@ export const tools: Tool[] = [
       title: "Restore Agent Version",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
 
@@ -438,6 +443,7 @@ export const tools: Tool[] = [
       title: "Create Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -458,6 +464,7 @@ export const tools: Tool[] = [
       title: "Delete Agent Schedule",
       readOnlyHint: false,
       destructiveHint: true,
+      openWorldHint: false,
     },
   },
   {
@@ -551,6 +558,7 @@ export const tools: Tool[] = [
       title: "Update Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -571,6 +579,7 @@ export const tools: Tool[] = [
       title: "Enable Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -591,6 +600,7 @@ export const tools: Tool[] = [
       title: "Disable Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -835,6 +845,7 @@ export const tools: Tool[] = [
       title: "Run Space Agents",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
 
@@ -961,6 +972,7 @@ export const tools: Tool[] = [
       title: "Build Agent from Prompt",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -1008,6 +1020,7 @@ export const tools: Tool[] = [
       title: "Stop Agent Build",
       readOnlyHint: false,
       destructiveHint: false,
+      openWorldHint: false,
     },
   },
 ];

@@ -245,6 +245,16 @@ describe("tool annotations", () => {
       ).toBeDefined();
     }
   });
+
+  it("every write tool has openWorldHint explicitly defined", () => {
+    const writeTools = tools.filter((t) => t.annotations?.readOnlyHint === false);
+    for (const tool of writeTools) {
+      expect(
+        tool.annotations?.openWorldHint,
+        `Write tool "${tool.name}" is missing annotations.openWorldHint`
+      ).toBeDefined();
+    }
+  });
 });
 
 // ==========================================
