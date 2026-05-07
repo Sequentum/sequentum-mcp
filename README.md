@@ -335,9 +335,31 @@ The server exposes 18 read-only resources (7 static + 11 templates) that AI clie
 
 For more troubleshooting help, see the [Troubleshooting Guide](./docs/troubleshooting.md).
 
+## CORS Origin Allowlist
+
+When the MCP server is accessed from a browser (e.g. the Claude web app or the ChatGPT connector), it checks the `Origin` header against an allowlist.  By default the following origins are permitted:
+
+- `https://claude.ai`, `https://claude.com`, and all subdomains (e.g. `team.claude.ai`)
+- `https://chatgpt.com`, `https://chat.openai.com`, `https://platform.openai.com`, and all subdomains under `chatgpt.com` (e.g. `connector.chatgpt.com`)
+- `https://dashboard.sequentum.com`
+- `https://mcp.sequentum.com`
+- `http://localhost:<port>`, `http://127.0.0.1:<port>`, and `http://[::1]:<port>` when `DEBUG=1`
+
+To add your own origins (e.g. an internal dashboard), set the `ALLOWED_ORIGINS` environment variable to a comma-separated list of exact origins:
+
+```
+ALLOWED_ORIGINS="https://my-dashboard.example.com,https://other.example.com"
+```
+
+These origins are **appended** to the defaults — Claude, ChatGPT, and Sequentum access is preserved.  Wildcards and regular expressions are not supported via the env var; if you need a subdomain wildcard, add a `RegExp` entry directly in `src/server/cors.ts`.
+
+> **Note:** `Origin` matching is case-sensitive and does not include a path or query string.  Native MCP clients (Cursor, Claude Desktop, Claude Code) send no `Origin` header and are not affected by this allowlist.
+
 ## Privacy Policy
 
-The Sequentum MCP Server accesses your Sequentum account data — including agent metadata, run history, scheduled tasks, billing information, and output files — solely to fulfill the requests you make through your AI assistant. This data is transmitted directly between your MCP client and the Sequentum API; it is not stored, logged, or shared with third parties by the MCP server itself.
+The Sequentum MCP Server accesses your Sequentum account data — including agent metadata, run history, scheduled tasks, billing information, and output files — solely to fulfill the requests you make through your AI assistant. By default, the MCP server acts as an authenticated proxy between your MCP client and the Sequentum API: request data is forwarded to the API and responses are returned to your client without being persisted or shared with third parties.
+
+Operators may enable verbose request logging via the `DEBUG=1` environment variable for troubleshooting. In that mode the server redacts `Authorization`, `Cookie`, and `x-api-key` headers, but writes request bodies (which may include tool arguments) to stderr. The hosted server at `mcp.sequentum.com` does not run with `DEBUG=1`.
 
 For the full Sequentum privacy policy, see [https://www.sequentum.com/privacy-policy](https://www.sequentum.com/privacy-policy).
 
