@@ -1,9 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
----
-
 ## [1.3.0] - TBD
 
 ### Added
