@@ -6,6 +6,7 @@
  */
 
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { PROMPT_HANDLING_POLICY } from "./policies.js";
 
 export const tools: Tool[] = [
   // Agent Tools
@@ -947,17 +948,19 @@ export const tools: Tool[] = [
       "The agent is saved to your workspace as soon as the AI creates it. " +
       "NEXT STEP: Poll get_agent_build_status until status reaches 'completed', 'ready', or 'error' — then stop polling; the session tears down automatically. " +
       "Optionally call stop_agent_build to abort early while still in 'processing'. " +
-      "If spaceName is known, resolve it to a spaceId via search_space_by_name first.",
+      "If spaceName is known, resolve it to a spaceId via search_space_by_name first. " +
+      "PRE-CALL CHECK: Before calling, verify the request unambiguously specifies (1) the target URL or domain, (2) the data to extract, and (3) any scope qualifiers (section, filters, language). If any of these are missing, ask one consolidated clarifying question covering all gaps instead of inventing values. " +
+      PROMPT_HANDLING_POLICY,
     inputSchema: {
       type: "object" as const,
       properties: {
         prompt: {
           type: "string",
           description:
-            "Natural language description of the automation to build. " +
-            "Be specific: include the target website, data to extract, and any filters. " +
+            "The user's automation request, passed through as closely as possible to their original wording. " +
+            "Do not add fields, formatting rules, or scraping techniques the user did not mention. " +
             "Must be between 10 and 5000 characters (trimmed). " +
-            "Example: 'Scrape product names, prices, and ratings from amazon.com/s?k=laptops'.",
+            "Example: user says 'get product names and prices from example.com/shop/shoes' → send 'get product names and prices from https://example.com/shop/shoes'.",
           minLength: 10,
           maxLength: 5000,
         },
