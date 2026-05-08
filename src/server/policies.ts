@@ -3,7 +3,7 @@
  *
  * Single source of truth for guidance text that is injected into multiple
  * surfaces (tool descriptions, prompt templates, server instructions).
- * Centralising here prevents the surfaces from silently drifting apart.
+ * Centralizing here prevents the surfaces from silently drifting apart.
  */
 
 /**

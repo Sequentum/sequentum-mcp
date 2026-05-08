@@ -25,6 +25,10 @@
   - Added a `POLLING CADENCE` paragraph to the `get_agent_build_status` tool description so user-expressed cadence preferences are also respected when the tool is invoked outside the prompts (e.g. via plain-chat usage). Default is a moderate cadence with backoff (~5s start, ~15–30s ceiling).
 - `title` annotation added to all 39 tools — human-readable label used by Anthropic's Connectors Directory and OpenAI's ChatGPT App submission.
 - `destructiveHint: false` explicitly set on `start_agent_build` and `stop_agent_build` (previously defaulted to `true` because `readOnlyHint: false` was set without `destructiveHint`).
+- **Sufficiency and prompt-handling policies.** New `src/server/policies.ts` is the single source of truth for two LLM-facing policy strings:
+  - `SUFFICIENCY_POLICY` is sent to every MCP client as the server `instructions` (on `initialize`). Directs the model to ask one consolidated clarifying question when a build/run request lacks an unambiguous URL, target data, or scope qualifier, and explicitly forbids silent extrapolation by analogy across sites or schemas.
+  - `PROMPT_HANDLING_POLICY` is appended to the `start_agent_build` tool description and inlined into the `build-agent-from-prompt` prompt template (rendered as a `**GUARDRAIL:**` preamble before the numbered steps). Directs the model to pass the user's wording through verbatim, allow only trivial normalizations (e.g. adding `https://`), and never invent fields, output formats, lazy-load instructions, pagination strategies, etc.
+  - Net behavior change: the model asks for missing details instead of silently expanding sparse user input into verbose `start_agent_build` prompts.
 
 ### Documentation
 
@@ -40,10 +44,7 @@
 - `sessionId` parameter validated with `maxLength: 256` at both agent-builder handler call sites.
 - `stop_agent_build` handler now returns structured JSON (`{ stopped: true, sessionId }`) instead of free-form English prose, consistent with all other tool handlers.
 - `redactDebugArgs` in `src/server/handlers.ts` extended to mask `prompt` and `comments` fields in addition to existing sensitive keys.
-- **Sufficiency and prompt-handling policies.** New `src/server/policies.ts` is the single source of truth for two LLM-facing policy strings:
-  - `SUFFICIENCY_POLICY` is sent to every MCP client as the server `instructions` (on `initialize`). Directs the model to ask one consolidated clarifying question when a build/run request lacks an unambiguous URL, target data, or scope qualifier, and explicitly forbids silent extrapolation by analogy across sites or schemas.
-  - `PROMPT_HANDLING_POLICY` is appended to the `start_agent_build` tool description and inlined into the `build-agent-from-prompt` prompt template. Directs the model to pass the user's wording through verbatim, allow only trivial normalizations (e.g. adding `https://`), and never invent fields, output formats, lazy-load instructions, pagination strategies, etc.
-  - Net behavior change: the model asks for missing details instead of silently expanding sparse user input into verbose `start_agent_build` prompts.
+- The new sufficiency and prompt-handling policies (see **Added**) reduce the surface for the model to silently extrapolate user requests across sites or schemas — defense in depth against accidental leakage of inferred-but-wrong details into a build.
 
 ### Tests
 

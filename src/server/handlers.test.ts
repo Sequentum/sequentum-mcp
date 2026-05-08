@@ -440,12 +440,35 @@ describe("policy wiring", () => {
     expect(tool!.description).toContain(PROMPT_HANDLING_POLICY);
   });
 
-  it("build-agent-from-prompt template embeds PROMPT_HANDLING_POLICY", () => {
+  it("build-agent-from-prompt template embeds PROMPT_HANDLING_POLICY under a GUARDRAIL preamble before the numbered steps", () => {
     const messages = getPromptMessages("build-agent-from-prompt", {
       prompt: "scrape https://example.com/products for product names",
     });
     expect(messages.length).toBeGreaterThan(0);
     const text = (messages[0].content as { text: string }).text;
-    expect(text).toContain(PROMPT_HANDLING_POLICY);
+
+    const guardrailLine = `**GUARDRAIL:** ${PROMPT_HANDLING_POLICY}`;
+    expect(text).toContain(guardrailLine);
+
+    const guardrailIdx = text.indexOf(guardrailLine);
+    const stepsIdx = text.indexOf("Follow these steps:");
+    expect(guardrailIdx).toBeGreaterThanOrEqual(0);
+    expect(stepsIdx).toBeGreaterThanOrEqual(0);
+    expect(
+      guardrailIdx,
+      "GUARDRAIL preamble must appear before the numbered steps so the model treats it as a constraint, not trailing context"
+    ).toBeLessThan(stepsIdx);
+  });
+
+  it("inspect-agent-draft template does NOT inject PROMPT_HANDLING_POLICY", () => {
+    const messages = getPromptMessages("inspect-agent-draft", {
+      sessionId: "sess-test-policy-leak",
+    });
+    expect(messages.length).toBeGreaterThan(0);
+    const text = (messages[0].content as { text: string }).text;
+    expect(
+      text,
+      "inspect-agent-draft does not call start_agent_build, so it should not carry the prompt-handling guardrail"
+    ).not.toContain(PROMPT_HANDLING_POLICY);
   });
 });
