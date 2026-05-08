@@ -1178,11 +1178,15 @@ Start a new AI-powered agent building session from a natural language descriptio
 
 **Next step:** Poll `get_agent_build_status` until status reaches `completed`, `ready`, or `error`. Optionally call `stop_agent_build` to abort early while still in `processing`.
 
+**Pre-call check:** Before invoking, the request should unambiguously specify (1) the target URL or domain, (2) the data to extract, and (3) any scope qualifiers (section, filters, language). If any of these are missing, the model is expected to ask one consolidated clarifying question instead of inventing values.
+
+**Prompt-handling policy:** The model should pass the user's wording through to the `prompt` argument verbatim. Only trivial normalizations (adding `https://`, fixing an obvious URL typo) are allowed. Extra fields, output formats, lazy-load instructions, pagination strategies, etc. must not be invented — the upstream Sequentum Agent Builder pipeline infers these on its own from the page.
+
 #### Parameters
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `prompt` | string | Yes | Natural language description of the automation to build. Must be 10–5000 characters. |
+| `prompt` | string | Yes | What you want to scrape or automate, in your own words, passed through verbatim. The agent builder infers technical details (pagination, lazy-load, output format, etc.) server-side. Must be 10–5000 characters. |
 | `spaceId` | number | No | Space ID to associate the agent with. Uses the default space if omitted. |
 
 #### Returns
@@ -1199,7 +1203,7 @@ Start a new AI-powered agent building session from a natural language descriptio
 {
   "name": "start_agent_build",
   "arguments": {
-    "prompt": "Scrape product names, prices, and ratings from amazon.com/s?k=laptops",
+    "prompt": "get product names and prices from https://example.com/shop/shoes",
     "spaceId": 3
   }
 }

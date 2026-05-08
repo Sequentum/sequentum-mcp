@@ -6,6 +6,7 @@
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { SUFFICIENCY_POLICY } from "./policies.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -240,6 +241,10 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
         resources: {},
         prompts: {},
       },
+      // Sent to clients on `initialize`. Canonical text + JSDoc live in
+      // policies.ts; reinforced by the start_agent_build PRE-CALL CHECK in
+      // tools.ts. Keep these in sync if the policy's name or scope changes.
+      instructions: SUFFICIENCY_POLICY,
     }
   );
 

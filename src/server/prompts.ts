@@ -7,6 +7,7 @@
  */
 
 import { Prompt, PromptMessage } from "@modelcontextprotocol/sdk/types.js";
+import { PROMPT_HANDLING_POLICY } from "./policies.js";
 
 // ==========================================
 // Prompt Definitions
@@ -133,8 +134,8 @@ export const prompts: Prompt[] = [
       {
         name: "prompt",
         description:
-          "Natural language description of the automation to build. " +
-          "Be specific: include the target website, data to extract, and any filters. " +
+          "What you want to scrape or automate, in your own words. " +
+          "Keep it as close to your natural phrasing as possible — the agent builder infers technical details (pagination, lazy-load, output format, etc.) server-side. " +
           "Must be between 10 and 5000 characters.",
         required: true,
       },
@@ -455,6 +456,7 @@ export function getPromptMessages(
             text:
               `Build a new agent using this description: \`${prompt}\`\n\n` +
               pollingDirective +
+              `**GUARDRAIL:** ${PROMPT_HANDLING_POLICY}\n\n` +
               `Follow these steps:\n\n` +
               spaceStep +
               `${stepOffset + 1}. Use start_agent_build with prompt=\`${prompt}\`. ${spaceNote} ` +

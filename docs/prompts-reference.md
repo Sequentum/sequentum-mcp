@@ -306,7 +306,7 @@ Build a new web scraping agent from a natural language description using the AI 
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `prompt` | string | Yes | Natural language description of the automation to build. Must be 10–5000 characters. |
+| `prompt` | string | Yes | What you want to scrape or automate, in your own words. The agent builder infers technical details (pagination, lazy-load, output format, etc.) server-side. Must be 10–5000 characters. |
 | `spaceName` | string | No | Name of the space to save the agent to. Resolved to a `spaceId` via `search_space_by_name`. Uses the default space if omitted. |
 | `pollingPreference` | string | No | Hint for how aggressively to poll `get_agent_build_status`. Examples: `"fast"` (every 2–3s), `"normal"` (start ~5s, back off to ~15s), `"slow"` (every 30s), or free-form (`"poll every 5 seconds"`, `"be patient, this is a big site"`). If omitted, a moderate cadence with backoff is used. |
 
@@ -326,11 +326,11 @@ Build a new web scraping agent from a natural language description using the AI 
 #### Example Invocations
 
 ```
-Build an agent to scrape laptop prices from Amazon
-Create a scraper for job listings on LinkedIn
-Build me a news scraper for TechCrunch in my "Research" space
-Build a scraper for amazon.com (pollingPreference: fast)
-Build a scraper for a slow legacy site (pollingPreference: be patient, expect a few minutes)
+Build an agent to get laptop prices from amazon.com
+Scrape job listings from linkedin.com/jobs
+Get news articles from techcrunch.com (spaceName: Research)
+Get products from amazon.com (pollingPreference: fast)
+Scrape data from a slow legacy site (pollingPreference: be patient, expect a few minutes)
 ```
 
 > **See also:** [`inspect-agent-draft`](#inspect-agent-draft) to check on an existing session. [`start_agent_build`](tool-reference.md#start_agent_build) for the raw tool.
