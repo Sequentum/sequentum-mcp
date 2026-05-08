@@ -40,12 +40,17 @@
 - `sessionId` parameter validated with `maxLength: 256` at both agent-builder handler call sites.
 - `stop_agent_build` handler now returns structured JSON (`{ stopped: true, sessionId }`) instead of free-form English prose, consistent with all other tool handlers.
 - `redactDebugArgs` in `src/server/handlers.ts` extended to mask `prompt` and `comments` fields in addition to existing sensitive keys.
+- **Sufficiency and prompt-handling policies.** New `src/server/policies.ts` is the single source of truth for two LLM-facing policy strings:
+  - `SUFFICIENCY_POLICY` is sent to every MCP client as the server `instructions` (on `initialize`). Directs the model to ask one consolidated clarifying question when a build/run request lacks an unambiguous URL, target data, or scope qualifier, and explicitly forbids silent extrapolation by analogy across sites or schemas.
+  - `PROMPT_HANDLING_POLICY` is appended to the `start_agent_build` tool description and inlined into the `build-agent-from-prompt` prompt template. Directs the model to pass the user's wording through verbatim, allow only trivial normalizations (e.g. adding `https://`), and never invent fields, output formats, lazy-load instructions, pagination strategies, etc.
+  - Net behavior change: the model asks for missing details instead of silently expanding sparse user input into verbose `start_agent_build` prompts.
 
 ### Tests
 
 - Annotation regression tests strengthened in `src/server/handlers.test.ts`: every tool must have a non-empty `title` and `readOnlyHint` defined. Write-tool annotations are now validated against per-tool expectation tables — `openWorldHint` and `destructiveHint` must match an explicit expected value, not just be defined. Adding a new write tool without classifying both hints fails the build; changing an existing value without updating the table also fails.
 - Handler-dispatch tests added for the three agent-builder tools via `InMemoryTransport` + `Client`: `start_agent_build` rejects prompts below `minLength: 10`; `get_agent_build_status` sanitizes the `error` field; `stop_agent_build` returns the expected JSON shape.
 - CORS regression tests added in `src/server/cors.test.ts` covering exact-origin matches, claude/chatgpt subdomain depth (single and multi-level), `ALLOWED_ORIGINS` env-var append semantics, debug-mode localhost / IPv6 loopback, and adversarial rejections (e.g. `https://claude.ai.evil.com`, `https://notclaude.ai`, wrong scheme, uppercase).
+- Policy-wiring regression tests added in `src/server/handlers.test.ts`: `client.getInstructions()` equals `SUFFICIENCY_POLICY`; the `start_agent_build` tool description contains `PROMPT_HANDLING_POLICY`; the `build-agent-from-prompt` template embeds `PROMPT_HANDLING_POLICY`. Ensures the constants reach all three injection surfaces and prevents silent drift.
 
 ---
 

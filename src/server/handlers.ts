@@ -6,6 +6,7 @@
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { SUFFICIENCY_POLICY } from "./policies.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -240,16 +241,10 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
         resources: {},
         prompts: {},
       },
-      instructions:
-        "SUFFICIENCY POLICY — applies to all build and run requests:\n" +
-        "Before invoking any tool that builds or runs an agent in response to a scrape or automation request, " +
-        "ensure the following are unambiguous: (1) the target URL or domain, (2) the data the user wants extracted, " +
-        "(3) any qualifiers that affect scope (section, filters, language, etc.).\n\n" +
-        "You MAY resolve missing details from explicit conversational context when the context makes the answer clearly unambiguous.\n\n" +
-        "You MUST NOT silently extrapolate by analogy — copying details from one site onto a different site, " +
-        "or reusing a prior request's data schema for a conceptually different request — even when prior inferences were accepted.\n\n" +
-        "When the request is genuinely underspecified: ask one consolidated clarifying question covering all gaps before any tool call — ask everything you need in one round-trip, not sequentially. " +
-        "When you would need to extrapolate by analogy: state your inference in one short line and ask the user to confirm before any tool call.",
+      // Sent to clients on `initialize`. Canonical text + JSDoc live in
+      // policies.ts; reinforced by the start_agent_build PRE-CALL CHECK in
+      // tools.ts. Keep these in sync if the policy's name or scope changes.
+      instructions: SUFFICIENCY_POLICY,
     }
   );
 

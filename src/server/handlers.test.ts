@@ -7,6 +7,8 @@ import {
   validateScheduleStartTime,
 } from "./handlers.js";
 import { tools } from "./tools.js";
+import { getPromptMessages } from "./prompts.js";
+import { PROMPT_HANDLING_POLICY, SUFFICIENCY_POLICY } from "./policies.js";
 import {
   ApiRequestError,
   AuthenticationError,
@@ -410,5 +412,40 @@ describe("agent builder handler dispatch", () => {
       const parsed = JSON.parse((result.content[0] as { text: string }).text);
       expect(parsed).toEqual({ stopped: true, sessionId: "sess-stop-456" });
     });
+  });
+});
+
+// ==========================================
+// Policy Wiring Regression Tests
+// ==========================================
+
+describe("policy wiring", () => {
+  it("server instructions equal SUFFICIENCY_POLICY", async () => {
+    const mockApiClient = makeMinimalMockClient();
+    const server = createMcpServer(mockApiClient, "test");
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const connectedClient = new Client({ name: "policy-test-client", version: "1.0" });
+    await connectedClient.connect(clientTransport);
+    try {
+      expect(connectedClient.getInstructions()).toBe(SUFFICIENCY_POLICY);
+    } finally {
+      await connectedClient.close();
+    }
+  });
+
+  it("start_agent_build description contains PROMPT_HANDLING_POLICY", () => {
+    const tool = tools.find((t) => t.name === "start_agent_build");
+    expect(tool, "start_agent_build tool not found").toBeDefined();
+    expect(tool!.description).toContain(PROMPT_HANDLING_POLICY);
+  });
+
+  it("build-agent-from-prompt template embeds PROMPT_HANDLING_POLICY", () => {
+    const messages = getPromptMessages("build-agent-from-prompt", {
+      prompt: "scrape https://example.com/products for product names",
+    });
+    expect(messages.length).toBeGreaterThan(0);
+    const text = (messages[0].content as { text: string }).text;
+    expect(text).toContain(PROMPT_HANDLING_POLICY);
   });
 });
