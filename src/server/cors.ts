@@ -9,10 +9,10 @@
 /**
  * Build the list of origins that are allowed to make cross-origin requests.
  *
- * Always starts with the hardcoded Sequentum and Anthropic defaults.  If the
- * ALLOWED_ORIGINS environment variable is set (comma-separated exact origins),
- * those entries are **appended** to the defaults — Claude and Sequentum domains
- * remain accessible even when the variable is set.
+ * Always starts with the hardcoded Sequentum, Anthropic, and OpenAI defaults.
+ * If the ALLOWED_ORIGINS environment variable is set (comma-separated exact
+ * origins), those entries are **appended** to the defaults — Claude, ChatGPT,
+ * and Sequentum domains remain accessible even when the variable is set.
  *
  * Only exact-string origins are accepted via the env var.  Wildcards and
  * regular expressions are not supported; if you need a subdomain wildcard,
@@ -37,6 +37,19 @@ export function buildAllowedOrigins(
     // label (alphanumeric + hyphen). Trust scope is unchanged — both TLDs are
     // Anthropic-owned.
     /^https:\/\/(?:[a-z0-9-]+\.)+claude\.(ai|com)$/,
+    "https://chatgpt.com",
+    // Allow any depth of subdomains under OpenAI-owned chatgpt.com (e.g.
+    // connector.chatgpt.com).  Same DNS-label rule and trust rationale as the
+    // Claude pattern above.
+    /^https:\/\/(?:[a-z0-9-]+\.)+chatgpt\.com$/,
+    // platform.openai.com is the developer console for ChatGPT App registration
+    // and is the only openai.com subdomain we need.  We deliberately do NOT allow
+    // *.openai.com here: openai.com is OpenAI's corporate domain and hosts many
+    // non-ChatGPT properties (Sora, status, marketing, careers, etc.) whose
+    // browser contexts have no reason to reach this MCP server.  If a new
+    // ChatGPT-specific subdomain is needed in future, add it explicitly so the
+    // trust scope stays auditable.
+    "https://platform.openai.com",
     "https://dashboard.sequentum.com",
     "https://mcp.sequentum.com",
   ];
