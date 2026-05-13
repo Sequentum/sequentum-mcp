@@ -1,5 +1,104 @@
 # Changelog
 
+## [1.3.0] - TBD
+
+### Added
+
+- **ChatGPT Apps support:**
+  - CORS allowlist extended in `src/server/cors.ts` to permit `https://chatgpt.com`, `https://platform.openai.com`, and any subdomain depth under `chatgpt.com` (e.g. `connector.chatgpt.com`). `https://chat.openai.com` is intentionally omitted — OpenAI retired that origin in mid-2024 and redirects it to `chatgpt.com`; no live ChatGPT surface issues that Origin header. Same multi-level subdomain pattern and trust rationale as the Claude entries.
+  - `openWorldHint` added to all 13 write tools per the MCP spec. Tools that scrape arbitrary external websites on behalf of the caller (`start_agent`, `run_space_agents`, `start_agent_build`) are `true`. Tools that only mutate Sequentum's internal state (`stop_agent`, `kill_agent`, `delete_run`, `restore_agent_version`, schedule CRUD, `stop_agent_build`) are `false`. Required by OpenAI's ChatGPT App submission review.
+  - ChatGPT setup instructions added to `README.md` under "Set Up Your Client".
+- **Claude Connectors Directory support:**
+  - Origin-header allowlist (`src/server/cors.ts`) replaces the previous wildcard `Access-Control-Allow-Origin: *`. Permits Claude domains (`claude.ai`, `claude.com`, and all subdomain depths), Sequentum domains, and (when `DEBUG=1`) localhost / `127.0.0.1` / `[::1]`. Additional exact-match origins can be appended at startup via `ALLOWED_ORIGINS` (comma-separated; defaults are always preserved — see README). Requests from non-allowlisted browser origins to `/mcp` receive 403; requests without an `Origin` header (native MCP clients such as Cursor, Claude Desktop, Claude Code) pass through unaffected. `Vary: Origin` is set unconditionally so intermediate caches cannot conflate responses across origins.
+  - Privacy Policy section added to `README.md` with a plain-language data-handling summary and a link to `https://www.sequentum.com/privacy-policy`.
+- **Agent Builder tools** (3 new tools):
+  - `start_agent_build` — Start an AI-powered agent build session from a natural language prompt. The agent is saved to the workspace automatically once the AI creates it.
+  - `get_agent_build_status` — Poll the status of an agent build session. Stop polling on any terminal status: `completed`, `ready`, `error`, or `cancelled`. The session tears down automatically.
+  - `stop_agent_build` — Abort an in-progress build session early (optional). Has no effect once a terminal status is reached. Any agent already saved to the workspace persists.
+- **Agent Building prompts** (2 new prompts):
+  - `build-agent-from-prompt` — End-to-end workflow: resolve space, start session, poll until complete, fetch and show the resulting agent
+  - `inspect-agent-draft` — Check the status of an existing build session and show the resulting agent once available
+- **`validateString` extended** with `minLength`, `maxLength`, and `trim` options (via new `StringValidationOptions` interface). Fully backward-compatible — existing callers that pass a boolean are unaffected.
+- New types in `src/api/types.ts`: `AgentBuilderSessionStatus`, `ExternalStartAgentBuildRequest`, `ExternalStartAgentBuildResponse`, `ExternalSessionStatusResponse`
+- **User-controlled polling cadence for Agent Builder:**
+  - Added optional `pollingPreference` argument to both `build-agent-from-prompt` and `inspect-agent-draft` prompts. Accepts `"fast"` / `"normal"` / `"slow"` or any free-form instruction (e.g. `"poll every 5 seconds"`, `"be patient, this is a big site"`). When provided, the directive is templated into the prompt as a high-priority instruction the model honors when polling `get_agent_build_status`.
+  - Added a `POLLING CADENCE` paragraph to the `get_agent_build_status` tool description so user-expressed cadence preferences are also respected when the tool is invoked outside the prompts (e.g. via plain-chat usage). Default is a moderate cadence with backoff (~5s start, ~15–30s ceiling).
+- `title` annotation added to all 39 tools — human-readable label used by Anthropic's Connectors Directory and OpenAI's ChatGPT App submission.
+- `destructiveHint: false` explicitly set on `start_agent_build` and `stop_agent_build` (previously defaulted to `true` because `readOnlyHint: false` was set without `destructiveHint`).
+- **Sufficiency and prompt-handling policies.** New `src/server/policies.ts` is the single source of truth for two LLM-facing policy strings:
+  - `SUFFICIENCY_POLICY` is sent to every MCP client as the server `instructions` (on `initialize`). Directs the model to ask one consolidated clarifying question when a build/run request lacks an unambiguous URL, target data, or scope qualifier, and explicitly forbids silent extrapolation by analogy across sites or schemas.
+  - `PROMPT_HANDLING_POLICY` is appended to the `start_agent_build` tool description and inlined into the `build-agent-from-prompt` prompt template (rendered as a `**GUARDRAIL:**` preamble before the numbered steps). Directs the model to pass the user's wording through verbatim, allow only trivial normalizations (e.g. adding `https://`), and never invent fields, output formats, lazy-load instructions, pagination strategies, etc.
+  - Net behavior change: the model asks for missing details instead of silently expanding sparse user input into verbose `start_agent_build` prompts.
+
+### Documentation
+
+- `docs/tool-reference.md` — Updated count to 39 tools, new Agent Builder category in Quick Reference and full section
+- `docs/prompts-reference.md` — Updated count to 9 prompts, new Agent Building category in Quick Reference and full sections for both prompts
+- `docs/resources-reference.md` — Added cross-reference note explaining that saved agents become accessible via existing `sequentum://agents/{agentId}` resource
+
+### Security
+
+- Prompt arguments (`prompt`, `spaceName`, `sessionId`, `pollingPreference`) in `src/server/prompts.ts` are now sanitized before interpolation: newlines stripped, trimmed, and enforced per-argument length limits. Reduces prompt-injection surface via user-controlled strings.
+- `pollingPreference` de-elevated from an `IMPORTANT DIRECTIVE` banner to an advisory instruction, reducing its authority in the model's context.
+- `get_agent_build_status` handler now wraps raw backend `error` messages with a generic user-facing string (`"Build failed. Please review your prompt and try again."`). Raw error is still logged at `DEBUG=1` for operators. Prevents leakage of backend stack traces or internal endpoint paths to clients.
+- `sessionId` parameter validated with `maxLength: 256` at both agent-builder handler call sites.
+- `stop_agent_build` handler now returns structured JSON (`{ stopped: true, sessionId }`) instead of free-form English prose, consistent with all other tool handlers.
+- `redactDebugArgs` in `src/server/handlers.ts` extended to mask `prompt` and `comments` fields in addition to existing sensitive keys.
+- The new sufficiency and prompt-handling policies (see **Added**) reduce the surface for the model to silently extrapolate user requests across sites or schemas — defense in depth against accidental leakage of inferred-but-wrong details into a build.
+
+### Tests
+
+- Annotation regression tests strengthened in `src/server/handlers.test.ts`: every tool must have a non-empty `title` and `readOnlyHint` defined. Write-tool annotations are now validated against per-tool expectation tables — `openWorldHint` and `destructiveHint` must match an explicit expected value, not just be defined. Adding a new write tool without classifying both hints fails the build; changing an existing value without updating the table also fails.
+- Handler-dispatch tests added for the three agent-builder tools via `InMemoryTransport` + `Client`: `start_agent_build` rejects prompts below `minLength: 10`; `get_agent_build_status` sanitizes the `error` field; `stop_agent_build` returns the expected JSON shape.
+- CORS regression tests added in `src/server/cors.test.ts` covering exact-origin matches, claude/chatgpt subdomain depth (single and multi-level), `ALLOWED_ORIGINS` env-var append semantics, debug-mode localhost / IPv6 loopback, and adversarial rejections (e.g. `https://claude.ai.evil.com`, `https://notclaude.ai`, wrong scheme, uppercase).
+- Policy-wiring regression tests added in `src/server/handlers.test.ts`: `client.getInstructions()` equals `SUFFICIENCY_POLICY`; the `start_agent_build` tool description contains `PROMPT_HANDLING_POLICY`; the `build-agent-from-prompt` template embeds `PROMPT_HANDLING_POLICY`. Ensures the constants reach all three injection surfaces and prevents silent drift.
+
+---
+
+## [1.2.0] - 2026-03-12
+
+### Added
+
+- **MCP Prompts** (9 reusable workflow templates):
+  - `debug-agent` -- Diagnose why an agent is failing
+  - `agent-health-check` -- Comprehensive health overview for an agent
+  - `spending-report` -- Spending and credits report
+  - `cost-analysis` -- Analyze costs across agents
+  - `run-and-monitor` -- Start an agent and monitor until completion
+  - `space-overview` -- Overview of all agents in a space
+  - `daily-operations-report` -- Daily operations report across all agents
+  - `schedule-agent` -- Walk through creating or reviewing schedules
+  - `compare-runs` -- Compare last successful vs failed run
+- **MCP Resources** (18 read-only, URI-addressable data endpoints):
+  - 7 static resources: agent list, spaces, credits balance, monthly spending, agent costs, recent runs summary, upcoming schedules
+  - 11 resource templates: agent detail, agent versions, agent schedules, agent cost breakdown, agent runs, run status, run files, run diagnostics, latest failure, space detail, space agents
+- **Schedule Management** tools:
+  - `get_agent_schedule` -- Get details of a specific schedule
+  - `update_agent_schedule` -- Update an existing schedule's timing, parameters, or settings
+  - `enable_agent_schedule` -- Enable a previously disabled schedule
+  - `disable_agent_schedule` -- Disable a schedule without deleting it
+- New `src/server/handlers.test.ts` with handler unit tests
+- Expanded test coverage for API client and index module
+- Documentation: `docs/prompts-reference.md` and `docs/resources-reference.md`
+
+### Changed
+
+- **Major architecture refactoring**: Split monolithic `src/index.ts` (~2000 lines) into a modular structure:
+  - `src/server/tools.ts` -- Tool definitions and schemas
+  - `src/server/handlers.ts` -- MCP server factory and tool handler dispatch
+  - `src/server/http-server.ts` -- HTTP/Streamable transport, session management, OAuth discovery
+  - `src/server/prompts.ts` -- Prompt definitions and message builders
+  - `src/server/resources.ts` -- Resource and resource template definitions with URI dispatcher
+  - `src/api/api-client.ts` -- API client (moved from `src/`)
+  - `src/api/types.ts` -- TypeScript interfaces and enums (moved from `src/`)
+  - `src/utils/validation.ts` -- Input validation helpers (moved from `src/`)
+  - `src/utils/oauth-metadata.ts` -- OAuth metadata builder (moved from `src/`)
+- Extracted shared validation logic into `src/utils/validation.ts` to eliminate duplicate code
+- Added URI validation for resource endpoints
+- Improved atomic session control in HTTP server
+- Updated `docs/tool-reference.md` with the 4 new schedule tools (36 total)
+- Updated `README.md` with prompts, resources sections and references to new documentation
+
 ## [1.1.4] - 2026-03-04
 
 ### Added
@@ -92,6 +191,7 @@
 
 ---
 
+[1.2.0]: https://github.com/Sequentum/sequentum-mcp/compare/v1.1.4...v1.2.0
 [1.1.4]: https://github.com/Sequentum/sequentum-mcp/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/Sequentum/sequentum-mcp/compare/v1.0.2...v1.1.3
 [1.0.2]: https://github.com/Sequentum/sequentum-mcp/compare/v1.0.1...v1.0.2
