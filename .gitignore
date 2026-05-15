@@ -36,8 +36,5 @@ coverage/
 *.temp
 
 # Jenkins pipeline files (not committed to public repo)
-Jenkinsfile.qa
-Jenkinsfile.prod
-
-
+Jenkinsfile*
 
