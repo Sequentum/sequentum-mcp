@@ -34,6 +34,12 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Validate server.json against MCP Registry schema
+        run: npm run validate:registry
+
+      - name: Check version sync between package.json and server.json
+        run: npm run check:versions
+
   pack:
     name: Validate package
     runs-on: ubuntu-latest

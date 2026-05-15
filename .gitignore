@@ -19,6 +19,11 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# Cryptographic keys and DNS-auth artifacts (must never be committed)
+*.pem
+key.pem
+dns_key
+
 # Logs
 *.log
 npm-debug.log*
