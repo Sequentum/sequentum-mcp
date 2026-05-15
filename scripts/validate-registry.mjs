@@ -2,26 +2,16 @@ import { readFileSync } from "node:fs";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
 
-const SCHEMA_URL =
-  "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json";
-
-const controller = new AbortController();
-const timeout = setTimeout(() => controller.abort(), 10_000);
-let schema;
-try {
-  const response = await fetch(SCHEMA_URL, { signal: controller.signal });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch MCP Registry schema: ${response.status} ${response.statusText}`);
-  }
-  schema = await response.json();
-} finally {
-  clearTimeout(timeout);
-}
+const schema = JSON.parse(
+  readFileSync(new URL("../schemas/server.schema.2025-12-11.json", import.meta.url), "utf8")
+);
 
 const serverJson = JSON.parse(
   readFileSync(new URL("../server.json", import.meta.url), "utf8")
 );
 
+// strict: false because the upstream schema uses keywords/formats AJV's strict mode
+// flags as unknown. We don't author the schema, so we accept whatever the registry publishes.
 const ajv = new Ajv({ strict: false, allErrors: true });
 addFormats(ajv);
 const validate = ajv.compile(schema);
