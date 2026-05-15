@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.sequentum/mcp",
+  "description": "MCP Server for Sequentum Web Scraping API - Enables AI assistants to interact with Sequentum agents",
+  "repository": {
+    "url": "https://github.com/Sequentum/sequentum-mcp",
+    "source": "github"
+  },
+  "version": "1.3.0",
+  "remotes": [
+    {
+      "transport": {
+        "type": "streamable-http",
+        "url": "https://mcp.sequentum.com/mcp"
+      }
+    }
+  ]
+}
