@@ -5,11 +5,18 @@ import addFormats from "ajv-formats";
 const SCHEMA_URL =
   "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json";
 
-const response = await fetch(SCHEMA_URL);
-if (!response.ok) {
-  throw new Error(`Failed to fetch MCP Registry schema: ${response.status} ${response.statusText}`);
+const controller = new AbortController();
+const timeout = setTimeout(() => controller.abort(), 10_000);
+let schema;
+try {
+  const response = await fetch(SCHEMA_URL, { signal: controller.signal });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch MCP Registry schema: ${response.status} ${response.statusText}`);
+  }
+  schema = await response.json();
+} finally {
+  clearTimeout(timeout);
 }
-const schema = await response.json();
 
 const serverJson = JSON.parse(
   readFileSync(new URL("../server.json", import.meta.url), "utf8")

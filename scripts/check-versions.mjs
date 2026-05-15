@@ -18,6 +18,11 @@ if (pkg.mcpName !== server.name) {
   errors.push(`package.json.mcpName (${pkg.mcpName}) !== server.json.name (${server.name})`);
 }
 
+const pkgIdentifier = server.packages?.[0]?.identifier;
+if (pkgIdentifier !== pkg.name) {
+  errors.push(`server.json.packages[0].identifier (${pkgIdentifier}) !== package.json.name (${pkg.name})`);
+}
+
 if (errors.length) {
   console.error("Sync check failed:");
   for (const e of errors) console.error("  - " + e);
