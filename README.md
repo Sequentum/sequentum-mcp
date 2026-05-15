@@ -3,13 +3,13 @@
 [![npm version](https://img.shields.io/npm/v/sequentum-mcp.svg)](https://www.npmjs.com/package/sequentum-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-The [Sequentum MCP Server](https://mcp.sequentum.com) connects your AI coding assistant to Sequentum using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction), giving your AI tools direct access to web scraping agents, run management, scheduling, analytics, and more. Sequentum hosts and manages a remote MCP server with OAuth authentication, so there's nothing to install.
+The [Sequentum MCP Server](https://mcp.sequentum.com) connects your AI coding assistant to Sequentum using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction), giving your AI tools the ability to create web scraping agents, run management, scheduling, analytics, and more. Sequentum hosts and manages a remote MCP server with OAuth authentication, so there's nothing to install.
 
 ## [Tool Reference](./docs/tool-reference.md) | [Prompts Reference](./docs/prompts-reference.md) | [Resources Reference](./docs/resources-reference.md) | [Troubleshooting](./docs/troubleshooting.md) | [Changelog](./CHANGELOG.md)
 
 ## Key Features
 
-- **Agent management**: List, search, and get detailed information about your web scraping agents.
+- **Agent management**: Build, list, search, and get detailed information about your web scraping agents.
 - **Run automation**: Start, stop, and monitor agent executions with real-time status tracking.
 - **Schedule management**: Create and manage automated schedules using cron expressions.
 - **Analytics & diagnostics**: Get run statistics, error analysis, and suggested fixes for failures.
