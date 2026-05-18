@@ -342,7 +342,6 @@ export async function startHttpServer(
     const requireAuth = process.env.REQUIRE_AUTH !== "false";
     const token = extractBearerToken(req);
     if (requireAuth && !token) {
-    if (requireAuthGet && !getToken) {
       const mcpServerUrl = new URL(`${req.protocol}://${req.get("host")}`).origin;
       const challenge = buildAuthChallenge(mcpServerUrl);
       res.setHeader("WWW-Authenticate", challenge.wwwAuthenticate);
