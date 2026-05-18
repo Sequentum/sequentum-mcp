@@ -339,8 +339,9 @@ export async function startHttpServer(
     // Without this, unauthenticated GETs return 400 ("Missing session ID") with
     // no WWW-Authenticate header, causing directory probers (Glama, MCP Inspector)
     // to classify the endpoint as broken rather than OAuth-protected.
-    const requireAuthGet = process.env.REQUIRE_AUTH !== "false";
-    const getToken = extractBearerToken(req);
+    const requireAuth = process.env.REQUIRE_AUTH !== "false";
+    const token = extractBearerToken(req);
+    if (requireAuth && !token) {
     if (requireAuthGet && !getToken) {
       const mcpServerUrl = new URL(`${req.protocol}://${req.get("host")}`).origin;
       const challenge = buildAuthChallenge(mcpServerUrl);
