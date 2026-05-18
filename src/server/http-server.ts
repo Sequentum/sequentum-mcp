@@ -12,7 +12,7 @@ import express, { Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import { SequentumApiClient } from "../api/api-client.js";
 import { createMcpServer } from "./handlers.js";
-import { buildOAuthMetadata, SUPPORTED_SCOPES } from "../utils/oauth-metadata.js";
+import { buildAuthChallenge, buildOAuthMetadata, SUPPORTED_SCOPES } from "../utils/oauth-metadata.js";
 import { buildAllowedOrigins, isAllowedOrigin } from "./cors.js";
 
 const DEBUG = process.env.DEBUG === '1';
@@ -253,25 +253,10 @@ export async function startHttpServer(
         // Require authentication for new sessions (unless REQUIRE_AUTH=false for testing)
         const requireAuth = process.env.REQUIRE_AUTH !== "false";
         if (requireAuth && !token) {
-          // Return 401 with WWW-Authenticate header per RFC 9728 Section 5.1
-          // The resource is this MCP server's own URL (the protected resource)
           const mcpServerUrl = new URL(`${req.protocol}://${req.get("host")}`).origin;
-          const wwwAuth = `Bearer resource="${mcpServerUrl}"`;
-          const prmUrl = `${mcpServerUrl}/.well-known/oauth-protected-resource`;
-          res.setHeader("WWW-Authenticate", wwwAuth);
-          const responseBody = {
-            jsonrpc: "2.0",
-            error: {
-              code: -32001,
-              message: "Authentication required",
-              data: {
-                // Point to Protected Resource Metadata on this MCP server
-                protectedResourceMetadata: prmUrl,
-              },
-            },
-            id: null,
-          };
-          res.status(401).json(responseBody);
+          const challenge = buildAuthChallenge(mcpServerUrl);
+          res.setHeader("WWW-Authenticate", challenge.wwwAuthenticate);
+          res.status(401).json(challenge.body);
           console.error("[MCP] 401 - Authentication required, no Bearer token provided");
           return;
         }
@@ -350,8 +335,22 @@ export async function startHttpServer(
 
   // Handle GET requests for SSE streams
   app.get("/mcp", async (req: Request, res: Response) => {
+    // Auth must be checked before session validation (RFC 6750).
+    // Without this, unauthenticated GETs return 400 ("Missing session ID") with
+    // no WWW-Authenticate header, causing directory probers (Glama, MCP Inspector)
+    // to classify the endpoint as broken rather than OAuth-protected.
+    const requireAuthGet = process.env.REQUIRE_AUTH !== "false";
+    const getToken = extractBearerToken(req);
+    if (requireAuthGet && !getToken) {
+      const mcpServerUrl = new URL(`${req.protocol}://${req.get("host")}`).origin;
+      const challenge = buildAuthChallenge(mcpServerUrl);
+      res.setHeader("WWW-Authenticate", challenge.wwwAuthenticate);
+      res.status(401).json(challenge.body);
+      return;
+    }
+
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
-    
+
     if (!sessionId) {
       res.status(400).json({
         jsonrpc: "2.0",
