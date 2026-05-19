@@ -61,9 +61,14 @@ export const tools: Tool[] = [
       },
       required: [],
     },
+    // All three hints are required for ChatGPT App submission.
+    // Read-only tools always get destructiveHint: false, openWorldHint: false.
+    // This is asserted for every read-only tool in handlers.test.ts.
     annotations: {
       title: "List Agents",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -84,6 +89,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Agent",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -105,6 +112,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Search Agents",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
 
@@ -128,6 +137,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Agent Runs",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -149,6 +160,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Run Status",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -280,6 +293,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Run Files",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -302,6 +317,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get File Download URL",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
 
@@ -323,6 +340,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Agent Versions",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -367,6 +386,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "List Agent Schedules",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -486,6 +507,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Agent Schedule",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -623,6 +646,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Scheduled Runs",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
 
@@ -637,6 +662,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Credits Balance",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -657,6 +684,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Spending Summary",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -676,6 +705,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Credit History",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
 
@@ -704,6 +735,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Agents Usage",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -728,6 +761,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Agent Cost Breakdown",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -755,6 +790,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Agent Runs Cost",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
 
@@ -770,6 +807,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "List Spaces",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -788,6 +827,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Space",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -807,6 +848,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Space Agents",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -826,6 +869,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Search Space by Name",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -874,6 +919,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Runs Summary",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -895,6 +942,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Records Summary",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -915,6 +964,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Run Diagnostics",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -935,6 +986,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Latest Failure",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
 
@@ -1003,6 +1056,8 @@ export const tools: Tool[] = [
     annotations: {
       title: "Get Agent Build Status",
       readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
