@@ -29,6 +29,24 @@ function extractBearerToken(req: Request): string | null {
 }
 
 /**
+ * Return the MCP server's own canonical origin as observed for this request.
+ * Honors X-Forwarded-Proto via Express's `trust proxy` setting.
+ */
+function getMcpServerOrigin(req: Request): string {
+  return new URL(`${req.protocol}://${req.get("host")}`).origin;
+}
+
+/**
+ * Send a spec-compliant 401 with the RFC 9728 WWW-Authenticate challenge.
+ * Centralizes the header + body pair so a third 401 callsite cannot drift.
+ */
+function sendAuthChallenge(req: Request, res: Response): void {
+  const challenge = buildAuthChallenge(getMcpServerOrigin(req));
+  res.setHeader("WWW-Authenticate", challenge.wwwAuthenticate);
+  res.status(401).json(challenge.body);
+}
+
+/**
  * Session data for HTTP mode - stores server and transport per session
  */
 interface HttpSession {
@@ -194,8 +212,8 @@ export async function startHttpServer(
   app.get("/.well-known/oauth-protected-resource", async (req: Request, res: Response) => {
     // The resource is this MCP server's own URL (origin)
     // MCP clients (e.g., Cursor) validate this matches the URL they connected to
-    const resourceUrl = new URL(`${req.protocol}://${req.get("host")}`).origin;
-    
+    const resourceUrl = getMcpServerOrigin(req);
+
     const protectedResourceMetadata = {
       // The canonical URI of this MCP server (the protected resource)
       resource: resourceUrl,
@@ -253,10 +271,7 @@ export async function startHttpServer(
         // Require authentication for new sessions (unless REQUIRE_AUTH=false for testing)
         const requireAuth = process.env.REQUIRE_AUTH !== "false";
         if (requireAuth && !token) {
-          const mcpServerUrl = new URL(`${req.protocol}://${req.get("host")}`).origin;
-          const challenge = buildAuthChallenge(mcpServerUrl);
-          res.setHeader("WWW-Authenticate", challenge.wwwAuthenticate);
-          res.status(401).json(challenge.body);
+          sendAuthChallenge(req, res);
           console.error("[MCP] 401 - Authentication required, no Bearer token provided");
           return;
         }
@@ -335,37 +350,31 @@ export async function startHttpServer(
 
   // Handle GET requests for SSE streams
   app.get("/mcp", async (req: Request, res: Response) => {
-    // Auth must be checked before session validation (RFC 6750).
-    // Without this, unauthenticated GETs return 400 ("Missing session ID") with
-    // no WWW-Authenticate header, causing directory probers (Glama, MCP Inspector)
-    // to classify the endpoint as broken rather than OAuth-protected.
-    const requireAuth = process.env.REQUIRE_AUTH !== "false";
-    const token = extractBearerToken(req);
-    if (requireAuth && !token) {
-      const mcpServerUrl = new URL(`${req.protocol}://${req.get("host")}`).origin;
-      const challenge = buildAuthChallenge(mcpServerUrl);
-      res.setHeader("WWW-Authenticate", challenge.wwwAuthenticate);
-      res.status(401).json(challenge.body);
-      return;
-    }
-
+    // Resolve the session before any auth check. This preserves symmetry with the
+    // POST handler: a request carrying a valid mcp-session-id is treated as a
+    // continuation of an already-authenticated session and is not re-challenged
+    // for a Bearer token. Cold reconnects without a valid session still get a
+    // 401 + WWW-Authenticate so directory probers (Glama, MCP Inspector) and
+    // spec-conformant clients can discover OAuth via RFC 9728.
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
+    const session = sessionId ? sessions.get(sessionId) : undefined;
 
-    if (!sessionId) {
-      res.status(400).json({
-        jsonrpc: "2.0",
-        error: { code: -32000, message: "Missing session ID for SSE stream" },
-        id: null
-      });
-      return;
-    }
-
-    const session = sessions.get(sessionId);
     if (!session) {
+      const requireAuth = process.env.REQUIRE_AUTH !== "false";
+      const token = extractBearerToken(req);
+      if (requireAuth && !token) {
+        sendAuthChallenge(req, res);
+        return;
+      }
+
+      // Authenticated (or auth disabled) but no valid session — distinguish
+      // "no session id at all" from "session id present but unknown/expired"
+      // for clearer client diagnostics.
+      const message = sessionId ? "Invalid or expired session" : "Missing session ID for SSE stream";
       res.status(400).json({
         jsonrpc: "2.0",
-        error: { code: -32000, message: "Invalid or expired session" },
-        id: null
+        error: { code: -32000, message },
+        id: null,
       });
       return;
     }

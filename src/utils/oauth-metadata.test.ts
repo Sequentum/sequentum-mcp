@@ -36,14 +36,16 @@ describe("buildAuthChallenge", () => {
     );
   });
 
-  it("works with a QA hostname", () => {
-    const { wwwAuthenticate, body } = buildAuthChallenge("https://mcp-qa.sequentum.com");
-    expect(wwwAuthenticate).toContain('realm="mcp-qa.sequentum.com"');
+  it("works with an arbitrary hostname", () => {
+    // Use the IANA-reserved documentation domain (RFC 2606) rather than any real
+    // Sequentum subdomain, since this repo is public and tests are visible.
+    const { wwwAuthenticate, body } = buildAuthChallenge("https://example.com");
+    expect(wwwAuthenticate).toContain('realm="example.com"');
     expect(wwwAuthenticate).toContain(
-      'resource_metadata="https://mcp-qa.sequentum.com/.well-known/oauth-protected-resource"'
+      'resource_metadata="https://example.com/.well-known/oauth-protected-resource"'
     );
     expect(body.error.data.protectedResourceMetadata).toBe(
-      "https://mcp-qa.sequentum.com/.well-known/oauth-protected-resource"
+      "https://example.com/.well-known/oauth-protected-resource"
     );
   });
 });
