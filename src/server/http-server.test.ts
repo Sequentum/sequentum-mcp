@@ -21,17 +21,20 @@ import express, { Request, Response } from "express";
 function createChallengeServer(token: string | undefined): { server: http.Server; baseUrl: string } {
   const app = express();
 
-  // Mirrors the handler in src/server/http-server.ts exactly.
-  // If this test starts failing because the handler changed, update both.
-  app.get("/.well-known/openai-apps-challenge", (_req: Request, res: Response) => {
-    res.type("text/plain").send(process.env.OPENAI_APPS_CHALLENGE_TOKEN ?? "");
-  });
-
+  // Set the env var before registering the route so the intent is explicit,
+  // even though Express reads process.env at request time (not registration
+  // time), making the ordering technically irrelevant.
   if (token !== undefined) {
     process.env.OPENAI_APPS_CHALLENGE_TOKEN = token;
   } else {
     delete process.env.OPENAI_APPS_CHALLENGE_TOKEN;
   }
+
+  // Mirrors the handler in src/server/http-server.ts exactly.
+  // If this test starts failing because the handler changed, update both.
+  app.get("/.well-known/openai-apps-challenge", (_req: Request, res: Response) => {
+    res.type("text/plain").send(process.env.OPENAI_APPS_CHALLENGE_TOKEN ?? "");
+  });
 
   const server = http.createServer(app);
   server.listen(0); // OS assigns an available port
@@ -47,6 +50,10 @@ function createChallengeServer(token: string | undefined): { server: http.Server
 describe("/.well-known/openai-apps-challenge", () => {
   let server: http.Server;
   let baseUrl: string;
+
+  beforeEach(() => {
+    delete process.env.OPENAI_APPS_CHALLENGE_TOKEN;
+  });
 
   afterEach(() => {
     server.close();
