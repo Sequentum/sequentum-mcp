@@ -47,6 +47,20 @@ function sendAuthChallenge(req: Request, res: Response): void {
 }
 
 /**
+ * Handler for GET /.well-known/openai-apps-challenge (ChatGPT App domain verification).
+ * Returns the token from OPENAI_APPS_CHALLENGE_TOKEN as text/plain (200), or 404 if unset.
+ * Exported so tests can import the real handler rather than duplicating it.
+ */
+export function handleOpenAIChallenge(_req: Request, res: Response): void {
+  const token = process.env.OPENAI_APPS_CHALLENGE_TOKEN;
+  if (!token) {
+    res.status(404).end();
+    return;
+  }
+  res.type("text/plain").send(token);
+}
+
+/**
  * Session data for HTTP mode - stores server and transport per session
  */
 interface HttpSession {
@@ -227,6 +241,11 @@ export async function startHttpServer(
 
     res.json(protectedResourceMetadata);
   });
+
+  // OpenAI domain verification endpoint (ChatGPT Apps submission)
+  // No auth required — must be publicly reachable by OpenAI's verifier.
+  // Set OPENAI_APPS_CHALLENGE_TOKEN before clicking "Verify Domain" on the submission form.
+  app.get("/.well-known/openai-apps-challenge", handleOpenAIChallenge);
 
   // Log incoming requests for debugging (only when DEBUG is enabled)
   if (DEBUG) {
