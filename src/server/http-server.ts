@@ -228,6 +228,15 @@ export async function startHttpServer(
     res.json(protectedResourceMetadata);
   });
 
+  // OpenAI domain verification endpoint (ChatGPT Apps submission)
+  // Returns the challenge token as plain text so OpenAI's verifier can confirm
+  // ownership of mcp.sequentum.com.  No auth required — must be publicly reachable.
+  // Set OPENAI_APPS_CHALLENGE_TOKEN in the environment before clicking "Verify Domain"
+  // on the ChatGPT App submission form.
+  app.get("/.well-known/openai-apps-challenge", (_req: Request, res: Response) => {
+    res.type("text/plain").send(process.env.OPENAI_APPS_CHALLENGE_TOKEN ?? "");
+  });
+
   // Log incoming requests for debugging (only when DEBUG is enabled)
   if (DEBUG) {
     app.use("/mcp", (req: Request, _res: Response, next) => {

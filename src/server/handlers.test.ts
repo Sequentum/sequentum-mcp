@@ -238,6 +238,20 @@ describe("tool annotations", () => {
     }
   });
 
+  it("every read-only tool has destructiveHint: false and openWorldHint: false", () => {
+    const readOnlyTools = tools.filter((t) => t.annotations?.readOnlyHint === true);
+    for (const tool of readOnlyTools) {
+      expect(
+        tool.annotations?.destructiveHint,
+        `Read-only tool "${tool.name}" is missing annotations.destructiveHint`
+      ).toBe(false);
+      expect(
+        tool.annotations?.openWorldHint,
+        `Read-only tool "${tool.name}" is missing annotations.openWorldHint`
+      ).toBe(false);
+    }
+  });
+
   // Per-tool expectation tables.  Each entry documents intent and acts as a
   // regression guard — changing a value here requires a deliberate edit.
   //
