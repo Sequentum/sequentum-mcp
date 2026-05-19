@@ -8,33 +8,27 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import http from "http";
-import express, { Request, Response } from "express";
+import express from "express";
+import { handleOpenAIChallenge } from "./http-server.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /**
- * Create a minimal Express app containing only the challenge route, bound to
- * an OS-assigned port.  Returns the server and its base URL.
+ * Create a minimal Express app wired up with the real handleOpenAIChallenge
+ * handler, bound to an OS-assigned port.  Returns the server and its base URL.
  */
 function createChallengeServer(token: string | undefined): { server: http.Server; baseUrl: string } {
-  const app = express();
-
-  // Set the env var before registering the route so the intent is explicit,
-  // even though Express reads process.env at request time (not registration
-  // time), making the ordering technically irrelevant.
+  // Set the env var before creating the server so the intent is explicit.
   if (token !== undefined) {
     process.env.OPENAI_APPS_CHALLENGE_TOKEN = token;
   } else {
     delete process.env.OPENAI_APPS_CHALLENGE_TOKEN;
   }
 
-  // Mirrors the handler in src/server/http-server.ts exactly.
-  // If this test starts failing because the handler changed, update both.
-  app.get("/.well-known/openai-apps-challenge", (_req: Request, res: Response) => {
-    res.type("text/plain").send(process.env.OPENAI_APPS_CHALLENGE_TOKEN ?? "");
-  });
+  const app = express();
+  app.get("/.well-known/openai-apps-challenge", handleOpenAIChallenge);
 
   const server = http.createServer(app);
   server.listen(0); // OS assigns an available port
@@ -56,7 +50,7 @@ describe("/.well-known/openai-apps-challenge", () => {
   });
 
   afterEach(() => {
-    server.close();
+    server?.close();
     delete process.env.OPENAI_APPS_CHALLENGE_TOKEN;
   });
 
@@ -71,13 +65,11 @@ describe("/.well-known/openai-apps-challenge", () => {
     expect(await res.text()).toBe(token);
   });
 
-  it("returns 200 with an empty body when OPENAI_APPS_CHALLENGE_TOKEN is not set", async () => {
+  it("returns 404 when OPENAI_APPS_CHALLENGE_TOKEN is not set", async () => {
     ({ server, baseUrl } = createChallengeServer(undefined));
 
     const res = await fetch(`${baseUrl}/.well-known/openai-apps-challenge`);
 
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toMatch(/^text\/plain/);
-    expect(await res.text()).toBe("");
+    expect(res.status).toBe(404);
   });
 });

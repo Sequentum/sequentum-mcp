@@ -61,6 +61,9 @@ export const tools: Tool[] = [
       },
       required: [],
     },
+    // All three hints are required for ChatGPT App submission.
+    // Read-only tools always get destructiveHint: false, openWorldHint: false.
+    // This is asserted for every read-only tool in handlers.test.ts.
     annotations: {
       title: "List Agents",
       readOnlyHint: true,

@@ -25,8 +25,8 @@
  *                     connecting to MCP server but tools will fail without valid tokens)
  *      OPENAI_APPS_CHALLENGE_TOKEN - Token provided by OpenAI during ChatGPT App domain
  *                     verification. Served at /.well-known/openai-apps-challenge as
- *                     text/plain. Only needed during the submission flow; safe to unset
- *                     afterwards.
+ *                     text/plain (200). Returns 404 when unset. Only needed during the
+ *                     submission flow; safe to unset afterwards.
  *
  *    Authentication: OAuth2 tokens are provided by Claude's infrastructure
  *    via the Authorization header on each request.
