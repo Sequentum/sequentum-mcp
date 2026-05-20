@@ -1202,9 +1202,12 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
             }
 
             // status === "processing" — keep waiting with backoff (cap at 15s)
-            // Use indeterminate progress (progress=0, total=0) to avoid implying a percentage.
+            // We use elapsed/MAX_WAIT_MS as the progress fraction rather than 0/0 (indeterminate).
+            // Tested in Cursor: 0/0 renders literally as "0 / 0" which looks broken.
+            // The time-based fraction visually advances (e.g. 0.09 / 1 → 0.19 / 1) and the
+            // message includes "max 5m" so it's clear this is a time budget, not build completion %.
             const elapsed = Date.now() - startTime;
-            await sendProgress(0, 0, `Build in progress... (${Math.round(elapsed / 1000)}s elapsed)`);
+            await sendProgress(elapsed / MAX_WAIT_MS, 1, `Build in progress... (${Math.round(elapsed / 1000)}s elapsed, max 5m)`);
             delay = Math.min(delay * 1.5, 15_000);
           }
 
