@@ -193,6 +193,11 @@ export function formatToolError(error: unknown): {
 
 const DEBUG = process.env.DEBUG === '1';
 
+export const AGENT_BUILD_MAX_WAIT_MS = 300_000;
+export const AGENT_BUILD_MAX_WAIT_LABEL = "5 minutes";
+export const AGENT_BUILD_MAX_WAIT_SHORT = "5m";
+export const AGENT_BUILD_ERROR_MESSAGE = "Build failed. Please review your prompt and try again.";
+
 function redactDebugArgs(args: unknown): unknown {
   if (args === null || typeof args !== "object" || Array.isArray(args)) {
     return args;
@@ -254,6 +259,8 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
   }));
 
   // Handle tool execution
+  // `extra` is typed as RequestHandlerExtra by the SDK's setRequestHandler generics.
+  // It exposes extra.signal (AbortSignal), extra._meta?.progressToken, and extra.sendNotification().
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
 
@@ -1120,7 +1127,7 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
             trim: true,
           })!;
           const spaceId = validateNumber(params, "spaceId", { required: false, min: 1, integer: true });
-          const waitForCompletion = validateBoolean(params, "waitForCompletion", false) ?? true;
+          const waitForCompletion = validateBoolean(params, "waitForCompletion", { required: false, default: true })!
 
           const startResponse = await apiClient.startAgentBuild({ prompt, spaceId });
 
@@ -1137,24 +1144,43 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
 
           // Internal polling loop — client sees a single tool call instead of 4-12 roundtrips.
           const { sessionId } = startResponse;
-          const MAX_WAIT_MS = 300_000; // 5 minutes
+          const MAX_WAIT_MS = AGENT_BUILD_MAX_WAIT_MS;
           const startTime = Date.now();
-          let delay = 3_000; // initial delay before first poll
+          let delay = 1_000; // initial delay before first poll (reduced from 3s for fast builds)
 
           // Progress helper — silently no-ops when the client didn't send a progressToken.
+          // If sendNotification throws (e.g. client disconnected), swallow the error and
+          // continue polling — the loop must not crash just because notifications failed.
           const progressToken = extra._meta?.progressToken;
           const sendProgress = async (progress: number, total: number, message: string) => {
-            if (progressToken !== undefined) {
+            if (progressToken === undefined) return;
+            try {
               await extra.sendNotification({
                 method: "notifications/progress",
                 params: { progressToken, progress, total, message },
               });
+            } catch {
+              // Client disconnected or transport closed; continue polling silently.
             }
           };
 
           await sendProgress(0, 1, `Build started. sessionId: ${sessionId}`);
 
           while (Date.now() - startTime < MAX_WAIT_MS) {
+            // Bail out early if the MCP client cancelled or disconnected.
+            if (extra.signal?.aborted) {
+              apiClient.stopAgentBuild(sessionId).catch(() => {});
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({ status: "cancelled", sessionId }, null, 2),
+                  },
+                ],
+                isError: true,
+              };
+            }
+
             await new Promise<void>((resolve) => setTimeout(resolve, delay));
 
             const status = await apiClient.getAgentBuildStatus(sessionId);
@@ -1182,7 +1208,7 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
                 content: [
                   {
                     type: "text",
-                    text: "Build failed. Please review your prompt and try again.",
+                    text: AGENT_BUILD_ERROR_MESSAGE,
                   },
                 ],
                 isError: true,
@@ -1201,17 +1227,23 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
               };
             }
 
-            // status === "processing" — keep waiting with backoff (cap at 15s)
-            // We use elapsed/MAX_WAIT_MS as the progress fraction rather than 0/0 (indeterminate).
-            // Tested in Cursor: 0/0 renders literally as "0 / 0" which looks broken.
-            // The time-based fraction visually advances (e.g. 0.09 / 1 → 0.19 / 1) and the
-            // message includes "max 5m" so it's clear this is a time budget, not build completion %.
+            // status === "processing" — keep waiting with backoff (cap at 15s).
+            // Progress uses raw seconds (e.g. 26 / 300) so the numerator/denominator are
+            // obviously time units in Cursor's tool panel, not a completion percentage.
+            // Tested: 0/0 renders as literal "0 / 0" in Cursor (confusing), so we use
+            // elapsed seconds with "max 5m" in the message to keep the context clear.
             const elapsed = Date.now() - startTime;
-            await sendProgress(elapsed / MAX_WAIT_MS, 1, `Build in progress... (${Math.round(elapsed / 1000)}s elapsed, max 5m)`);
+            await sendProgress(
+              Math.round(elapsed / 1000),
+              MAX_WAIT_MS / 1000,
+              `Build in progress... (${Math.round(elapsed / 1000)}s elapsed, max ${AGENT_BUILD_MAX_WAIT_SHORT})`
+            );
             delay = Math.min(delay * 1.5, 15_000);
           }
 
-          // Timed out — return the sessionId so the caller can check manually
+          // Timed out — the build is still running on the backend. Return the sessionId
+          // so the caller can check status manually via get_agent_build_status.
+          // isError is intentionally omitted: the build has not failed, we just stopped waiting.
           return {
             content: [
               {
@@ -1220,14 +1252,13 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
                   {
                     status: "timeout",
                     sessionId,
-                    message: "Build did not complete within 5 minutes. Use get_agent_build_status with the sessionId to check.",
+                    message: `Build did not complete within ${AGENT_BUILD_MAX_WAIT_LABEL}. The build is still running. Use get_agent_build_status with the sessionId to check.`,
                   },
                   null,
                   2
                 ),
               },
             ],
-            isError: true,
           };
         }
 
@@ -1246,7 +1277,7 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
           const sanitized = {
             ...status,
             error: status.status === "error"
-              ? "Build failed. Please review your prompt and try again."
+              ? AGENT_BUILD_ERROR_MESSAGE
               : undefined,
           };
 

@@ -8,6 +8,7 @@
 
 import { Prompt, PromptMessage } from "@modelcontextprotocol/sdk/types.js";
 import { PROMPT_HANDLING_POLICY } from "./policies.js";
+import { AGENT_BUILD_MAX_WAIT_LABEL } from "./handlers.js";
 
 // ==========================================
 // Prompt Definitions
@@ -198,8 +199,9 @@ function sanitizePromptArg(raw: string | undefined, maxLen: number): string | un
 /**
  * Status-branch guidance shared by both Agent Builder prompt workflows.
  * Each line maps one `get_agent_build_status` status value to the action the model should take.
- * The `processing` branch is intentionally omitted here — callers supply their own
- * wording so they can embed the polling cadence directive.
+ * The `processing` branch is intentionally omitted here — `build-agent-from-prompt` doesn't
+ * need it (polling is server-side inside start_agent_build), and `inspect-agent-draft`
+ * supplies its own wording so it can embed the polling cadence directive.
  */
 const AGENT_BUILD_STATUS_BRANCHES =
   `   - status="completed": the agent was saved successfully. Report agentId and agentName to the user. Done — stop polling.\n` +
@@ -444,7 +446,7 @@ export function getPromptMessages(
               `Follow these steps:\n\n` +
               spaceStep +
               `${stepOffset + 1}. Use start_agent_build with prompt=\`${prompt}\`. ${spaceNote} ` +
-              `This will wait for the build to complete and return the agentId directly (up to ~5 minutes). ` +
+              `This will wait for the build to complete and return the agentId directly (up to ~${AGENT_BUILD_MAX_WAIT_LABEL}). ` +
               `If the build times out, the response will include a sessionId — use get_agent_build_status to check manually.\n` +
               AGENT_BUILD_STATUS_BRANCHES +
               `${stepOffset + 2}. If the build succeeded (completed or ready), use get_agent with the agentId to show the user their new agent's details.\n` +

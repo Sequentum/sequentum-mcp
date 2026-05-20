@@ -7,6 +7,7 @@
 
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { PROMPT_HANDLING_POLICY } from "./policies.js";
+import { AGENT_BUILD_MAX_WAIT_LABEL } from "./handlers.js";
 
 export const tools: Tool[] = [
   // Agent Tools
@@ -998,9 +999,11 @@ export const tools: Tool[] = [
     description:
       "Start a new AI-powered agent building session from a natural language prompt. " +
       "By default (waitForCompletion=true), this call waits for the build to finish and returns the agentId directly — no polling required. " +
+      "Unlike start_agent (which defaults to async because run durations vary widely), start_agent_build defaults to sync because builds typically complete in 1-2 minutes. " +
       "The agent is saved to your workspace as soon as the AI creates it. " +
       "Set waitForCompletion=false to get the sessionId immediately and poll manually via get_agent_build_status. " +
-      "If the build times out (>5 min), the response will include the sessionId so you can check status manually. " +
+      `If the build times out (>${AGENT_BUILD_MAX_WAIT_LABEL}), the build is still running — the response will include the sessionId so you can check status manually via get_agent_build_status. ` +
+      "Note: clients should set a tool-call timeout > 5 min or enable resetTimeoutOnProgress, as the default MCP SDK timeout (60s) may expire before the build completes on slow sites. " +
       "Optionally call stop_agent_build to abort early while still in 'processing'. " +
       "If spaceName is known, resolve it to a spaceId via search_space_by_name first. " +
       "PRE-CALL CHECK: Before calling, verify the request unambiguously specifies (1) the target URL or domain, (2) the data to extract, and (3) any scope qualifiers (section, filters, language). If any of these are missing, ask one consolidated clarifying question covering all gaps instead of inventing values. " +
@@ -1027,7 +1030,7 @@ export const tools: Tool[] = [
         waitForCompletion: {
           type: "boolean",
           description:
-            "If true (default), wait for the build to complete and return the agentId directly in a single call (up to ~5 minutes). " +
+            `If true (default), wait for the build to complete and return the agentId directly in a single call (up to ~${AGENT_BUILD_MAX_WAIT_LABEL}). ` +
             "If false, return the sessionId immediately for manual polling via get_agent_build_status.",
         },
       },
