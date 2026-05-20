@@ -6,6 +6,8 @@
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { SUFFICIENCY_POLICY } from "./policies.js";
 import {
   CallToolRequestSchema,
@@ -259,9 +261,7 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
   }));
 
   // Handle tool execution
-  // `extra` is typed as RequestHandlerExtra by the SDK's setRequestHandler generics.
-  // It exposes extra.signal (AbortSignal), extra._meta?.progressToken, and extra.sendNotification().
-  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
     const { name, arguments: args } = request.params;
 
     if (DEBUG) {
