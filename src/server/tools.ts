@@ -997,9 +997,10 @@ export const tools: Tool[] = [
     name: "start_agent_build",
     description:
       "Start a new AI-powered agent building session from a natural language prompt. " +
-      "The agent is built asynchronously — this call returns immediately with a sessionId. " +
+      "By default (waitForCompletion=true), this call waits for the build to finish and returns the agentId directly — no polling required. " +
       "The agent is saved to your workspace as soon as the AI creates it. " +
-      "NEXT STEP: Poll get_agent_build_status until status reaches 'completed', 'ready', or 'error' — then stop polling; the session tears down automatically. " +
+      "Set waitForCompletion=false to get the sessionId immediately and poll manually via get_agent_build_status. " +
+      "If the build times out (>5 min), the response will include the sessionId so you can check status manually. " +
       "Optionally call stop_agent_build to abort early while still in 'processing'. " +
       "If spaceName is known, resolve it to a spaceId via search_space_by_name first. " +
       "PRE-CALL CHECK: Before calling, verify the request unambiguously specifies (1) the target URL or domain, (2) the data to extract, and (3) any scope qualifiers (section, filters, language). If any of these are missing, ask one consolidated clarifying question covering all gaps instead of inventing values. " +
@@ -1022,6 +1023,12 @@ export const tools: Tool[] = [
           description:
             "Optional space ID to associate the agent with. Use search_space_by_name to get the ID from a name. " +
             "If omitted, the default space is used.",
+        },
+        waitForCompletion: {
+          type: "boolean",
+          description:
+            "If true (default), wait for the build to complete and return the agentId directly in a single call (up to ~5 minutes). " +
+            "If false, return the sessionId immediately for manual polling via get_agent_build_status.",
         },
       },
       required: ["prompt"],

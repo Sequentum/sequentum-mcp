@@ -254,7 +254,7 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
   }));
 
   // Handle tool execution
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
 
     if (DEBUG) {
@@ -1120,14 +1120,110 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
             trim: true,
           })!;
           const spaceId = validateNumber(params, "spaceId", { required: false, min: 1, integer: true });
-          const response = await apiClient.startAgentBuild({ prompt, spaceId });
+          const waitForCompletion = validateBoolean(params, "waitForCompletion", false) ?? true;
+
+          const startResponse = await apiClient.startAgentBuild({ prompt, spaceId });
+
+          if (!waitForCompletion) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(startResponse, null, 2),
+                },
+              ],
+            };
+          }
+
+          // Internal polling loop — client sees a single tool call instead of 4-12 roundtrips.
+          const { sessionId } = startResponse;
+          const MAX_WAIT_MS = 300_000; // 5 minutes
+          const startTime = Date.now();
+          let delay = 3_000; // initial delay before first poll
+
+          // Progress helper — silently no-ops when the client didn't send a progressToken.
+          const progressToken = extra._meta?.progressToken;
+          const sendProgress = async (progress: number, total: number, message: string) => {
+            if (progressToken !== undefined) {
+              await extra.sendNotification({
+                method: "notifications/progress",
+                params: { progressToken, progress, total, message },
+              });
+            }
+          };
+
+          await sendProgress(0, 1, `Build started. sessionId: ${sessionId}`);
+
+          while (Date.now() - startTime < MAX_WAIT_MS) {
+            await new Promise<void>((resolve) => setTimeout(resolve, delay));
+
+            const status = await apiClient.getAgentBuildStatus(sessionId);
+
+            if (status.status === "completed" || status.status === "ready") {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify(
+                      { status: status.status, agentId: status.agentId, agentName: status.agentName, sessionId },
+                      null,
+                      2
+                    ),
+                  },
+                ],
+              };
+            }
+
+            if (status.status === "error") {
+              if (DEBUG && status.error) {
+                console.error(`[DEBUG] Agent build session ${sessionId} failed: ${status.error}`);
+              }
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: "Build failed. Please review your prompt and try again.",
+                  },
+                ],
+                isError: true,
+              };
+            }
+
+            if (status.status === "cancelled") {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({ status: "cancelled", sessionId }, null, 2),
+                  },
+                ],
+                isError: true,
+              };
+            }
+
+            // status === "processing" — keep waiting with backoff (cap at 15s)
+            const elapsed = Date.now() - startTime;
+            await sendProgress(elapsed / MAX_WAIT_MS, 1, `Build in progress... (${Math.round(elapsed / 1000)}s elapsed)`);
+            delay = Math.min(delay * 1.5, 15_000);
+          }
+
+          // Timed out — return the sessionId so the caller can check manually
           return {
             content: [
               {
                 type: "text",
-                text: JSON.stringify(response, null, 2),
+                text: JSON.stringify(
+                  {
+                    status: "timeout",
+                    sessionId,
+                    message: "Build did not complete within 5 minutes. Use get_agent_build_status with the sessionId to check.",
+                  },
+                  null,
+                  2
+                ),
               },
             ],
+            isError: true,
           };
         }
 

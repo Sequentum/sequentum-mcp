@@ -945,16 +945,15 @@ describe("MCP Prompts", () => {
       expect(() => getPromptMessages("compare-runs", undefined)).toThrow("Missing required argument: agentName");
     });
 
-    it("should include build-agent-from-prompt with prompt + optional spaceName + optional pollingPreference", () => {
+    it("should include build-agent-from-prompt with prompt + optional spaceName", () => {
       const prompt = prompts.find((p) => p.name === "build-agent-from-prompt");
       expect(prompt).toBeDefined();
-      expect(prompt!.arguments).toHaveLength(3);
+      expect(prompt!.arguments).toHaveLength(2);
       const promptArg = prompt!.arguments!.find((a) => a.name === "prompt");
       const spaceNameArg = prompt!.arguments!.find((a) => a.name === "spaceName");
-      const pollingArg = prompt!.arguments!.find((a) => a.name === "pollingPreference");
       expect(promptArg?.required).toBe(true);
       expect(spaceNameArg?.required).toBe(false);
-      expect(pollingArg?.required).toBe(false);
+      expect(prompt!.arguments!.find((a) => a.name === "pollingPreference")).toBeUndefined();
     });
 
     it("should include inspect-agent-draft with sessionId + optional pollingPreference", () => {
@@ -991,27 +990,26 @@ describe("MCP Prompts", () => {
       expect(text).toContain("My Space");
     });
 
-    it("should embed pollingPreference into build-agent-from-prompt when provided", () => {
+    it("build-agent-from-prompt instructs start_agent_build to wait internally (no manual poll step)", () => {
       const messages = getPromptMessages("build-agent-from-prompt", {
         prompt: "Scrape prices from amazon.com",
-        pollingPreference: "poll every 3 seconds",
       });
       const text = (messages[0].content as { text: string }).text;
-      expect(text).toContain("User polling preference (advisory)");
-      expect(text).toContain("poll every 3 seconds");
-      expect(text).toContain("Use the polling cadence from the user's advisory above");
+      expect(text).toContain("wait for the build to complete");
+      expect(text).toContain("agentId directly");
+      expect(text).not.toContain("Poll get_agent_build_status");
+      expect(text).not.toContain("User polling preference (advisory)");
       expect(text).not.toContain("moderate cadence with backoff");
-      expect(text).not.toContain("IMPORTANT POLLING DIRECTIVE FROM USER");
     });
 
-    it("should fall back to default polling guidance for build-agent-from-prompt when pollingPreference is omitted", () => {
+    it("build-agent-from-prompt includes timeout fallback guidance with sessionId", () => {
       const messages = getPromptMessages("build-agent-from-prompt", {
         prompt: "Scrape prices from amazon.com",
       });
       const text = (messages[0].content as { text: string }).text;
-      expect(text).not.toContain("User polling preference (advisory)");
-      expect(text).not.toContain("IMPORTANT POLLING DIRECTIVE FROM USER");
-      expect(text).toContain("moderate cadence with backoff");
+      expect(text).toContain("times out");
+      expect(text).toContain("sessionId");
+      expect(text).toContain("get_agent_build_status");
     });
 
     it("should throw for build-agent-from-prompt without prompt", () => {
