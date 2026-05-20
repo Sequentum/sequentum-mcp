@@ -1202,8 +1202,9 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
             }
 
             // status === "processing" — keep waiting with backoff (cap at 15s)
+            // Use indeterminate progress (progress=0, total=0) to avoid implying a percentage.
             const elapsed = Date.now() - startTime;
-            await sendProgress(elapsed / MAX_WAIT_MS, 1, `Build in progress... (${Math.round(elapsed / 1000)}s elapsed)`);
+            await sendProgress(0, 0, `Build in progress... (${Math.round(elapsed / 1000)}s elapsed)`);
             delay = Math.min(delay * 1.5, 15_000);
           }
 

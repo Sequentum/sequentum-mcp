@@ -523,6 +523,40 @@ describe("agent builder handler dispatch", () => {
         vi.useRealTimers();
       }
     });
+
+    it("waitForCompletion=true: returns isError with sessionId after 5-minute timeout", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(mockApiClient.startAgentBuild).mockResolvedValueOnce({ sessionId: "sess-timeout-1" });
+        // Always return "processing" so the loop never exits via a terminal status.
+        vi.mocked(mockApiClient.getAgentBuildStatus).mockResolvedValue({
+          status: "processing",
+        } as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>);
+
+        // Extend the SDK client timeout past the server's 5-minute max-wait so it doesn't
+        // fire before the server exits the loop. resetTimeoutOnProgress keeps it alive while
+        // progress notifications are flowing.
+        const resultPromise = client.callTool(
+          {
+            name: "start_agent_build",
+            arguments: { prompt: "scrape product names from https://example.com/shop" },
+          },
+          CallToolResultSchema,
+          { timeout: 310_000, resetTimeoutOnProgress: true }
+        );
+
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+
+        expect(result.isError).toBe(true);
+        const parsed = JSON.parse((result.content[0] as { text: string }).text);
+        expect(parsed.status).toBe("timeout");
+        expect(parsed.sessionId).toBe("sess-timeout-1");
+        expect(parsed.message).toContain("get_agent_build_status");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe("get_agent_build_status", () => {
