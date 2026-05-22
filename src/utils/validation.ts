@@ -145,17 +145,24 @@ export function validateJsonString(
   return value;
 }
 
+type BooleanValidationOptions = { required?: boolean; default?: boolean };
+
 export function validateBoolean(
   args: Record<string, unknown>,
   field: string,
-  required: boolean = true
+  requiredOrOptions: boolean | BooleanValidationOptions = true
 ): boolean | undefined {
+  const opts =
+    typeof requiredOrOptions === "object"
+      ? requiredOrOptions
+      : { required: requiredOrOptions };
+  const required = opts.required ?? true;
   const value = args[field];
   if (value === undefined || value === null) {
     if (required) {
       throw new Error(`Missing required parameter: ${field}`);
     }
-    return undefined;
+    return opts.default;
   }
   if (typeof value !== "boolean") {
     throw new Error(
