@@ -5,6 +5,7 @@ import {
   isPaginatedResponse,
   parseScheduleParams,
   validateScheduleStartTime,
+  AGENT_BUILD_ERROR_MESSAGE,
 } from "./handlers.js";
 import { tools } from "./tools.js";
 import { getPromptMessages } from "./prompts.js";
@@ -15,6 +16,7 @@ import {
   RateLimitError,
 } from "../api/types.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { SequentumApiClient } from "../api/api-client.js";
 
@@ -388,6 +390,288 @@ describe("agent builder handler dispatch", () => {
       expect(result.isError).toBe(true);
       expect((result.content[0] as { text: string }).text).toMatch(/at least 10/i);
     });
+
+    it("waitForCompletion=true (default): polls internally and returns agentId on success", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(mockApiClient.startAgentBuild).mockResolvedValueOnce({ sessionId: "sess-sync-1" });
+        vi.mocked(mockApiClient.getAgentBuildStatus)
+          .mockResolvedValueOnce({ status: "processing" } as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>)
+          .mockResolvedValueOnce({ status: "completed", agentId: 42, agentName: "Test Agent" } as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>);
+
+        const resultPromise = client.callTool({
+          name: "start_agent_build",
+          arguments: { prompt: "scrape product names from https://example.com/shop" },
+        });
+
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+
+        expect(result.isError).toBeFalsy();
+        const parsed = JSON.parse((result.content[0] as { text: string }).text);
+        expect(parsed.agentId).toBe(42);
+        expect(parsed.agentName).toBe("Test Agent");
+        expect(parsed.status).toBe("completed");
+        expect(parsed.sessionId).toBe("sess-sync-1");
+        expect(vi.mocked(mockApiClient.getAgentBuildStatus)).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("waitForCompletion=true: sanitizes raw backend error and returns isError", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(mockApiClient.startAgentBuild).mockResolvedValueOnce({ sessionId: "sess-sync-err" });
+        vi.mocked(mockApiClient.getAgentBuildStatus).mockResolvedValueOnce({
+          status: "error",
+          error: "NullReferenceException at AgentBuilder.cs:99",
+          agentId: null,
+          agentName: null,
+        } as unknown as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>);
+
+        const resultPromise = client.callTool({
+          name: "start_agent_build",
+          arguments: { prompt: "scrape product names from https://example.com/shop" },
+        });
+
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+
+        expect(result.isError).toBe(true);
+        const text = (result.content[0] as { text: string }).text;
+        expect(text).toBe(AGENT_BUILD_ERROR_MESSAGE);
+        expect(text).not.toContain("NullReferenceException");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("waitForCompletion=false: returns sessionId immediately without polling", async () => {
+      vi.mocked(mockApiClient.startAgentBuild).mockResolvedValueOnce({ sessionId: "sess-async-1" });
+
+      const result = await client.callTool({
+        name: "start_agent_build",
+        arguments: {
+          prompt: "scrape product names from https://example.com/shop",
+          waitForCompletion: false,
+        },
+      });
+
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse((result.content[0] as { text: string }).text);
+      expect(parsed.sessionId).toBe("sess-async-1");
+      expect(vi.mocked(mockApiClient.getAgentBuildStatus)).not.toHaveBeenCalled();
+    });
+
+    it("waitForCompletion=true: returns isError with sessionId on cancelled status", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(mockApiClient.startAgentBuild).mockResolvedValueOnce({ sessionId: "sess-cancel-1" });
+        vi.mocked(mockApiClient.getAgentBuildStatus).mockResolvedValueOnce({
+          status: "cancelled",
+        } as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>);
+
+        const resultPromise = client.callTool({
+          name: "start_agent_build",
+          arguments: { prompt: "scrape product names from https://example.com/shop" },
+        });
+
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+
+        expect(result.isError).toBe(true);
+        const parsed = JSON.parse((result.content[0] as { text: string }).text);
+        expect(parsed.status).toBe("cancelled");
+        expect(parsed.sessionId).toBe("sess-cancel-1");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("emits a progress notification with sessionId immediately after build starts", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(mockApiClient.startAgentBuild).mockResolvedValueOnce({ sessionId: "sess-progress-1" });
+        vi.mocked(mockApiClient.getAgentBuildStatus).mockResolvedValueOnce({
+          status: "completed",
+          agentId: 7,
+          agentName: "Progress Agent",
+        } as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>);
+
+        const progressMessages: string[] = [];
+
+        const resultPromise = client.callTool(
+          {
+            name: "start_agent_build",
+            arguments: { prompt: "scrape product names from https://example.com/shop" },
+          },
+          CallToolResultSchema,
+          {
+            onprogress: (p) => {
+              if (p.message) progressMessages.push(p.message);
+            },
+          }
+        );
+
+        await vi.runAllTimersAsync();
+        await resultPromise;
+
+        // The first notification should include the sessionId so the caller knows it immediately.
+        expect(progressMessages.length).toBeGreaterThanOrEqual(1);
+        expect(progressMessages[0]).toContain("sess-progress-1");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("waitForCompletion=true: timeout does NOT set isError (build still running)", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(mockApiClient.startAgentBuild).mockResolvedValueOnce({ sessionId: "sess-timeout-1" });
+        // Always return "processing" so the loop never exits via a terminal status.
+        vi.mocked(mockApiClient.getAgentBuildStatus).mockResolvedValue({
+          status: "processing",
+        } as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>);
+
+        // Extend the SDK client timeout past the server's 5-minute max-wait so it doesn't
+        // fire before the server exits the loop. resetTimeoutOnProgress keeps it alive while
+        // progress notifications are flowing.
+        const resultPromise = client.callTool(
+          {
+            name: "start_agent_build",
+            arguments: { prompt: "scrape product names from https://example.com/shop" },
+          },
+          CallToolResultSchema,
+          { timeout: 310_000, resetTimeoutOnProgress: true }
+        );
+
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+
+        // The build is left running — isError must be falsy (not a failure, just stopped waiting).
+        expect(result.isError).toBeFalsy();
+        const parsed = JSON.parse((result.content[0] as { text: string }).text);
+        expect(parsed.status).toBe("timeout");
+        expect(parsed.sessionId).toBe("sess-timeout-1");
+        expect(parsed.message).toContain("get_agent_build_status");
+        expect(parsed.message).toContain("still running");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("waitForCompletion=true: returns completed shape when status is 'ready'", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(mockApiClient.startAgentBuild).mockResolvedValueOnce({ sessionId: "sess-ready-1" });
+        vi.mocked(mockApiClient.getAgentBuildStatus).mockResolvedValueOnce({
+          status: "ready",
+          agentId: 99,
+          agentName: "Ready Agent",
+        } as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>);
+
+        const resultPromise = client.callTool({
+          name: "start_agent_build",
+          arguments: { prompt: "scrape product names from https://example.com/shop" },
+        });
+
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+
+        expect(result.isError).toBeFalsy();
+        const parsed = JSON.parse((result.content[0] as { text: string }).text);
+        expect(parsed.status).toBe("ready");
+        expect(parsed.agentId).toBe(99);
+        expect(parsed.agentName).toBe("Ready Agent");
+        expect(parsed.sessionId).toBe("sess-ready-1");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("waitForCompletion=true: calls stopAgentBuild when MCP client cancels (signal aborted)", async () => {
+      vi.useFakeTimers();
+      try {
+        // Use a separate server/client pair to avoid polluting the shared test fixtures.
+        const abortApiClient = makeMinimalMockClient({
+          startAgentBuild: vi.fn().mockResolvedValue({ sessionId: "sess-abort-1" }),
+          getAgentBuildStatus: vi.fn().mockResolvedValue({ status: "processing" }),
+          stopAgentBuild: vi.fn().mockResolvedValue(undefined),
+        });
+        const abortServer = createMcpServer(abortApiClient, "test");
+        const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+        await abortServer.connect(serverTransport);
+        const abortMcpClient = new Client({ name: "abort-client", version: "1.0" });
+        await abortMcpClient.connect(clientTransport);
+
+        // Use a very short SDK timeout (50ms fake time). When it fires the SDK sends a
+        // cancellation notification to the server, which aborts extra.signal.
+        // The handler's 1s initial sleep is still pending; when it fires the abort check
+        // at the top of the next loop iteration calls stopAgentBuild.
+        const resultPromise = abortMcpClient
+          .callTool(
+            { name: "start_agent_build", arguments: { prompt: "scrape product names from https://example.com/shop" } },
+            CallToolResultSchema,
+            { timeout: 50 }
+          )
+          .catch(() => null); // client timeout is expected
+
+        // Let the 50ms SDK timeout fire (cancels request on server → signal aborted),
+        // then advance past the initial 1s sleep so the loop body runs and checks the signal.
+        await vi.advanceTimersByTimeAsync(1_200);
+        // Flush any queued microtasks so the cancellation notification is fully processed.
+        await Promise.resolve();
+        await Promise.resolve();
+        await resultPromise;
+
+        expect(vi.mocked(abortApiClient.stopAgentBuild)).toHaveBeenCalledWith("sess-abort-1");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("waitForCompletion=true: sendNotification failure does not crash the polling loop", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(mockApiClient.startAgentBuild).mockResolvedValueOnce({ sessionId: "sess-notif-err" });
+        // Return processing once then complete — we want to survive a notification failure
+        // and still return the success result.
+        vi.mocked(mockApiClient.getAgentBuildStatus)
+          .mockResolvedValueOnce({ status: "processing" } as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>)
+          .mockResolvedValueOnce({
+            status: "completed",
+            agentId: 55,
+            agentName: "Resilient Agent",
+          } as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>);
+
+        // Track progress and force the notification to throw on the first call.
+        let notifCallCount = 0;
+        const resultPromise = client.callTool(
+          {
+            name: "start_agent_build",
+            arguments: { prompt: "scrape product names from https://example.com/shop" },
+          },
+          CallToolResultSchema,
+          {
+            onprogress: () => {
+              notifCallCount++;
+              if (notifCallCount === 1) throw new Error("transport closed");
+            },
+          }
+        );
+
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+
+        // Despite the notification failure on the first progress, the tool should succeed.
+        expect(result.isError).toBeFalsy();
+        const parsed = JSON.parse((result.content[0] as { text: string }).text);
+        expect(parsed.agentId).toBe(55);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe("get_agent_build_status", () => {
@@ -406,7 +690,7 @@ describe("agent builder handler dispatch", () => {
 
       expect(result.isError).toBeFalsy();
       const parsed = JSON.parse((result.content[0] as { text: string }).text);
-      expect(parsed.error).toBe("Build failed. Please review your prompt and try again.");
+      expect(parsed.error).toBe(AGENT_BUILD_ERROR_MESSAGE);
       expect(parsed.error).not.toContain("NullReferenceException");
     });
   });
