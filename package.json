@@ -18,9 +18,11 @@
     "dev": "tsx src/index.ts",
     "clean": "rimraf dist",
     "prepare": "npm run build",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "smoke": "vitest run src/smoke.test.ts",
     "validate:registry": "node scripts/validate-registry.mjs",
     "check:versions": "node scripts/check-versions.mjs",
     "prepublishOnly": "npm run validate:registry && npm run check:versions"
@@ -54,9 +56,13 @@
     "@vitest/coverage-v8": "^3.0.0",
     "ajv": "^8.0.0",
     "ajv-formats": "^3.0.1",
+    "eslint": "^9.0.0",
+    "eslint-import-resolver-typescript": "^3.6.0",
+    "eslint-plugin-import-x": "^4.0.0",
     "rimraf": "^5.0.5",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3",
+    "typescript-eslint": "^8.0.0",
     "vitest": "^3.0.0"
   },
   "engines": {
