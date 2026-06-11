@@ -8,7 +8,7 @@
 
 import { Prompt, PromptMessage } from "@modelcontextprotocol/sdk/types.js";
 import { PROMPT_HANDLING_POLICY } from "./policies.js";
-import { AGENT_BUILD_MAX_WAIT_LABEL } from "./handlers.js";
+import { AGENT_BUILD_MAX_WAIT_LABEL } from "./constants.js";
 
 // ==========================================
 // Prompt Definitions

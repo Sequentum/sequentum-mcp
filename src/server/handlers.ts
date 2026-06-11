@@ -10,6 +10,12 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { SUFFICIENCY_POLICY } from "./policies.js";
 import {
+  AGENT_BUILD_MAX_WAIT_MS,
+  AGENT_BUILD_MAX_WAIT_LABEL,
+  AGENT_BUILD_MAX_WAIT_SHORT,
+  AGENT_BUILD_ERROR_MESSAGE,
+} from "./constants.js";
+import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
@@ -195,10 +201,16 @@ export function formatToolError(error: unknown): {
 
 const DEBUG = process.env.DEBUG === '1';
 
-export const AGENT_BUILD_MAX_WAIT_MS = 300_000;
-export const AGENT_BUILD_MAX_WAIT_LABEL = "5 minutes";
-export const AGENT_BUILD_MAX_WAIT_SHORT = "5m";
-export const AGENT_BUILD_ERROR_MESSAGE = "Build failed. Please review your prompt and try again.";
+// Re-exported (imported above for internal use) for backwards compatibility.
+// These must NOT be defined here: handlers.ts imports tools.ts/prompts.ts, which
+// read these constants at module-evaluation time, so defining them here creates
+// an import-cycle temporal dead zone that crashes on startup. See constants.ts.
+export {
+  AGENT_BUILD_MAX_WAIT_MS,
+  AGENT_BUILD_MAX_WAIT_LABEL,
+  AGENT_BUILD_MAX_WAIT_SHORT,
+  AGENT_BUILD_ERROR_MESSAGE,
+};
 
 function redactDebugArgs(args: unknown): unknown {
   if (args === null || typeof args !== "object" || Array.isArray(args)) {
