@@ -38,3 +38,14 @@ coverage/
 # Jenkins pipeline files (not committed to public repo)
 Jenkinsfile*
 
+# Design specs and other Superpowers workflow artifacts (not committed to public repo)
+docs/superpowers/
+.superpowers/
+
+# Local Claude Code instructions (not committed to public repo)
+/CLAUDE.local.md
+
+# App-directory submission artifacts (not committed to public repo)
+docs/annotation-hint-justifications.md
+docs/submission-test-cases.md
+

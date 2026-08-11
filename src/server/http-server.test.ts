@@ -6,10 +6,10 @@
  * headers, not just the handler logic in isolation.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import http from "http";
-import express from "express";
-import { handleOpenAIChallenge } from "./http-server.js";
+import express, { type NextFunction, type Request, type Response } from "express";
+import { handleOpenAIChallenge, jsonRpcErrorMiddleware, parseTrustProxy } from "./http-server.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -71,5 +71,104 @@ describe("/.well-known/openai-apps-challenge", () => {
     const res = await fetch(`${baseUrl}/.well-known/openai-apps-challenge`);
 
     expect(res.status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseTrustProxy
+// ---------------------------------------------------------------------------
+
+describe("parseTrustProxy", () => {
+  it("defaults to true (unset), identical to the previous boolean-only behaviour", () => {
+    expect(parseTrustProxy(undefined)).toBe(true);
+  });
+
+  it("parses the literal strings 'true' and 'false'", () => {
+    expect(parseTrustProxy("true")).toBe(true);
+    expect(parseTrustProxy("false")).toBe(false);
+  });
+
+  it("parses a bare integer as a hop count", () => {
+    expect(parseTrustProxy("1")).toBe(1);
+    expect(parseTrustProxy("3")).toBe(3);
+  });
+
+  it("passes a comma-separated CIDR/IP list through as-is for Express to parse", () => {
+    expect(parseTrustProxy("10.0.0.0/8,192.168.1.1")).toBe("10.0.0.0/8,192.168.1.1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// jsonRpcErrorMiddleware
+// ---------------------------------------------------------------------------
+
+describe("jsonRpcErrorMiddleware", () => {
+  function mockResponse() {
+    const res = {
+      headersSent: false,
+      statusCode: 0,
+      body: undefined as unknown,
+      status(code: number) {
+        this.statusCode = code;
+        return this;
+      },
+      json(payload: unknown) {
+        this.body = payload;
+        return this;
+      },
+    };
+    return res as unknown as Response & { statusCode: number; body: unknown };
+  }
+
+  afterEach(() => {
+    delete process.env.NODE_ENV;
+  });
+
+  it("returns a sanitized JSON-RPC -32603 error, not an HTML page", () => {
+    const res = mockResponse();
+    const next = vi.fn();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    jsonRpcErrorMiddleware(new Error("boom"), {} as Request, res, next as NextFunction);
+
+    expect(res.statusCode).toBe(500);
+    expect(res.body).toMatchObject({ jsonrpc: "2.0", error: { code: -32603 }, id: null });
+    spy.mockRestore();
+  });
+
+  it("includes the error message when NODE_ENV is not production", () => {
+    process.env.NODE_ENV = "development";
+    const res = mockResponse();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    jsonRpcErrorMiddleware(new Error("boom, detailed cause"), {} as Request, res, vi.fn() as NextFunction);
+
+    expect((res.body as { error: { message: string } }).error.message).toBe("boom, detailed cause");
+    spy.mockRestore();
+  });
+
+  it("suppresses the error message when NODE_ENV is production", () => {
+    process.env.NODE_ENV = "production";
+    const res = mockResponse();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    jsonRpcErrorMiddleware(new Error("boom, detailed cause"), {} as Request, res, vi.fn() as NextFunction);
+
+    const message = (res.body as { error: { message: string } }).error.message;
+    expect(message).not.toContain("boom, detailed cause");
+    expect(message).toBe("Internal server error");
+    spy.mockRestore();
+  });
+
+  it("defers to next(err) instead of writing a second response when headers are already sent", () => {
+    const res = mockResponse();
+    res.headersSent = true;
+    const next = vi.fn();
+    const err = new Error("mid-stream failure");
+
+    jsonRpcErrorMiddleware(err, {} as Request, res, next as NextFunction);
+
+    expect(next).toHaveBeenCalledWith(err);
+    expect(res.body).toBeUndefined();
   });
 });

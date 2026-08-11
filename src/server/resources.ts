@@ -6,7 +6,10 @@
  * providing a "discovery" layer for static or default-parameter data.
  */
 
-import { Resource, ResourceTemplate } from "@modelcontextprotocol/sdk/types.js";
+// SDK v2 exports `ResourceTemplate` as the runtime *class* used by
+// `McpServer.registerResource`; the wire-shape type these declarations use
+// (uriTemplate/name/description/mimeType) is `ResourceTemplateType`.
+import { ResourceNotFoundError, type Resource, type ResourceTemplateType } from "@modelcontextprotocol/server";
 import { SequentumApiClient } from "../api/api-client.js";
 import { getDefaultDateRange } from "../utils/validation.js";
 
@@ -77,7 +80,7 @@ export const resources: Resource[] = [
 // Resource Templates (parameterized URIs)
 // ==========================================
 
-export const resourceTemplates: ResourceTemplate[] = [
+export const resourceTemplates: ResourceTemplateType[] = [
   {
     uriTemplate: "sequentum://agents/{agentId}",
     name: "Agent Detail",
@@ -179,7 +182,8 @@ export const resourceTemplates: ResourceTemplate[] = [
  * @param uri - The resource URI to read (e.g. "sequentum://agents" or "sequentum://agents/42")
  * @param apiClient - The API client instance for this session
  * @returns Object with uri, mimeType, and text (JSON string)
- * @throws Error if the URI does not match any known resource
+ * @throws ResourceNotFoundError if the URI does not match any known resource —
+ *   a caller mistake (invalid params, wire code -32602), not a server fault.
  */
 export async function readResource(
   uri: string,
@@ -405,5 +409,10 @@ export async function readResource(
     };
   }
 
-  throw new Error(`Unknown resource URI: ${uri}`);
+  // A caller-supplied URI that matches no static resource or template is an
+  // invalid parameter, not a server fault — ResourceNotFoundError carries the
+  // wire code -32602 (Invalid Params) so it does not surface as -32603
+  // Internal error. The first argument is the URI itself (used for the
+  // typed error's `.data.uri`); the second is the human-readable message.
+  throw new ResourceNotFoundError(uri, `Unknown resource URI: ${uri}`);
 }

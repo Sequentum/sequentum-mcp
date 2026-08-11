@@ -27,13 +27,22 @@
  *                     verification. Served at /.well-known/openai-apps-challenge as
  *                     text/plain (200). Returns 404 when unset. Only needed during the
  *                     submission flow; safe to unset afterwards.
+ *      LIST_CACHE_TTL_MS - Cache-hint freshness (ms) advertised on list-shaped results
+ *                     (tools/list, prompts/list, resources/list,
+ *                     resources/templates/list) and server/discover.
+ *      MCP_RATE_LIMIT_WINDOW_MS - Rate-limit window (ms) for the /mcp endpoint.
+ *      MCP_RATE_LIMIT_MAX - Max requests per window per IP for the /mcp endpoint.
+ *      TRUST_PROXY - Express 'trust proxy' setting: 'true'/'false', a hop count, or a
+ *                     comma-separated CIDR/IP allowlist of trusted reverse proxies.
+ *      ALLOWED_ORIGINS - Comma-separated list of additional exact-match Origins to
+ *                     allow via CORS, appended to the built-in defaults.
  *
  *    Authentication: OAuth2 tokens are provided by Claude's infrastructure
  *    via the Authorization header on each request.
  */
 
 import { createRequire } from "module";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { SequentumApiClient } from "./api/api-client.js";
 import type { AuthMode } from "./api/types.js";
 import { createMcpServer } from "./server/handlers.js";
