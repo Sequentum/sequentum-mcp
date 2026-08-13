@@ -38,9 +38,19 @@
   `inputSchema` up front. For example, a missing required parameter previously produced
   `"Error: Invalid parameter 'agentId': ..."`; it now produces `"Input validation error:
   Invalid arguments for tool get_agent: data must have required property 'agentId'"`.
+- **`/.well-known/oauth-authorization-server` no longer returns a metadata document.**
+  It now answers `302` with a `Location` pointing at the authorization server's own
+  document. This server is a protected resource, not an authorization server: RFC 8414
+  §3.3 requires the `issuer` in that document to equal the origin it was fetched from,
+  which a copy served here can never satisfy. Clients that follow redirects are
+  unaffected; a client that read the body without following the redirect must now follow
+  it, or read `authorization_servers` from `/.well-known/oauth-protected-resource`.
 
 ### Added
 
+- **`SEQUENTUM_OAUTH_ISSUER`** — optional HTTP-mode variable naming this deployment's
+  OAuth issuer identifier, defaulting to `SEQUENTUM_API_URL`. Set it when the API base
+  URL and the public OAuth issuer differ. A malformed value refuses to start.
 - Cache hints (`ttlMs` / `cacheScope`) on all four list-shaped results (`tools/list`,
   `prompts/list`, `resources/list`, `resources/templates/list`) and on
   `server/discover`, so conformant clients can cache them; `resources/read` is

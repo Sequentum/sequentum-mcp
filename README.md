@@ -190,6 +190,7 @@ To connect to a custom Sequentum deployment, add the `SEQUENTUM_API_URL` environ
 |----------|----------|---------|-------------|
 | `SEQUENTUM_API_KEY` | Yes | -- | Your Sequentum API key (format: `sk-...`). Get this from the Sequentum Control Center under Settings > API Keys. |
 | `SEQUENTUM_API_URL` | No | `https://dashboard.sequentum.com` | The base URL of your Sequentum instance. Override if using a custom deployment. |
+| `SEQUENTUM_OAUTH_ISSUER` | No | Value of `SEQUENTUM_API_URL` | HTTP mode only. This deployment's OAuth issuer identifier. Must be an absolute `https` URL with no query, fragment or userinfo, and must match the authorization server's `issuer` exactly. Set it only when the API base URL and the public OAuth issuer differ. |
 
 ## Example Usage
 

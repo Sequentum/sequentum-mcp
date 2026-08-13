@@ -10,7 +10,7 @@
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import express, { NextFunction, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
-import { buildAuthChallenge, buildOAuthMetadata, SUPPORTED_SCOPES } from "../utils/oauth-metadata.js";
+import { buildAuthChallenge, SUPPORTED_SCOPES } from "../utils/oauth-metadata.js";
 import { buildAllowedOrigins, isAllowedOrigin } from "./cors.js";
 import { MCP_RATE_LIMIT_MAX, MCP_RATE_LIMIT_WINDOW_MS, RATE_LIMIT_ERROR_CODE } from "./constants.js";
 import { createSequentumMcpHandler } from "./mcp-handler.js";
@@ -196,9 +196,16 @@ export function handleOpenAIChallenge(_req: Request, res: Response): void {
  *
  * Returns the listening http.Server so callers (and tests) can bind port 0 and
  * close it deterministically.
+ *
+ * @param apiBaseUrl - Base URL for REST calls to the Sequentum API.
+ * @param issuer - This deployment's advertised OAuth issuer identifier. Usually the
+ *   same value as apiBaseUrl, but kept separate because they are different things:
+ *   one is where requests go, the other is this server's OAuth identity. Must match
+ *   se4-main's resolved issuer byte-for-byte or clients reject the metadata document.
  */
 export async function startHttpServer(
   apiBaseUrl: string,
+  issuer: string,
   version: string,
   httpPort: number,
   httpHost: string
@@ -290,14 +297,23 @@ export async function startHttpServer(
     res.json({ status: "ok", version, transport: "streamable-http" });
   });
 
-  // OAuth2 Authorization Server Metadata (RFC 8414)
-  // This enables MCP clients to discover OAuth2 endpoints automatically
-  // OAuth URLs are derived from the API base URL (same server hosts both API and OAuth)
-  
-  // RFC 8414 standard path - Authorization Server Metadata
+  // RFC 8414 authorization-server metadata belongs to the authorization server, not
+  // to us. A document served from this origin would have to carry an `issuer` that is
+  // not this origin, which RFC 8414 Section 3.3 lets clients reject — so a local copy
+  // cannot be made conformant, only kept in sync by hand until it drifts.
+  //
+  // It had already drifted: se4-main's document carries jwks_uri, three token endpoint
+  // auth methods, eight scopes, and the RFC 9207 authorization_response_iss_parameter_supported
+  // flag that ours lacked. Per RFC 9207 Section 2.4 a client reading a document without
+  // that flag DISCARDS any authorization response carrying `iss`, which se4-main now
+  // emits — so continuing to serve the copy would break OAuth for anyone reading it.
+  //
+  // 302 rather than 301: the target is environment-specific, and a permanently cached
+  // redirect pointing at the wrong environment is painful to undo. A redirect rather
+  // than a proxy: no runtime dependency on the backend, no caching policy, and when the
+  // backend is down the client sees the backend's error instead of ours.
   app.get("/.well-known/oauth-authorization-server", (_req: Request, res: Response) => {
-    const metadata = buildOAuthMetadata(apiBaseUrl);
-    res.json(metadata);
+    res.redirect(302, `${issuer}/.well-known/oauth-authorization-server`);
   });
 
   // RFC 9728 - Protected Resource Metadata (required by MCP spec 2025-06-18)
@@ -312,8 +328,10 @@ export async function startHttpServer(
     const protectedResourceMetadata = {
       // The canonical URI of this MCP server (the protected resource)
       resource: resourceUrl,
-      // Authorization servers that can issue tokens for this resource
-      authorization_servers: [apiBaseUrl],
+      // The authorization server's own issuer identifier — NOT apiBaseUrl. Clients
+      // fetch metadata from this value and compare its `issuer` field against it, so
+      // it must match se4-main's configured issuer exactly, trailing slash included.
+      authorization_servers: [issuer],
       // Scopes supported by this resource
       scopes_supported: [...SUPPORTED_SCOPES],
       // Bearer token is required

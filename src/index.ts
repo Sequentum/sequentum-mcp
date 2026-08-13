@@ -20,6 +20,12 @@
  *      PORT - HTTP server port (default: 3000)
  *      HOST - HTTP server host (default: 0.0.0.0)
  *      SEQUENTUM_API_URL - Base URL of the Sequentum API (default: https://dashboard.sequentum.com)
+ *      SEQUENTUM_OAUTH_ISSUER - This deployment's OAuth issuer identifier, advertised in
+ *                     /.well-known/oauth-protected-resource and used as the redirect target
+ *                     for /.well-known/oauth-authorization-server. Defaults to
+ *                     SEQUENTUM_API_URL. Must be an absolute https URL with no query,
+ *                     fragment or userinfo, and must match the authorization server's own
+ *                     issuer exactly. A malformed value refuses to start.
  *      DEBUG - Set to '1' for debug logging
  *      REQUIRE_AUTH - Set to 'false' to bypass OAuth for testing (limited use: allows
  *                     connecting to MCP server but tools will fail without valid tokens)
@@ -47,6 +53,7 @@ import { SequentumApiClient } from "./api/api-client.js";
 import type { AuthMode } from "./api/types.js";
 import { createMcpServer } from "./server/handlers.js";
 import { startHttpServer } from "./server/http-server.js";
+import { resolveIssuer } from "./utils/issuer.js";
 
 // Import version from package.json
 const require = createRequire(import.meta.url);
@@ -120,9 +127,35 @@ async function startStdioServer() {
   console.error(`Connected to: ${API_BASE_URL}`);
 }
 
+/**
+ * Resolves the OAuth issuer for HTTP mode, or exits.
+ *
+ * Kept out of main() so the "exit" branch is a `never` return and TypeScript can see
+ * that the caller always receives a string.
+ */
+function resolveIssuerOrExit(): string {
+  try {
+    const resolved = resolveIssuer(process.env, DEFAULT_API_URL);
+    if (resolved.warning) {
+      console.error(`Warning: ${resolved.warning}`);
+    }
+    if (DEBUG) {
+      console.error(`[DEBUG] OAuth issuer = ${resolved.issuer} (source: ${resolved.source})`);
+    }
+    return resolved.issuer;
+  } catch (err) {
+    console.error(`Error: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
 async function main() {
   if (TRANSPORT_MODE === "http") {
-    await startHttpServer(API_BASE_URL, version, HTTP_PORT, HTTP_HOST);
+    // Resolved here and not at module scope so stdio never reaches it: stdio publishes
+    // no metadata, has no use for an issuer, and must not gain a new way to fail over a
+    // malformed SEQUENTUM_OAUTH_ISSUER left in a shell profile.
+    const issuer = resolveIssuerOrExit();
+    await startHttpServer(API_BASE_URL, issuer, version, HTTP_PORT, HTTP_HOST);
   } else {
     await startStdioServer();
   }

@@ -15,7 +15,7 @@ describe("POST /mcp through the real Express app", () => {
 
   beforeEach(async () => {
     process.env.REQUIRE_AUTH = "false";
-    server = await startHttpServer("https://api.example.test", "9.9.9", 0, "127.0.0.1");
+    server = await startHttpServer("https://api.example.test", "https://api.example.test", "9.9.9", 0, "127.0.0.1");
     const addr = server.address();
     if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
     base = `http://127.0.0.1:${addr.port}`;
@@ -136,7 +136,7 @@ describe("POST /mcp authentication", () => {
     const upstreamAddr = upstream.address();
     if (!upstreamAddr || typeof upstreamAddr === "string") throw new Error("expected a TCP address");
 
-    server = await startHttpServer(`http://127.0.0.1:${upstreamAddr.port}`, "9.9.9", 0, "127.0.0.1");
+    server = await startHttpServer(`http://127.0.0.1:${upstreamAddr.port}`, "https://api.example.test", "9.9.9", 0, "127.0.0.1");
     const addr = server.address();
     if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
     base = `http://127.0.0.1:${addr.port}`;
@@ -219,7 +219,7 @@ describe("startHttpServer signal-handler registration", () => {
     const before = process.listenerCount("SIGTERM");
 
     const servers = await Promise.all(
-      Array.from({ length: 5 }, () => startHttpServer("https://api.example.test", "9.9.9", 0, "127.0.0.1"))
+      Array.from({ length: 5 }, () => startHttpServer("https://api.example.test", "https://api.example.test", "9.9.9", 0, "127.0.0.1"))
     );
 
     // At most one SIGTERM listener is ever installed for the whole process,
@@ -228,5 +228,63 @@ describe("startHttpServer signal-handler registration", () => {
     expect(process.listenerCount("SIGINT")).toBeGreaterThan(0);
 
     await Promise.all(servers.map((s) => new Promise<void>((resolve) => s.close(() => resolve()))));
+  });
+});
+
+describe("/.well-known/oauth-protected-resource", () => {
+  let server: HttpServer;
+  let base: string;
+
+  beforeEach(async () => {
+    // The issuer is deliberately DIFFERENT from apiBaseUrl. If the two are ever
+    // transposed, or authorization_servers reverts to apiBaseUrl, this fails.
+    server = await startHttpServer(
+      "https://api.example.test",
+      "https://issuer.example.test",
+      "9.9.9",
+      0,
+      "127.0.0.1"
+    );
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    base = `http://127.0.0.1:${addr.port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("advertises the issuer, not the API base URL, in authorization_servers", async () => {
+    const res = await fetch(`${base}/.well-known/oauth-protected-resource`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { authorization_servers: string[]; resource: string };
+    expect(body.authorization_servers).toEqual(["https://issuer.example.test"]);
+    expect(body.authorization_servers).not.toContain("https://api.example.test");
+  });
+
+  it("still reports this server's own origin as the resource", async () => {
+    const res = await fetch(`${base}/.well-known/oauth-protected-resource`);
+    const body = (await res.json()) as { resource: string };
+    expect(body.resource).toBe(base);
+  });
+
+  it("redirects authorization-server metadata to the issuer's own document", async () => {
+    const res = await fetch(`${base}/.well-known/oauth-authorization-server`, { redirect: "manual" });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(
+      "https://issuer.example.test/.well-known/oauth-authorization-server"
+    );
+  });
+
+  it("serves no authorization-server metadata body of its own", async () => {
+    // RFC 8414 Section 3.3 requires the returned issuer to equal the identifier the
+    // well-known URI was built from. This server is a protected resource, not an
+    // authorization server, so any document it served here would be non-conformant —
+    // and one missing authorization_response_iss_parameter_supported makes clients
+    // DISCARD authorization responses carrying iss (RFC 9207 Section 2.4).
+    const res = await fetch(`${base}/.well-known/oauth-authorization-server`, { redirect: "manual" });
+    const text = await res.text();
+    expect(text).not.toContain("token_endpoint");
+    expect(text).not.toContain("registration_endpoint");
   });
 });
