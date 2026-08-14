@@ -61,20 +61,3 @@ export function buildAuthChallenge(mcpServerOrigin: string): AuthChallenge {
     },
   };
 }
-
-export function buildOAuthMetadata(apiBaseUrl: string): Record<string, unknown> {
-  return {
-    issuer: apiBaseUrl,
-    authorization_endpoint: `${apiBaseUrl}/api/oauth/authorize`,
-    token_endpoint: `${apiBaseUrl}/api/oauth/token`,
-    registration_endpoint: `${apiBaseUrl}/api/oauth/register`, // RFC 7591 DCR (fallback)
-    token_endpoint_auth_methods_supported: ["none"], // Public client (PKCE)
-    grant_types_supported: ["authorization_code", "refresh_token"],
-    response_types_supported: ["code"],
-    scopes_supported: [...SUPPORTED_SCOPES],
-    code_challenge_methods_supported: ["S256"], // PKCE support
-    service_documentation: "https://docs.sequentum.com/api",
-    resource_indicators_supported: true,
-    client_id_metadata_document_supported: true, // CIMD (draft-ietf-oauth-client-id-metadata-document)
-  };
-}

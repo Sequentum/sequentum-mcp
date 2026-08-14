@@ -139,7 +139,7 @@ If you prefer to run the MCP server locally (e.g., for custom deployments, offli
 
 **Requirements for local setup:**
 
-- [Node.js](https://nodejs.org/) v18 or higher
+- [Node.js](https://nodejs.org/) v20 or higher
 - [npm](https://www.npmjs.com/)
 - Sequentum API key
 
@@ -190,6 +190,7 @@ To connect to a custom Sequentum deployment, add the `SEQUENTUM_API_URL` environ
 |----------|----------|---------|-------------|
 | `SEQUENTUM_API_KEY` | Yes | -- | Your Sequentum API key (format: `sk-...`). Get this from the Sequentum Control Center under Settings > API Keys. |
 | `SEQUENTUM_API_URL` | No | `https://dashboard.sequentum.com` | The base URL of your Sequentum instance. Override if using a custom deployment. |
+| `SEQUENTUM_OAUTH_ISSUER` | No | Value of `SEQUENTUM_API_URL` | HTTP mode only. This deployment's OAuth issuer identifier. Must be an absolute `https` URL with no query, fragment or userinfo, and must match the authorization server's `issuer` exactly. Set it only when the API base URL and the public OAuth issuer differ. |
 
 ## Example Usage
 
@@ -334,6 +335,61 @@ The server exposes 18 read-only resources (7 static + 11 templates) that AI clie
 | `API Error 429: Too Many Requests` | Rate limit exceeded. Wait a moment and try again. |
 
 For more troubleshooting help, see the [Troubleshooting Guide](./docs/troubleshooting.md).
+
+## HTTP Mode Configuration
+
+The hosted server at `mcp.sequentum.com` runs the Streamable HTTP transport
+(`TRANSPORT_MODE=http`) behind its own deployment configuration. If you self-host the
+server instead (e.g. via the provided Docker image), the following environment
+variables tune caching, rate limiting, and proxy trust for that transport. They have no
+effect in stdio mode.
+
+**HTTP mode is stateless as of 2.0.0.** There is no `Mcp-Session-Id` header and no
+per-client session state on the server: every request is handled independently by a
+fresh MCP server instance. `GET /mcp` no longer opens an SSE stream — it now returns
+`405 Method Not Allowed` (or `401` first if the request is unauthenticated). `DELETE
+/mcp` is a no-op that always answers `200`, since there is no session left to tear
+down. `MAX_SESSIONS` is no longer read.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRANSPORT_MODE` | `stdio` | Set to `http` to run the Streamable HTTP transport instead of stdio. |
+| `PORT` | `3000` | HTTP server port. |
+| `HOST` | `0.0.0.0` | HTTP server bind address. |
+| `LIST_CACHE_TTL_MS` | `3600000` (1 hour) | Freshness hint (`ttlMs`) attached to cacheable list-shaped results (`tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`, `server/discover`). Must be a non-negative integer string; a malformed value fails fast at startup instead of being silently truncated. |
+| `MCP_RATE_LIMIT_WINDOW_MS` | `60000` (1 minute) | Rate-limit window applied to the `/mcp` endpoint. |
+| `MCP_RATE_LIMIT_MAX` | `100` | Maximum `/mcp` requests per window, per process, per IP. See "Rate limiting across replicas" below before scaling horizontally. |
+| `TRUST_PROXY` | `true` | Passed to Express's `trust proxy` setting. Accepts `true`, `false`, a hop count (e.g. `1`), or a comma-separated CIDR/IP allowlist. See "TRUST_PROXY and rate-limit evasion" below — the default has a known weakness. |
+| `REQUIRE_AUTH` | `true` | Set to `false` to bypass the OAuth Bearer-token requirement on `/mcp`. For local testing only: the connection succeeds, but tools still fail without a valid backend token. |
+
+### Rate limiting across replicas
+
+The rate limiter is per-process and keyed on `req.ip`; it holds no state shared across
+replicas. With the stateless transport there is no session affinity, so a given
+client's requests are not pinned to one replica — in a horizontally scaled deployment
+of N replicas behind a load balancer, the effective cluster-wide ceiling becomes `N ×
+MCP_RATE_LIMIT_MAX` per window, not `MCP_RATE_LIMIT_MAX`. To hold a specific global
+rate, divide `MCP_RATE_LIMIT_MAX` by your replica count.
+
+### TRUST_PROXY and rate-limit evasion
+
+With the default `TRUST_PROXY=true`, Express trusts every proxy hop and resolves
+`req.ip` from the client-supplied, leftmost entry of the `X-Forwarded-For` header.
+Because the rate limiter keys on `req.ip`, a client that simply rotates that header
+value can evade rate limiting entirely. Running behind a reverse proxy does not fix
+this by itself: tunnels such as cloudflared and ngrok **append** to `X-Forwarded-For`
+rather than overwrite it, so the attacker-controlled leftmost entry survives unless
+`TRUST_PROXY` is configured correctly.
+
+The remediation is to set `TRUST_PROXY` to the exact number of trusted reverse-proxy
+hops in front of the server (e.g. `1`), or to a comma-separated CIDR/IP allowlist of
+your trusted proxies, so Express derives `req.ip` from the correct hop instead of
+trusting a client-supplied header. This repository does not know your deployment
+topology, so it deliberately does not choose a safer default for you.
+
+**Severity:** this is an abuse/DoS-protection bypass, not an authentication or data
+exposure issue — no account data is exposed, and no tool call succeeds that would
+otherwise be rejected. It only lets a client avoid being rate-limited.
 
 ## CORS Origin Allowlist
 

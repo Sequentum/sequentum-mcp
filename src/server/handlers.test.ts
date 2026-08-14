@@ -8,17 +8,17 @@ import {
   AGENT_BUILD_ERROR_MESSAGE,
 } from "./handlers.js";
 import { tools } from "./tools.js";
-import { getPromptMessages } from "./prompts.js";
-import { PROMPT_HANDLING_POLICY, SUFFICIENCY_POLICY } from "./policies.js";
+import { resources, resourceTemplates } from "./resources.js";
+import { getPromptMessages, prompts } from "./prompts.js";
+import { PRE_CALL_CHECK, PROMPT_HANDLING_POLICY, SUFFICIENCY_POLICY, SUFFICIENCY_REQUIREMENTS } from "./policies.js";
 import {
   ApiRequestError,
   AuthenticationError,
   RateLimitError,
 } from "../api/types.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { SequentumApiClient } from "../api/api-client.js";
+import { toolDispatch } from "./tools/index.js";
 
 describe("isPaginatedResponse", () => {
   it("returns true for paginated agent responses", () => {
@@ -388,7 +388,13 @@ describe("agent builder handler dispatch", () => {
         arguments: { prompt: "short" },
       });
       expect(result.isError).toBe(true);
-      expect((result.content[0] as { text: string }).text).toMatch(/at least 10/i);
+      // SDK v2 validates arguments against the tool's inputSchema before the
+      // handler runs, so a too-short prompt is rejected by the schema's
+      // minLength rather than by the handler's own guard. The handler guard
+      // still stands as defence in depth for callers that bypass the schema.
+      const text = (result.content[0] as { text: string }).text;
+      expect(text).toContain("Input validation error");
+      expect(text).toMatch(/fewer than 10 characters/i);
     });
 
     it("waitForCompletion=true (default): polls internally and returns agentId on success", async () => {
@@ -506,7 +512,6 @@ describe("agent builder handler dispatch", () => {
             name: "start_agent_build",
             arguments: { prompt: "scrape product names from https://example.com/shop" },
           },
-          CallToolResultSchema,
           {
             onprogress: (p) => {
               if (p.message) progressMessages.push(p.message);
@@ -542,7 +547,6 @@ describe("agent builder handler dispatch", () => {
             name: "start_agent_build",
             arguments: { prompt: "scrape product names from https://example.com/shop" },
           },
-          CallToolResultSchema,
           { timeout: 310_000, resetTimeoutOnProgress: true }
         );
 
@@ -612,7 +616,6 @@ describe("agent builder handler dispatch", () => {
         const resultPromise = abortMcpClient
           .callTool(
             { name: "start_agent_build", arguments: { prompt: "scrape product names from https://example.com/shop" } },
-            CallToolResultSchema,
             { timeout: 50 }
           )
           .catch(() => null); // client timeout is expected
@@ -652,7 +655,6 @@ describe("agent builder handler dispatch", () => {
             name: "start_agent_build",
             arguments: { prompt: "scrape product names from https://example.com/shop" },
           },
-          CallToolResultSchema,
           {
             onprogress: () => {
               notifCallCount++;
@@ -714,6 +716,224 @@ describe("agent builder handler dispatch", () => {
 });
 
 // ==========================================
+// Tool Dispatch Map Tests
+// ==========================================
+
+describe("toolDispatch", () => {
+  it("exposes a handler for every agent tool", () => {
+    const expected = [
+      "list_agents", "get_agent", "search_agents", "get_agent_runs", "get_run_status",
+      "start_agent", "stop_agent", "kill_agent", "delete_run", "get_run_files",
+      "get_file_download_url", "get_agent_versions", "restore_agent_version",
+    ];
+    for (const name of expected) {
+      expect(typeof toolDispatch[name]).toBe("function");
+    }
+  });
+
+  it("routes list_agents through the dispatch map with pagination defaults", async () => {
+    const getAllAgents = vi.fn().mockResolvedValue([]);
+    const apiClient = { getAllAgents } as unknown as SequentumApiClient;
+    await toolDispatch.list_agents(
+      {},
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+    );
+    expect(getAllAgents).toHaveBeenCalledWith({ pageIndex: 1, recordsPerPage: 50 });
+  });
+
+  it("exposes a handler for every schedule, billing, and space tool", () => {
+    const expected = [
+      "list_agent_schedules", "create_agent_schedule", "delete_agent_schedule",
+      "get_agent_schedule", "update_agent_schedule", "enable_agent_schedule",
+      "disable_agent_schedule", "get_scheduled_runs",
+      "get_credits_balance", "get_spending_summary", "get_credit_history",
+      "get_agents_usage", "get_agent_cost_breakdown", "get_agent_runs_cost",
+      "list_spaces", "get_space", "get_space_agents", "search_space_by_name",
+      "run_space_agents",
+    ];
+    for (const name of expected) {
+      expect(typeof toolDispatch[name]).toBe("function");
+    }
+  });
+});
+
+// ==========================================
+// Tool Registration Invariants
+// ==========================================
+
+describe("tool registration invariants", () => {
+  it("has a dispatch handler for every declared tool", () => {
+    const missing = tools.filter((t) => typeof toolDispatch[t.name] !== "function").map((t) => t.name);
+    expect(missing).toEqual([]);
+  });
+
+  it("has no dispatch handler without a declared tool", () => {
+    const declared = new Set(tools.map((t) => t.name));
+    const orphans = Object.keys(toolDispatch).filter((n) => !declared.has(n));
+    expect(orphans).toEqual([]);
+  });
+
+  it("declares a title and a read/destructive hint on every tool", () => {
+    for (const t of tools) {
+      expect(t.annotations?.title, `${t.name} is missing annotations.title`).toBeTruthy();
+      const hasHint =
+        t.annotations?.readOnlyHint === true || t.annotations?.destructiveHint !== undefined;
+      expect(hasHint, `${t.name} declares neither readOnlyHint nor destructiveHint`).toBe(true);
+    }
+  });
+
+  it("wires every tool to the handler function of the same name", () => {
+    for (const t of tools) {
+      const handler = toolDispatch[t.name];
+      expect(
+        handler?.name,
+        `${t.name} is wired to a handler named "${handler?.name}" — check the barrel exports`
+      ).toBe(t.name);
+    }
+  });
+});
+
+// ==========================================
+// SDK v2 Registration Round-Trip
+// ==========================================
+
+describe("createMcpServer via SDK v2", () => {
+  it("advertises all 39 tools in declaration order, with annotations intact", async () => {
+    const apiClient = {} as unknown as SequentumApiClient;
+    const server = createMcpServer(apiClient, "9.9.9");
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    try {
+      const result = await client.listTools();
+      expect(result.tools).toHaveLength(39);
+      expect(result.tools.map((t) => t.name)).toEqual(tools.map((t) => t.name));
+
+      // Annotations must survive registration — a hard directory review requirement.
+      // Assert the whole set round-trips, not just one sample tool.
+      for (const declared of tools) {
+        const listed = result.tools.find((t) => t.name === declared.name)!;
+        expect(listed.annotations, `${declared.name} lost its annotations`).toEqual(
+          declared.annotations
+        );
+        expect(listed.description).toBe(declared.description);
+        expect(listed.inputSchema).toEqual(declared.inputSchema);
+      }
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("advertises a non-empty top-level title for every tool, alongside annotations.title", async () => {
+    // 2026-07-28 reads the top-level `title`; legacy-era clients still read only
+    // `annotations.title`. Both must be present so neither era loses the display name.
+    const apiClient = {} as unknown as SequentumApiClient;
+    const server = createMcpServer(apiClient, "9.9.9");
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    try {
+      const result = await client.listTools();
+      expect(result.tools).toHaveLength(39);
+      for (const listed of result.tools) {
+        expect(listed.title, `${listed.name} is missing a top-level title`).toBeTruthy();
+        expect(
+          listed.annotations?.title,
+          `${listed.name} is missing annotations.title`
+        ).toBeTruthy();
+      }
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("advertises every prompt with its declared arguments", async () => {
+    const apiClient = {} as unknown as SequentumApiClient;
+    const server = createMcpServer(apiClient, "9.9.9");
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    try {
+      const listed = await client.listPrompts();
+      expect(listed.prompts.map((p) => p.name).sort()).toEqual(
+        prompts.map((p) => p.name).sort()
+      );
+
+      // debug-agent's argsSchema is built from its declared `arguments`, so the
+      // required string argument must survive the fromJsonSchema round trip.
+      const debugAgent = listed.prompts.find((p) => p.name === "debug-agent")!;
+      expect(debugAgent.arguments).toEqual([
+        expect.objectContaining({ name: "agentName", required: true }),
+      ]);
+
+      const rendered = await client.getPrompt({
+        name: "debug-agent",
+        arguments: { agentName: "Nightly Scraper" },
+      });
+      expect((rendered.messages[0].content as { text: string }).text).toContain(
+        "Nightly Scraper"
+      );
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("lists and reads static resources and templated resources", async () => {
+    const apiClient = {
+      getAllSpaces: vi.fn().mockResolvedValue([{ id: 1, name: "Default" }]),
+      getAgent: vi.fn().mockResolvedValue({ id: 7, name: "Agent Seven" }),
+    } as unknown as SequentumApiClient;
+    const server = createMcpServer(apiClient, "9.9.9");
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    try {
+      // Registration must not drop the descriptive fields — the whole
+      // resources/list payload has to match what resources.ts declares.
+      const byUri = <T extends { uri?: string; uriTemplate?: string }>(list: T[]) =>
+        [...list].sort((a, b) =>
+          (a.uri ?? a.uriTemplate!).localeCompare(b.uri ?? b.uriTemplate!)
+        );
+      const pick = (o: Record<string, unknown>, keys: string[]) =>
+        Object.fromEntries(keys.map((k) => [k, o[k]]));
+      const resourceKeys = ["uri", "name", "description", "mimeType"];
+      const templateKeys = ["uriTemplate", "name", "description", "mimeType"];
+
+      const listed = await client.listResources();
+      expect(byUri(listed.resources).map((r) => pick(r, resourceKeys))).toEqual(
+        byUri(resources).map((r) => pick(r, resourceKeys))
+      );
+
+      const listedTemplates = await client.listResourceTemplates();
+      expect(
+        byUri(listedTemplates.resourceTemplates).map((t) => pick(t, templateKeys))
+      ).toEqual(byUri(resourceTemplates).map((t) => pick(t, templateKeys)));
+
+      const spaces = await client.readResource({ uri: "sequentum://spaces" });
+      expect(JSON.parse(spaces.contents[0].text as string)).toEqual([
+        { id: 1, name: "Default" },
+      ]);
+
+      const agent = await client.readResource({ uri: "sequentum://agents/7" });
+      expect(JSON.parse(agent.contents[0].text as string)).toEqual({
+        id: 7,
+        name: "Agent Seven",
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});
+
+// ==========================================
 // Policy Wiring Regression Tests
 // ==========================================
 
@@ -768,5 +988,32 @@ describe("policy wiring", () => {
       text,
       "inspect-agent-draft does not call start_agent_build, so it should not carry the prompt-handling guardrail"
     ).not.toContain(PROMPT_HANDLING_POLICY);
+  });
+});
+
+describe("PRE_CALL_CHECK", () => {
+  it("derives both surfaces from the single SUFFICIENCY_REQUIREMENTS source", () => {
+    // Substring-matching individual phrases would pass for two independently
+    // hardcoded strings. Asserting the whole shared constant is what proves both
+    // exports actually consume it — the drift this task exists to prevent.
+    expect(SUFFICIENCY_POLICY).toContain(SUFFICIENCY_REQUIREMENTS);
+    expect(PRE_CALL_CHECK).toContain(SUFFICIENCY_REQUIREMENTS);
+  });
+
+  it("has not changed without deliberate review", () => {
+    // PRE_CALL_CHECK ships in tools/list to every client and is scanned for policy
+    // compliance by the connectors directory. Pinning the exact text means any edit
+    // fails this test and forces a conscious re-approval of the wording, which a
+    // regex-based "is it behavioural?" check cannot do.
+    expect(PRE_CALL_CHECK).toBe(
+      "ARGUMENT REQUIREMENTS: this tool's arguments are only sufficient when (1) the target URL or domain, (2) the data the user wants extracted, (3) any qualifiers that affect scope (section, filters, language, etc.) are each unambiguous. Arguments derived by analogy from a different site, or reused from a previous request for a different purpose, are not sufficient. When a required detail is absent, ask one consolidated clarifying question covering every gap instead of supplying an invented value."
+    );
+  });
+
+  it("is attached to every build and run tool", () => {
+    for (const name of ["start_agent_build", "start_agent", "run_space_agents"]) {
+      const tool = tools.find((t) => t.name === name)!;
+      expect(tool.description, `${name} is missing PRE_CALL_CHECK`).toContain(PRE_CALL_CHECK);
+    }
   });
 });

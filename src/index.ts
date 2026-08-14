@@ -20,6 +20,12 @@
  *      PORT - HTTP server port (default: 3000)
  *      HOST - HTTP server host (default: 0.0.0.0)
  *      SEQUENTUM_API_URL - Base URL of the Sequentum API (default: https://dashboard.sequentum.com)
+ *      SEQUENTUM_OAUTH_ISSUER - This deployment's OAuth issuer identifier, advertised in
+ *                     /.well-known/oauth-protected-resource and used as the redirect target
+ *                     for /.well-known/oauth-authorization-server. Defaults to
+ *                     SEQUENTUM_API_URL. Must be an absolute https URL with no query,
+ *                     fragment or userinfo, and must match the authorization server's own
+ *                     issuer exactly. A malformed value refuses to start.
  *      DEBUG - Set to '1' for debug logging
  *      REQUIRE_AUTH - Set to 'false' to bypass OAuth for testing (limited use: allows
  *                     connecting to MCP server but tools will fail without valid tokens)
@@ -27,17 +33,27 @@
  *                     verification. Served at /.well-known/openai-apps-challenge as
  *                     text/plain (200). Returns 404 when unset. Only needed during the
  *                     submission flow; safe to unset afterwards.
+ *      LIST_CACHE_TTL_MS - Cache-hint freshness (ms) advertised on list-shaped results
+ *                     (tools/list, prompts/list, resources/list,
+ *                     resources/templates/list) and server/discover.
+ *      MCP_RATE_LIMIT_WINDOW_MS - Rate-limit window (ms) for the /mcp endpoint.
+ *      MCP_RATE_LIMIT_MAX - Max requests per window per IP for the /mcp endpoint.
+ *      TRUST_PROXY - Express 'trust proxy' setting: 'true'/'false', a hop count, or a
+ *                     comma-separated CIDR/IP allowlist of trusted reverse proxies.
+ *      ALLOWED_ORIGINS - Comma-separated list of additional exact-match Origins to
+ *                     allow via CORS, appended to the built-in defaults.
  *
  *    Authentication: OAuth2 tokens are provided by Claude's infrastructure
  *    via the Authorization header on each request.
  */
 
 import { createRequire } from "module";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { SequentumApiClient } from "./api/api-client.js";
 import type { AuthMode } from "./api/types.js";
 import { createMcpServer } from "./server/handlers.js";
 import { startHttpServer } from "./server/http-server.js";
+import { resolveIssuer } from "./utils/issuer.js";
 
 // Import version from package.json
 const require = createRequire(import.meta.url);
@@ -111,9 +127,35 @@ async function startStdioServer() {
   console.error(`Connected to: ${API_BASE_URL}`);
 }
 
+/**
+ * Resolves the OAuth issuer for HTTP mode, or exits.
+ *
+ * Kept out of main() so the "exit" branch is a `never` return and TypeScript can see
+ * that the caller always receives a string.
+ */
+function resolveIssuerOrExit(): string {
+  try {
+    const resolved = resolveIssuer(process.env, DEFAULT_API_URL);
+    if (resolved.warning) {
+      console.error(`Warning: ${resolved.warning}`);
+    }
+    if (DEBUG) {
+      console.error(`[DEBUG] OAuth issuer = ${resolved.issuer} (source: ${resolved.source})`);
+    }
+    return resolved.issuer;
+  } catch (err) {
+    console.error(`Error: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
 async function main() {
   if (TRANSPORT_MODE === "http") {
-    await startHttpServer(API_BASE_URL, version, HTTP_PORT, HTTP_HOST);
+    // Resolved here and not at module scope so stdio never reaches it: stdio publishes
+    // no metadata, has no use for an issuer, and must not gain a new way to fail over a
+    // malformed SEQUENTUM_OAUTH_ISSUER left in a shell profile.
+    const issuer = resolveIssuerOrExit();
+    await startHttpServer(API_BASE_URL, issuer, version, HTTP_PORT, HTTP_HOST);
   } else {
     await startStdioServer();
   }

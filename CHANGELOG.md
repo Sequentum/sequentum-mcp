@@ -1,5 +1,86 @@
 # Changelog
 
+## [2.0.0] - TBD
+
+### BREAKING CHANGES
+
+- **Node 20 is now the minimum supported runtime** (`engines.node: ">=20"`), required by
+  the MCP TypeScript SDK v2 dependency. The Docker image was already `node:20-alpine`.
+- **Migrated to MCP TypeScript SDK v2.** The server now speaks protocol revision
+  `2026-07-28` and negotiates legacy revisions for clients that request them, so
+  existing MCP clients continue to work unmodified.
+- **HTTP transport is now stateless.** `Mcp-Session-Id` is ignored entirely; there is no
+  per-client session state on the server. `GET /mcp` no longer opens an SSE stream — it
+  returns `405 Method Not Allowed` (or `401` first, with the RFC 9728
+  `WWW-Authenticate` challenge, if the request is unauthenticated). `DELETE /mcp` is a
+  no-op that always answers `200`, since there is no session left to terminate.
+- **`MAX_SESSIONS` is no longer read.** It has no effect in a stateless server; remove
+  it from any deployment configuration.
+- **Rate-limit error code changed from `-32029` to `-32010`.** MCP `2026-07-28`
+  reserves `-32020`..`-32099` for the specification itself; `-32029` fell inside that
+  range and had to move.
+- **Requests carrying the `2026-07-28` `_meta` envelope now require the `Mcp-Method`
+  header, and `Mcp-Name` on name-carrying requests** (`tools/call`, `prompts/get`, and
+  `resources/read` where the value is `params.uri`). This applies only to modern-envelope
+  requests. Clients still on `2025-11-25` or earlier — including every existing connector
+  that has not opted into the envelope — are unaffected and need not send either header.
+- **Unknown or invalid resource URIs now return `-32602` (Invalid params)** instead of
+  `-32603` (Internal error), correctly signaling a caller mistake rather than a server
+  fault.
+- **Unknown tool name now returns a JSON-RPC protocol error instead of a tool result.**
+  Previously an unknown tool name in `tools/call` produced HTTP 200 with a tool result:
+  `{result:{content:[{text:"Error: Unknown tool: X"}],isError:true}}`. It now produces
+  `{error:{code:-32602,message:"Tool X not found"}}`. Confirmed identical in both the
+  modern and legacy eras. Any client that branched on `isError` to detect an unknown tool
+  now needs to handle the JSON-RPC error instead.
+- **Schema-invalid tool arguments now fail before the handler runs, with a different
+  error message.** The SDK validates `tools/call` arguments against the tool's
+  `inputSchema` up front. For example, a missing required parameter previously produced
+  `"Error: Invalid parameter 'agentId': ..."`; it now produces `"Input validation error:
+  Invalid arguments for tool get_agent: data must have required property 'agentId'"`.
+- **`/.well-known/oauth-authorization-server` no longer returns a metadata document.**
+  It now answers `302` with a `Location` pointing at the authorization server's own
+  document. This server is a protected resource, not an authorization server: RFC 8414
+  §3.3 requires the `issuer` in that document to equal the origin it was fetched from,
+  which a copy served here can never satisfy. Clients that follow redirects are
+  unaffected; a client that read the body without following the redirect must now follow
+  it, or read `authorization_servers` from `/.well-known/oauth-protected-resource`.
+
+### Added
+
+- **`SEQUENTUM_OAUTH_ISSUER`** — optional HTTP-mode variable naming this deployment's
+  OAuth issuer identifier, defaulting to `SEQUENTUM_API_URL`. Set it when the API base
+  URL and the public OAuth issuer differ. A malformed value refuses to start.
+- Cache hints (`ttlMs` / `cacheScope`) on all four list-shaped results (`tools/list`,
+  `prompts/list`, `resources/list`, `resources/templates/list`) and on
+  `server/discover`, so conformant clients can cache them; `resources/read` is
+  explicitly marked `private` with `ttlMs: 0`, since every resource is scoped to the
+  caller's own OAuth token and must never be cached publicly.
+- Argument-sufficiency requirements added to the `start_agent`, `run_space_agents`, and
+  `start_agent_build` tool descriptions, so the requirement to have an unambiguous
+  target, extracted data, and scope travels in `tools/list` itself (which every client
+  reads) rather than only in the server's `instructions` (which clients MAY skip under
+  `2026-07-28`, since there is no `initialize` handshake).
+- Per-request logging of the negotiated protocol era, requested method/name, client
+  identity, and auth presence, with OpenTelemetry trace-context (`traceparent` /
+  `tracestate`) read from the request headers and recorded in the log line, so a
+  request can be correlated across pods. These values are logged only — not
+  propagated to the outbound Sequentum API calls.
+- Configurable rate limiting via `MCP_RATE_LIMIT_WINDOW_MS` and `MCP_RATE_LIMIT_MAX`,
+  and configurable list-cache freshness via `LIST_CACHE_TTL_MS` — all three parsed
+  strictly, failing fast at startup on a malformed value instead of silently truncating
+  it.
+- `TRUST_PROXY` widened to accept a hop count or a comma-separated CIDR/IP allowlist,
+  in addition to `true`/`false`.
+- A JSON-RPC error middleware on `/mcp` that returns a sanitized JSON-RPC error object
+  instead of falling through to Express's default HTML error page.
+
+### Changed
+
+- Tool handlers split out of a single monolithic switch statement into six per-domain
+  modules (`agents`, `billing`, `builds`, `runs`, `schedules`, `spaces`) under
+  `src/server/tools/`, dispatched via a lookup map.
+
 ## [1.3.0] - TBD
 
 ### Added

@@ -5,145 +5,34 @@
  * createMcpServer factory that wires tool definitions to their handlers.
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
+import {
+  McpServer,
+  ResourceNotFoundError,
+  ResourceTemplate,
+  fromJsonSchema,
+  type JsonSchemaType,
+} from "@modelcontextprotocol/server";
 import { SUFFICIENCY_POLICY } from "./policies.js";
-import {
-  AGENT_BUILD_MAX_WAIT_MS,
-  AGENT_BUILD_MAX_WAIT_LABEL,
-  AGENT_BUILD_MAX_WAIT_SHORT,
-  AGENT_BUILD_ERROR_MESSAGE,
-} from "./constants.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  ListResourcesRequestSchema,
-  ListResourceTemplatesRequestSchema,
-  ReadResourceRequestSchema,
-  ListPromptsRequestSchema,
-  GetPromptRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { AGENT_BUILD_ERROR_MESSAGE, LIST_CACHE_TTL_MS } from "./constants.js";
 import { SequentumApiClient } from "../api/api-client.js";
-import { AgentApiModel, AgentRunFileApiModel, AgentRunStatus, ConfigType, ListAgentsRequest, PaginatedAgentsResponse, ApiRequestError, RateLimitError, AuthenticationError, RunRemoveMethod } from "../api/types.js";
-import {
-  getDefaultDateRange,
-  validateBoolean,
-  validateDateRange,
-  validateEnum,
-  validateISODate,
-  validateJsonString,
-  validateNumber,
-  validateStartTimeInFuture,
-  validateString,
-} from "../utils/validation.js";
+import { ApiRequestError, RateLimitError, AuthenticationError } from "../api/types.js";
 import { tools } from "./tools.js";
 import { resources, resourceTemplates, readResource } from "./resources.js";
 import { prompts, getPromptMessages } from "./prompts.js";
+import { toolDispatch, type ProgressFn } from "./tools/index.js";
+import { DEBUG, isPaginatedResponse, parseScheduleParams, validateScheduleStartTime } from "./tools/shared.js";
 
 // ==========================================
 // Response Helpers
 // ==========================================
 
-/**
- * Map RunStatus numeric value to human-readable string
- */
-function getRunStatusLabel(status: number | undefined): string {
-  const statusMap: Record<number, string> = {
-    0: "Invalid",
-    1: "Running",
-    2: "Exporting",
-    3: "Starting",
-    4: "Queuing",
-    5: "Stopping",
-    6: "Failure",
-    7: "Failed",
-    8: "Stopped",
-    9: "Completed",
-    10: "Success",
-    11: "Skipped",
-    12: "Waiting",
-  };
-  if (status === undefined || status === null) {
-    return "Never Run";
-  }
-  return statusMap[status] ?? `Unknown (${status})`;
-}
-
-/**
- * Transform agent list to summary format for display
- */
-function summarizeAgents(agents: AgentApiModel[]) {
-  return agents.map((a) => ({
-    id: a.id,
-    name: a.name,
-    description: a.description,
-    status: getRunStatusLabel(a.status),
-    configType: a.configType,
-    version: a.version,
-    lastActivity: a.lastActivity,
-  }));
-}
-
-/**
- * Type guard for paginated agent responses from the API.
- */
-export function isPaginatedResponse(r: unknown): r is PaginatedAgentsResponse {
-  return r !== null && typeof r === 'object' && 'agents' in r && Array.isArray((r as PaginatedAgentsResponse).agents);
-}
-
-export interface ScheduleParams {
-  scheduleType: number | undefined;
-  startTime: string | undefined;
-  cronExpression: string | undefined;
-  runEveryCount: number | undefined;
-  runEveryPeriod: number | undefined;
-  timezone: string | undefined;
-  inputParameters: string | undefined;
-  isEnabled: boolean | undefined;
-  parallelism: number | undefined;
-  parallelMaxConcurrency: number | undefined;
-  parallelExport: string | undefined;
-  logLevel: string | undefined;
-  logMode: string | undefined;
-  isExclusive: boolean | undefined;
-  isWaitOnFailure: boolean | undefined;
-}
-
-export function parseScheduleParams(
-  params: Record<string, unknown>
-): ScheduleParams {
-  return {
-    scheduleType: validateNumber(params, "scheduleType", { required: false, min: 1, max: 3, integer: true }),
-    startTime: validateString(params, "startTime", false),
-    cronExpression: validateString(params, "cronExpression", false),
-    runEveryCount: validateNumber(params, "runEveryCount", { required: false, min: 1, integer: true }),
-    runEveryPeriod: validateNumber(params, "runEveryPeriod", { required: false, min: 1, max: 5, integer: true }),
-    timezone: validateString(params, "timezone", false),
-    inputParameters: validateJsonString(params, "inputParameters", false),
-    isEnabled: validateBoolean(params, "isEnabled", false),
-    parallelism: validateNumber(params, "parallelism", { required: false, min: 1, max: 50, integer: true }),
-    parallelMaxConcurrency: validateNumber(params, "parallelMaxConcurrency", { required: false, min: 1, integer: true }),
-    parallelExport: validateString(params, "parallelExport", false),
-    logLevel: validateString(params, "logLevel", false),
-    logMode: validateString(params, "logMode", false),
-    isExclusive: validateBoolean(params, "isExclusive", false),
-    isWaitOnFailure: validateBoolean(params, "isWaitOnFailure", false),
-  };
-}
-
-export function validateScheduleStartTime(
-  effectiveScheduleType: number | undefined,
-  startTime: string | undefined
-): void {
-  if (effectiveScheduleType === 1 && startTime) {
-    validateStartTimeInFuture(startTime, 1);
-  }
-
-  if (effectiveScheduleType === 2 && startTime) {
-    validateStartTimeInFuture(startTime, 0);
-  }
-}
+// getRunStatusLabel, summarizeAgents, isPaginatedResponse, parseScheduleParams,
+// and validateScheduleStartTime moved to ./tools/shared.js so the tool handler
+// modules (agents.ts, schedules.ts, ...) can use them without importing from
+// this file (which would create a circular import — this file imports
+// toolDispatch from ./tools/index.js, which imports those modules).
+// Re-exported here for backwards compatibility with existing test imports.
+export { isPaginatedResponse, parseScheduleParams, validateScheduleStartTime };
 
 export function formatToolError(error: unknown): {
   content: Array<{ type: "text"; text: string }>;
@@ -199,18 +88,17 @@ export function formatToolError(error: unknown): {
 // Server Factory
 // ==========================================
 
-const DEBUG = process.env.DEBUG === '1';
+// DEBUG is defined once in ./tools/shared.js (imported above) and re-exported
+// there for the tool handler modules; handlers.ts just imports it, to avoid a
+// second env read and to keep the two DEBUG flags from ever drifting apart.
 
-// Re-exported (imported above for internal use) for backwards compatibility.
-// These must NOT be defined here: handlers.ts imports tools.ts/prompts.ts, which
-// read these constants at module-evaluation time, so defining them here creates
-// an import-cycle temporal dead zone that crashes on startup. See constants.ts.
-export {
-  AGENT_BUILD_MAX_WAIT_MS,
-  AGENT_BUILD_MAX_WAIT_LABEL,
-  AGENT_BUILD_MAX_WAIT_SHORT,
-  AGENT_BUILD_ERROR_MESSAGE,
-};
+// Re-exported (imported above for internal use) for backwards compatibility:
+// handlers.test.ts still imports AGENT_BUILD_ERROR_MESSAGE from here. It must
+// NOT be defined here: handlers.ts imports tools.ts/prompts.ts, which read
+// constants from constants.js at module-evaluation time, so defining
+// build-related constants here creates an import-cycle temporal dead zone
+// that crashes on startup. See constants.ts.
+export { AGENT_BUILD_ERROR_MESSAGE };
 
 function redactDebugArgs(args: unknown): unknown {
   if (args === null || typeof args !== "object" || Array.isArray(args)) {
@@ -241,1141 +129,200 @@ function redactDebugArgs(args: unknown): unknown {
 }
 
 /**
- * Create a new MCP Server instance with all handlers registered.
- * Each session in HTTP mode needs its own Server instance.
- * 
+ * Read a resource and wrap it in the `resources/read` result shape, converting
+ * genuine upstream failures into a descriptive error the SDK turns into a
+ * JSON-RPC internal error. Shared by the static-URI and templated
+ * registrations below.
+ */
+async function readResourceResult(uri: URL, apiClient: SequentumApiClient) {
+  const uriString = uri.toString();
+
+  if (DEBUG) {
+    console.error(`[DEBUG] Resource read: ${uriString}`);
+  }
+
+  try {
+    return { contents: [await readResource(uriString, apiClient)] };
+  } catch (error) {
+    // An unknown URI is a caller mistake, not a server fault: readResource()
+    // throws the typed ResourceNotFoundError (wire code -32602) for that case.
+    // Let it propagate as-is — rewrapping it in a generic Error below would
+    // strip the type/brand the SDK relies on and it would surface as -32603
+    // Internal error instead. Genuine upstream API failures are NOT typed
+    // this way and still get wrapped into a descriptive internal error.
+    if (error instanceof ResourceNotFoundError) {
+      throw error;
+    }
+    const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
+    throw new Error(`Failed to read resource ${uriString}: ${errorMessage}`);
+  }
+}
+
+/**
+ * Create a new MCP Server instance with all tools, resources, and prompts registered.
+ * Each session in HTTP mode needs its own McpServer instance.
+ *
  * @param apiClient - The API client to use for this server instance
  * @param version - The server version string from package.json
  * @returns Configured MCP Server instance
  */
-export function createMcpServer(apiClient: SequentumApiClient, version: string): Server {
-  const server = new Server(
+export function createMcpServer(apiClient: SequentumApiClient, version: string): McpServer {
+  // Capabilities are intentionally NOT declared: McpServer derives them from the
+  // registrations below. (It advertises `listChanged: true` for each even though
+  // this server never emits those notifications — a known, accepted SDK behaviour
+  // that cannot be suppressed through the constructor options.)
+  const PUBLIC_LIST_HINT = { ttlMs: LIST_CACHE_TTL_MS, cacheScope: "public" as const };
+
+  const server = new McpServer(
     {
       name: "sequentum-mcp-server",
       version,
     },
     {
-      capabilities: {
-        tools: {},
-        resources: {},
-        prompts: {},
-      },
-      // Sent to clients on `initialize`. Canonical text + JSDoc live in
-      // policies.ts; reinforced by the start_agent_build PRE-CALL CHECK in
-      // tools.ts. Keep these in sync if the policy's name or scope changes.
+      // Delivered to clients in the `server/discover` result (protocol revision
+      // 2026-07-28 has no `initialize` handshake) and also in the legacy
+      // `initialize` result the SDK still answers for 2025-era clients — so
+      // this text reaches both eras, and clients on either MAY skip it, making
+      // it advisory, not guaranteed to be read. The same requirements are
+      // restated per-tool via PRE_CALL_CHECK on start_agent, run_space_agents,
+      // and start_agent_build, which travel in tools/list and cannot be skipped.
+      // Canonical text + JSDoc live in policies.ts; keep these in sync if the
+      // policy's name or scope changes.
       instructions: SUFFICIENCY_POLICY,
+      // Cache hints for the 2026-07-28 cacheable result types (`ttlMs`/`cacheScope`).
+      // List-shaped results (and server/discover) are safe to cache publicly: they
+      // carry no per-caller data and are only invalidated by a deploy.
+      cacheHints: {
+        "tools/list": PUBLIC_LIST_HINT,
+        "prompts/list": PUBLIC_LIST_HINT,
+        "resources/list": PUBLIC_LIST_HINT,
+        "resources/templates/list": PUBLIC_LIST_HINT,
+        "server/discover": PUBLIC_LIST_HINT,
+        // NOT public and NOT tunable: every resource is API-backed and scoped to the
+        // caller's OAuth token (agents, credit balances, spending). A shared
+        // intermediary caching this publicly would serve one tenant's data to another.
+        "resources/read": { ttlMs: 0, cacheScope: "private" as const },
+      },
     }
   );
 
-  // Handle tool listing
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools,
-  }));
+  // ==========================================
+  // Tools
+  // ==========================================
 
-  // Handle tool execution
-  server.setRequestHandler(CallToolRequestSchema, async (request, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
-    const { name, arguments: args } = request.params;
-
-    if (DEBUG) {
-      console.error(`[DEBUG] Tool called: ${name}`);
-      console.error(`[DEBUG] Args: ${JSON.stringify(redactDebugArgs(args))}`);
+  // Registration is driven by iterating tools.ts so it remains the single source
+  // of tool metadata (description, raw JSON Schema, annotations).
+  for (const tool of tools) {
+    const handler = toolDispatch[tool.name];
+    if (!handler) {
+      throw new Error(`No dispatch handler registered for tool "${tool.name}"`);
     }
 
-    try {
-      // TODO: Consider replacing this switch with a dispatch map (Record<string, HandlerFn>)
-      // to improve readability and testability as the tool count grows.
-      switch (name) {
-        // Agent Tools
-        case "list_agents": {
-          const params = args as Record<string, unknown>;
-          const statusNum = validateNumber(params, "status", { required: false, min: 0, max: 12, integer: true });
-          const spaceId = validateNumber(params, "spaceId", { required: false, min: 1, integer: true });
-          const search = validateString(params, "search", false);
-          const configTypeStr = validateString(params, "configType", false);
-          const sortColumn = validateString(params, "sortColumn", false);
-          const sortOrderStr = validateString(params, "sortOrder", false);
-          const pageIndex = validateNumber(params, "pageIndex", { required: false, min: 1, integer: true });
-          const recordsPerPage = validateNumber(params, "recordsPerPage", { required: false, min: 1, max: 100, integer: true });
-
-          // Build filters object - ALWAYS include pagination to ensure resource-efficient API calls
-          const filters: ListAgentsRequest = {
-            // Always enforce pagination with defaults (pageIndex is 1-based per API spec)
-            pageIndex: pageIndex ?? 1,
-            recordsPerPage: recordsPerPage ?? 50,
-          };
-
-          // Add other optional filters
-          // Status is now the RunStatus enum value (1=Running, 7=Failed, 9=Completed, etc.)
-          if (statusNum !== undefined) {
-            filters.status = statusNum as AgentRunStatus;
-          }
-          if (spaceId !== undefined) {
-            filters.spaceId = spaceId;
-          }
-          if (search) {
-            filters.search = search;
-          }
-          if (configTypeStr) {
-            filters.configType = configTypeStr as ConfigType;
-          }
-          if (sortColumn) {
-            filters.sortColumn = sortColumn;
-          }
-          if (sortOrderStr) {
-            if (sortOrderStr !== "asc" && sortOrderStr !== "desc") {
-              throw new Error(`Invalid parameter 'sortOrder': must be "asc" or "desc", got "${sortOrderStr}"`);
-            }
-            // Convert "asc"/"desc" to 0/1 as the API expects
-            filters.sortOrder = sortOrderStr === "desc" ? 1 : 0;
-          }
-
-          const response = await apiClient.getAllAgents(filters);
-
-          // Parse response — either a plain array (no pagination) or a PaginatedAgentsResponse
-          let agents: AgentApiModel[];
-          let paginationInfo: { totalRecordCount: number; pageIndex: number; recordsPerPage: number } | null = null;
-
-          if (Array.isArray(response)) {
-            agents = response;
-          } else if (isPaginatedResponse(response)) {
-            agents = response.agents;
-            paginationInfo = {
-              totalRecordCount: response.totalRecordCount,
-              pageIndex: filters.pageIndex ?? 1,
-              recordsPerPage: filters.recordsPerPage ?? 50,
-            };
-          } else {
-            throw new Error(`Unexpected response type: ${typeof response}`);
-          }
-
-          const summary = summarizeAgents(agents);
-
-          // Include pagination info if available
-          const result = paginationInfo ? {
-            agents: summary,
-            pagination: paginationInfo,
-          } : summary;
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(result, null, 2),
-              },
-            ],
-          };
+    server.registerTool(
+      tool.name,
+      {
+        // Under 2026-07-28, top-level `title` is the modern display-name location;
+        // `annotations.title` (below) is the legacy one. Set both: the connectors
+        // directory requires a top-level title, while legacy-era clients still
+        // read only annotations.title.
+        title: tool.annotations?.title,
+        description: tool.description,
+        // `Tool.inputSchema` is the permissive wire type (any JSON object), while
+        // `fromJsonSchema` wants the structural `JSONSchema` interface. The cast is
+        // the only bridge; the schemas in tools.ts are hand-written JSON Schema and
+        // are what `tools/list` emits verbatim either way.
+        inputSchema: fromJsonSchema(tool.inputSchema as JsonSchemaType),
+        annotations: tool.annotations,
+      },
+      async (args, ctx) => {
+        if (DEBUG) {
+          console.error(`[DEBUG] Tool called: ${tool.name}`);
+          console.error(`[DEBUG] Args: ${JSON.stringify(redactDebugArgs(args))}`);
         }
 
-        case "get_agent": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const agent = await apiClient.getAgent(agentId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(agent, null, 2),
-              },
-            ],
-          };
-        }
+        const progressToken = ctx.mcpReq._meta?.progressToken;
+        const sendProgress: ProgressFn = async (progress, total, message) => {
+          if (progressToken === undefined) return;
+          try {
+            await ctx.mcpReq.notify({
+              method: "notifications/progress",
+              params: { progressToken, progress, total, message },
+            });
+          } catch { /* client disconnected — ignore */ }
+        };
 
-        case "search_agents": {
-          const params = args as Record<string, unknown>;
-          const query = validateString(params, "query")!;
-          if (!query.trim()) {
-            throw new Error("Search query cannot be empty");
-          }
-          const maxRecords = validateNumber(params, "maxRecords", { required: false, min: 1, max: 1000, integer: true });
-          const agents = await apiClient.searchAgents(query, maxRecords);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(summarizeAgents(agents), null, 2),
-              },
-            ],
-          };
-        }
-
-        // Run Tools
-        case "get_agent_runs": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const maxRecords = validateNumber(params, "maxRecords", { required: false, min: 1, max: 1000, integer: true });
-          const runs = await apiClient.getAgentRuns(agentId, maxRecords);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(runs, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "get_run_status": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
-          const status = await apiClient.getRunStatus(agentId, runId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(status, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "start_agent": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const inputParameters = validateJsonString(params, "inputParameters", false);
-          const isRunSynchronously = validateBoolean(params, "isRunSynchronously", false);
-          const timeout = validateNumber(params, "timeout", { required: false, min: 1, max: 3600, integer: true });
-          const parallelism = validateNumber(params, "parallelism", { required: false, min: 1, max: 50, integer: true });
-
-          const result = await apiClient.startAgent(agentId, {
-            inputParameters,
-            isRunSynchronously: isRunSynchronously ?? false,
-            timeout: timeout ?? 60,
-            parallelism: parallelism ?? 1,
+        try {
+          return await handler((args ?? {}) as Record<string, unknown>, {
+            apiClient,
+            sendProgress,
+            // start_agent_build stops the backend build when the client cancels
+            // mid-poll; ToolDeps.signal is required so this cannot be dropped.
+            signal: ctx.mcpReq.signal,
           });
-
-          if (typeof result === "string") {
-            // Synchronous run returned data directly
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: result,
-                },
-              ],
-            };
-          } else {
-            // Asynchronous run returned run info
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Agent started successfully.\n\n${JSON.stringify(result, null, 2)}`,
-                },
-              ],
-            };
-          }
+        } catch (error) {
+          return formatToolError(error);
         }
-
-        case "stop_agent": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
-          await apiClient.stopAgent(agentId, runId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Successfully stopped run ${runId} for agent ${agentId}`,
-              },
-            ],
-          };
-        }
-
-        case "kill_agent": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
-          await apiClient.killAgent(agentId, runId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Kill command sent for run ${runId} of agent ${agentId}. If the agent was running, it will initiate graceful stop. If already stopping, it will force immediate termination.`,
-              },
-            ],
-          };
-        }
-
-        // Destructive Operations
-        case "delete_run": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
-          const removeMethod = validateEnum(
-            params,
-            "removeMethod",
-            ["RemoveEntireRun", "RemoveAllFiles", "RemoveAllFilesAndAgentInput"] as const,
-            false
-          ) as RunRemoveMethod | undefined;
-
-          await apiClient.deleteRun(agentId, runId, removeMethod);
-
-          const methodDescriptions: Record<RunRemoveMethod, string> = {
-            RemoveEntireRun: `Successfully deleted run ${runId} and all associated files from agent ${agentId}.`,
-            RemoveAllFiles: `Successfully removed all files for run ${runId} from agent ${agentId}. The run record has been preserved.`,
-            RemoveAllFilesAndAgentInput: `Successfully removed all files and agent input for run ${runId} from agent ${agentId}. The run record has been preserved.`,
-          };
-          const description =
-            (removeMethod ? methodDescriptions[removeMethod] : undefined) ??
-            `Successfully deleted run ${runId} and all associated files from agent ${agentId}.`;
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: description,
-              },
-            ],
-          };
-        }
-
-        // File Tools
-        case "get_run_files": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
-          const files = await apiClient.getRunFiles(agentId, runId);
-
-          if (files.length === 0) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "No files found for this run.",
-                },
-              ],
-            };
-          }
-
-          const summary = files.map((f: AgentRunFileApiModel) => ({
-            id: f.id,
-            name: f.name,
-            fileType: f.fileType,
-            fileSize: `${((f.fileSize ?? 0) / 1024).toFixed(2)} KB`,
-            created: f.created,
-          }));
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(summary, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "get_file_download_url": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
-          const fileId = validateNumber(params, "fileId", { min: 1, integer: true })!;
-          const result = await apiClient.downloadRunFile(agentId, runId, fileId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Download URL:\n${result.redirectUrl}\n\nNote: This URL is temporary and will expire.`,
-              },
-            ],
-          };
-        }
-
-        // Version Tools
-        case "get_agent_versions": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const versions = await apiClient.getAgentVersions(agentId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(versions, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "restore_agent_version": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const versionNumber = validateNumber(params, "versionNumber", { min: 1, integer: true })!;
-          const comments = validateString(params, "comments")!;
-          await apiClient.restoreAgentVersion(agentId, versionNumber, comments);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Successfully restored agent ${agentId} to version ${versionNumber}.\n\nA new version has been created based on version ${versionNumber}.`,
-              },
-            ],
-          };
-        }
-
-        // Schedule Tools
-        case "list_agent_schedules": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const schedules = await apiClient.getAgentSchedules(agentId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(schedules, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "create_agent_schedule": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const name = validateString(params, "name")!;
-          const {
-            scheduleType,
-            startTime,
-            cronExpression,
-            runEveryCount,
-            runEveryPeriod,
-            timezone,
-            inputParameters,
-            isEnabled,
-            parallelism,
-            parallelMaxConcurrency,
-            parallelExport,
-            logLevel,
-            logMode,
-            isExclusive,
-            isWaitOnFailure,
-          } = parseScheduleParams(params);
-
-          // Validate schedule type specific parameters
-          const effectiveScheduleType = scheduleType ?? 3; // Default to CRON
-
-          // RunOnce (1): startTime is required and must be at least 1 minute in the future
-          if (effectiveScheduleType === 1) {
-            if (!startTime) {
-              throw new Error("startTime is required when scheduleType is 1 (RunOnce)");
-            }
-          }
-
-          // RunEvery (2): runEveryCount and runEveryPeriod are required, startTime is optional but must be in the future if provided
-          if (effectiveScheduleType === 2) {
-            if (runEveryCount === undefined || runEveryPeriod === undefined) {
-              throw new Error("runEveryCount and runEveryPeriod are required when scheduleType is 2 (RunEvery)");
-            }
-          }
-
-          // CRON (3): cronExpression is required, startTime is not used
-          if (effectiveScheduleType === 3 && !cronExpression) {
-            throw new Error("cronExpression is required when scheduleType is 3 (CRON)");
-          }
-
-          validateScheduleStartTime(effectiveScheduleType, startTime);
-
-          const schedule = await apiClient.createAgentSchedule(agentId, {
-            name,
-            scheduleType: effectiveScheduleType,
-            startTime,
-            cronExpression,
-            runEveryCount,
-            runEveryPeriod,
-            timezone,
-            inputParameters,
-            isEnabled: isEnabled ?? true,
-            parallelism: parallelism ?? 1,
-            parallelMaxConcurrency,
-            parallelExport,
-            logLevel,
-            logMode,
-            isExclusive,
-            isWaitOnFailure,
-          });
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Schedule created successfully.\n\n${JSON.stringify(schedule, null, 2)}`,
-              },
-            ],
-          };
-        }
-
-        case "delete_agent_schedule": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
-          await apiClient.deleteAgentSchedule(agentId, scheduleId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Successfully deleted schedule ${scheduleId} from agent ${agentId}`,
-              },
-            ],
-          };
-        }
-
-        case "get_agent_schedule": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
-          const schedule = await apiClient.getAgentSchedule(agentId, scheduleId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(schedule, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "update_agent_schedule": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
-          const name = validateString(params, "name")!;
-          const {
-            scheduleType,
-            startTime,
-            cronExpression,
-            runEveryCount,
-            runEveryPeriod,
-            timezone,
-            inputParameters,
-            isEnabled,
-            parallelism,
-            parallelMaxConcurrency,
-            parallelExport,
-            logLevel,
-            logMode,
-            isExclusive,
-            isWaitOnFailure,
-          } = parseScheduleParams(params);
-
-          const hasCronFields = cronExpression !== undefined;
-          const hasRunEveryFields = runEveryCount !== undefined || runEveryPeriod !== undefined;
-
-          if (hasCronFields && hasRunEveryFields && scheduleType === undefined) {
-            throw new Error(
-              "Conflicting schedule fields: both cronExpression and runEveryCount/runEveryPeriod were provided without an explicit scheduleType. " +
-              "Specify scheduleType to clarify intent (2=RunEvery, 3=CRON)."
-            );
-          }
-
-          // Infer scheduleType from provided fields when not explicitly set,
-          // so the user doesn't have to redundantly specify it on every update.
-          let effectiveScheduleType = scheduleType;
-          if (effectiveScheduleType === undefined) {
-            if (hasCronFields) effectiveScheduleType = 3;
-            else if (hasRunEveryFields) effectiveScheduleType = 2;
-          }
-
-          validateScheduleStartTime(effectiveScheduleType, startTime);
-
-          const updated = await apiClient.updateAgentSchedule(agentId, scheduleId, {
-            name,
-            scheduleType: effectiveScheduleType,
-            startTime,
-            cronExpression,
-            runEveryCount,
-            runEveryPeriod,
-            timezone,
-            inputParameters,
-            isEnabled,
-            parallelism,
-            parallelMaxConcurrency,
-            parallelExport,
-            logLevel,
-            logMode,
-            isExclusive,
-            isWaitOnFailure,
-          });
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Schedule updated successfully.\n\n${JSON.stringify(updated, null, 2)}`,
-              },
-            ],
-          };
-        }
-
-        case "enable_agent_schedule": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
-          await apiClient.enableAgentSchedule(agentId, scheduleId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Successfully enabled schedule ${scheduleId} for agent ${agentId}. The schedule will now run according to its configuration.`,
-              },
-            ],
-          };
-        }
-
-        case "disable_agent_schedule": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
-          await apiClient.disableAgentSchedule(agentId, scheduleId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Successfully disabled schedule ${scheduleId} for agent ${agentId}. The schedule will not run until re-enabled.`,
-              },
-            ],
-          };
-        }
-
-        case "get_scheduled_runs": {
-          const params = args as Record<string, unknown>;
-          const startDate = validateString(params, "startDate", false);
-          const endDate = validateString(params, "endDate", false);
-          const schedules = await apiClient.getUpcomingSchedules(startDate, endDate);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(schedules, null, 2),
-              },
-            ],
-          };
-        }
-
-        // Billing/Credits Tools
-        case "get_credits_balance": {
-          const balance = await apiClient.getCreditsBalance();
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(balance, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "get_spending_summary": {
-          const params = args as Record<string, unknown>;
-          const startDate = validateString(params, "startDate", false);
-          const endDate = validateString(params, "endDate", false);
-          const spending = await apiClient.getSpendingSummary(startDate, endDate);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(spending, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "get_credit_history": {
-          const params = args as Record<string, unknown>;
-          const pageIndex = validateNumber(params, "pageIndex", { required: false, min: 1, integer: true });
-          const recordsPerPage = validateNumber(params, "recordsPerPage", { required: false, min: 1, max: 100, integer: true });
-          const history = await apiClient.getCreditHistory(pageIndex, recordsPerPage);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(history, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "get_agents_usage": {
-          const params = args as Record<string, unknown>;
-          const defaults = getDefaultDateRange();
-          const startDate = validateString(params, "startDate", false) ?? defaults.startDate;
-          const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
-          validateISODate(startDate, "startDate");
-          validateISODate(endDate, "endDate");
-          validateDateRange(startDate, endDate);
-
-          const pageIndex = validateNumber(params, "pageIndex", { required: false, min: 1, integer: true });
-          const recordsPerPage = validateNumber(params, "recordsPerPage", { required: false, min: 1, max: 1000, integer: true });
-          const sortColumn = validateString(params, "sortColumn", false);
-          const sortOrder = validateNumber(params, "sortOrder", { required: false, min: 0, max: 1, integer: true });
-          const name = validateString(params, "name", false);
-          const usageTypes = validateString(params, "usageTypes", false);
-
-          const result = await apiClient.getAgentsUsage(
-            startDate,
-            endDate,
-            pageIndex,
-            recordsPerPage,
-            sortColumn,
-            sortOrder,
-            name,
-            usageTypes
-          );
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(result, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "get_agent_cost_breakdown": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-
-          const defaults = getDefaultDateRange();
-          const startDate = validateString(params, "startDate", false) ?? defaults.startDate;
-          const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
-          validateISODate(startDate, "startDate");
-          validateISODate(endDate, "endDate");
-          validateDateRange(startDate, endDate);
-
-          const timeUnit = validateEnum(params, "timeUnit", ["day", "month"] as const, false);
-          const usageTypes = validateString(params, "usageTypes", false);
-
-          const result = await apiClient.getAgentCostBreakdown(
-            agentId,
-            startDate,
-            endDate,
-            timeUnit,
-            usageTypes
-          );
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(result, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "get_agent_runs_cost": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-
-          const defaults = getDefaultDateRange();
-          const startDate = validateString(params, "startDate", false) ?? defaults.startDate;
-          const endDate = validateString(params, "endDate", false) ?? defaults.endDate;
-          validateISODate(startDate, "startDate");
-          validateISODate(endDate, "endDate");
-          validateDateRange(startDate, endDate);
-
-          const pageIndex = validateNumber(params, "pageIndex", { required: false, min: 1, integer: true });
-          const recordsPerPage = validateNumber(params, "recordsPerPage", { required: false, min: 1, max: 1000, integer: true });
-          const sortColumn = validateEnum(params, "sortColumn", ["date", "cost", "duration"] as const, false);
-          const sortOrder = validateNumber(params, "sortOrder", { required: false, min: 0, max: 1, integer: true });
-          const usageTypes = validateString(params, "usageTypes", false);
-
-          const result = await apiClient.getAgentRunsCost(
-            agentId,
-            startDate,
-            endDate,
-            pageIndex,
-            recordsPerPage,
-            sortColumn,
-            sortOrder,
-            usageTypes
-          );
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(result, null, 2),
-              },
-            ],
-          };
-        }
-
-        // Space Tools
-        case "list_spaces": {
-          const spaces = await apiClient.getAllSpaces();
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(spaces, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "get_space": {
-          const params = args as Record<string, unknown>;
-          const spaceId = validateNumber(params, "spaceId", { min: 1, integer: true })!;
-          const space = await apiClient.getSpace(spaceId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(space, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "get_space_agents": {
-          const params = args as Record<string, unknown>;
-          const spaceId = validateNumber(params, "spaceId", { min: 1, integer: true })!;
-          const agents = await apiClient.getSpaceAgents(spaceId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(agents, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "search_space_by_name": {
-          const params = args as Record<string, unknown>;
-          const name = validateString(params, "name")!;
-          const space = await apiClient.searchSpaceByName(name);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(space, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "run_space_agents": {
-          const params = args as Record<string, unknown>;
-          const spaceId = validateNumber(params, "spaceId", { min: 1, integer: true })!;
-          const inputParameters = validateJsonString(params, "inputParameters", false);
-          const result = await apiClient.runSpaceAgents(spaceId, inputParameters);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Started agents in space.\n\n${JSON.stringify(result, null, 2)}`,
-              },
-            ],
-          };
-        }
-
-        // Analytics Tools
-        case "get_runs_summary": {
-          const params = args as Record<string, unknown>;
-          const startDate = validateString(params, "startDate", false);
-          const endDate = validateString(params, "endDate", false);
-          const status = validateString(params, "status", false);
-          const includeDetails = validateBoolean(params, "includeDetails", false);
-          const summary = await apiClient.getRunsSummary(startDate, endDate, status, includeDetails);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(summary, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "get_records_summary": {
-          const params = args as Record<string, unknown>;
-          const startDate = validateString(params, "startDate", false);
-          const endDate = validateString(params, "endDate", false);
-          const agentId = validateNumber(params, "agentId", { required: false, min: 1, integer: true });
-          const summary = await apiClient.getRecordsSummary(startDate, endDate, agentId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(summary, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "get_run_diagnostics": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
-          const diagnostics = await apiClient.getRunDiagnostics(agentId, runId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(diagnostics, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "get_latest_failure": {
-          const params = args as Record<string, unknown>;
-          const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
-          const diagnostics = await apiClient.getLatestFailure(agentId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(diagnostics, null, 2),
-              },
-            ],
-          };
-        }
-
-        // Agent Builder Tools
-
-        case "start_agent_build": {
-          const params = args as Record<string, unknown>;
-          const prompt = validateString(params, "prompt", {
-            required: true,
-            minLength: 10,
-            maxLength: 5000,
-            trim: true,
-          })!;
-          const spaceId = validateNumber(params, "spaceId", { required: false, min: 1, integer: true });
-          const waitForCompletion = validateBoolean(params, "waitForCompletion", { required: false, default: true })!
-
-          const startResponse = await apiClient.startAgentBuild({ prompt, spaceId });
-
-          if (!waitForCompletion) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify(startResponse, null, 2),
-                },
-              ],
-            };
-          }
-
-          // Internal polling loop — client sees a single tool call instead of 4-12 roundtrips.
-          const { sessionId } = startResponse;
-          const MAX_WAIT_MS = AGENT_BUILD_MAX_WAIT_MS;
-          const startTime = Date.now();
-          let delay = 1_000; // initial delay before first poll (reduced from 3s for fast builds)
-
-          // Progress helper — silently no-ops when the client didn't send a progressToken.
-          // If sendNotification throws (e.g. client disconnected), swallow the error and
-          // continue polling — the loop must not crash just because notifications failed.
-          const progressToken = extra._meta?.progressToken;
-          const sendProgress = async (progress: number, total: number, message: string) => {
-            if (progressToken === undefined) return;
-            try {
-              await extra.sendNotification({
-                method: "notifications/progress",
-                params: { progressToken, progress, total, message },
-              });
-            } catch {
-              // Client disconnected or transport closed; continue polling silently.
-            }
-          };
-
-          await sendProgress(0, 1, `Build started. sessionId: ${sessionId}`);
-
-          while (Date.now() - startTime < MAX_WAIT_MS) {
-            // Bail out early if the MCP client cancelled or disconnected.
-            if (extra.signal?.aborted) {
-              apiClient.stopAgentBuild(sessionId).catch(() => {});
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: JSON.stringify({ status: "cancelled", sessionId }, null, 2),
-                  },
-                ],
-                isError: true,
-              };
-            }
-
-            await new Promise<void>((resolve) => setTimeout(resolve, delay));
-
-            const status = await apiClient.getAgentBuildStatus(sessionId);
-
-            if (status.status === "completed" || status.status === "ready") {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: JSON.stringify(
-                      { status: status.status, agentId: status.agentId, agentName: status.agentName, sessionId },
-                      null,
-                      2
-                    ),
-                  },
-                ],
-              };
-            }
-
-            if (status.status === "error") {
-              if (DEBUG && status.error) {
-                console.error(`[DEBUG] Agent build session ${sessionId} failed: ${status.error}`);
-              }
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: AGENT_BUILD_ERROR_MESSAGE,
-                  },
-                ],
-                isError: true,
-              };
-            }
-
-            if (status.status === "cancelled") {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: JSON.stringify({ status: "cancelled", sessionId }, null, 2),
-                  },
-                ],
-                isError: true,
-              };
-            }
-
-            // status === "processing" — keep waiting with backoff (cap at 15s).
-            // Progress uses raw seconds (e.g. 26 / 300) so the numerator/denominator are
-            // obviously time units in Cursor's tool panel, not a completion percentage.
-            // Tested: 0/0 renders as literal "0 / 0" in Cursor (confusing), so we use
-            // elapsed seconds with "max 5m" in the message to keep the context clear.
-            const elapsed = Date.now() - startTime;
-            await sendProgress(
-              Math.round(elapsed / 1000),
-              MAX_WAIT_MS / 1000,
-              `Build in progress... (${Math.round(elapsed / 1000)}s elapsed, max ${AGENT_BUILD_MAX_WAIT_SHORT})`
-            );
-            delay = Math.min(delay * 1.5, 15_000);
-          }
-
-          // Timed out — the build is still running on the backend. Return the sessionId
-          // so the caller can check status manually via get_agent_build_status.
-          // isError is intentionally omitted: the build has not failed, we just stopped waiting.
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    status: "timeout",
-                    sessionId,
-                    message: `Build did not complete within ${AGENT_BUILD_MAX_WAIT_LABEL}. The build is still running. Use get_agent_build_status with the sessionId to check.`,
-                  },
-                  null,
-                  2
-                ),
-              },
-            ],
-          };
-        }
-
-        case "get_agent_build_status": {
-          const params = args as Record<string, unknown>;
-          // maxLength:256 guards against oversized session IDs being forwarded to the API (#7)
-          const sessionId = validateString(params, "sessionId", { required: true, maxLength: 256 })!;
-          const status = await apiClient.getAgentBuildStatus(sessionId);
-
-          // The backend's `error` field is a raw ex.Message passthrough that can contain
-          // stack traces, internal endpoint paths, upstream LLM URLs, and similar. Replace
-          // it with a fixed user-facing string; log the raw value at DEBUG only (#6).
-          if (DEBUG && status.status === "error" && status.error) {
-            console.error(`[DEBUG] Agent build session ${sessionId} failed: ${status.error}`);
-          }
-          const sanitized = {
-            ...status,
-            error: status.status === "error"
-              ? AGENT_BUILD_ERROR_MESSAGE
-              : undefined,
-          };
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(sanitized, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "stop_agent_build": {
-          const params = args as Record<string, unknown>;
-          // maxLength:256 guards against oversized session IDs (#7)
-          const sessionId = validateString(params, "sessionId", { required: true, maxLength: 256 })!;
-          await apiClient.stopAgentBuild(sessionId);
-          // Return structured JSON consistent with every other tool handler (#8)
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({ stopped: true, sessionId }, null, 2),
-              },
-            ],
-          };
-        }
-
-        default:
-          throw new Error(`Unknown tool: ${name}`);
       }
-    } catch (error) {
-      return formatToolError(error);
-    }
-  });
+    );
+  }
 
   // ==========================================
-  // Resource Handlers
+  // Resources
   // ==========================================
 
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources,
-  }));
+  for (const resource of resources) {
+    server.registerResource(
+      resource.name,
+      resource.uri,
+      // registerResource requires a metadata argument; forward the descriptive
+      // fields declared in resources.ts so resources/list output is unchanged.
+      { description: resource.description, mimeType: resource.mimeType },
+      (uri) => readResourceResult(uri, apiClient)
+    );
+  }
 
-  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
-    resourceTemplates,
-  }));
-
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-    const { uri } = request.params;
-
-    if (DEBUG) {
-      console.error(`[DEBUG] Resource read: ${uri}`);
-    }
-
-    try {
-      const content = await readResource(uri, apiClient);
-      return {
-        contents: [content],
-      };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-      throw new Error(`Failed to read resource ${uri}: ${errorMessage}`);
-    }
-  });
+  for (const template of resourceTemplates) {
+    server.registerResource(
+      template.name,
+      // `list: undefined` is required (not optional) so forgetting resource
+      // enumeration has to be a deliberate choice — these templates are only
+      // readable by URI, never enumerable.
+      new ResourceTemplate(template.uriTemplate, { list: undefined }),
+      { description: template.description, mimeType: template.mimeType },
+      (uri) => readResourceResult(uri, apiClient)
+    );
+  }
 
   // ==========================================
-  // Prompt Handlers
+  // Prompts
   // ==========================================
 
-  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
-    prompts,
-  }));
-
-  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
-
-    if (DEBUG) {
-      console.error(`[DEBUG] Prompt requested: ${name}`);
-      console.error(`[DEBUG] Args: ${JSON.stringify(redactDebugArgs(args))}`);
-    }
-
-    const messages = getPromptMessages(name, args);
-    return { messages };
-  });
+  for (const prompt of prompts) {
+    // Most prompts declare arguments (debug-agent takes agentName, space-overview
+    // takes spaceName, and so on), so argsSchema must be built rather than omitted.
+    // MCP prompt arguments are always strings.
+    const promptArgs = prompt.arguments ?? [];
+    server.registerPrompt(
+      prompt.name,
+      {
+        description: prompt.description,
+        argsSchema: fromJsonSchema<Record<string, string>>({
+          type: "object",
+          properties: Object.fromEntries(
+            promptArgs.map((a) => [a.name, { type: "string", description: a.description }])
+          ),
+          required: promptArgs.filter((a) => a.required).map((a) => a.name),
+        }),
+      },
+      (args) => {
+        if (DEBUG) {
+          console.error(`[DEBUG] Prompt requested: ${prompt.name}`);
+          console.error(`[DEBUG] Args: ${JSON.stringify(redactDebugArgs(args))}`);
+        }
+        return { messages: getPromptMessages(prompt.name, args) };
+      }
+    );
+  }
 
   return server;
 }
