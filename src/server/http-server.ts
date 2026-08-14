@@ -35,6 +35,39 @@ const activeInstances = new Set<HttpServerInstance>();
 let signalHandlersInstalled = false;
 
 /**
+ * Shut one instance down: stop accepting connections, abort what is in flight,
+ * then wait for the sockets to drain.
+ *
+ * ORDER IS LOAD-BEARING. `httpServer.close(cb)` only invokes `cb` once every open
+ * connection has ended, and the call that ends them is `mcpHandler.close()`. Awaiting
+ * the drain *before* aborting deadlocks the two against each other whenever a request
+ * is still in flight — a `start_agent_build` with `waitForCompletion` holds its response
+ * open for up to AGENT_BUILD_MAX_WAIT_MS — until the caller's force-exit timer fires and
+ * the process exits non-zero. Start the close, abort, then drain.
+ *
+ * Exported for testing: the signal handler around it calls `process.exit`, so this is the
+ * only seam at which the ordering can be asserted.
+ */
+export async function shutdownInstance({ httpServer, mcpHandler }: HttpServerInstance): Promise<void> {
+  // Started, deliberately not awaited yet — this is what stops new connections.
+  const drained = new Promise<void>((resolve) => httpServer.close(() => resolve()));
+
+  // Abort in-flight MCP exchanges and close their per-request instances. There is no
+  // session table to drain — this single call replaces the old per-session close loop.
+  try {
+    await mcpHandler.close();
+  } catch (err) {
+    console.error("[MCP] Error closing the MCP handler:", err);
+  }
+
+  // Idle keep-alive sockets hold the drain open with no request in flight to abort.
+  httpServer.closeIdleConnections?.();
+
+  await drained;
+  console.error("[MCP] HTTP server closed, no longer accepting connections");
+}
+
+/**
  * Register the process's SIGTERM/SIGINT handlers exactly once, no matter how
  * many times `startHttpServer` is called. On signal, gracefully shuts down
  * every instance currently tracked in {@link activeInstances} (in production
@@ -59,22 +92,7 @@ function installSignalHandlersOnce(): void {
     }, 10_000);
     forceExitTimer.unref();
 
-    await Promise.all(
-      Array.from(activeInstances).map(async ({ httpServer, mcpHandler }) => {
-        // Stop accepting new connections.
-        await new Promise<void>((resolve) => httpServer.close(() => resolve()));
-        console.error("[MCP] HTTP server closed, no longer accepting connections");
-
-        // Abort in-flight MCP exchanges and close their per-request instances.
-        // There is no session table to drain — this single call replaces the old
-        // per-session close loop.
-        try {
-          await mcpHandler.close();
-        } catch (err) {
-          console.error("[MCP] Error closing the MCP handler:", err);
-        }
-      })
-    );
+    await Promise.all(Array.from(activeInstances).map(shutdownInstance));
 
     console.error("[MCP] MCP handler closed. Shutdown complete.");
     process.exit(0);
@@ -140,8 +158,13 @@ export function jsonRpcErrorMiddleware(err: unknown, _req: Request, res: Respons
     return;
   }
   console.error("[MCP] Unhandled error on /mcp:", err);
-  const isProduction = process.env.NODE_ENV === "production";
-  const message = !isProduction && err instanceof Error ? err.message : "Internal server error";
+  // Sanitized by DEFAULT; verbose only when explicitly opted into via DEBUG=1.
+  // Gating on NODE_ENV !== "production" inverts this: NODE_ENV is unset for a plain
+  // `node dist/index.js` run — precisely the non-Docker case this middleware exists
+  // for — so internal messages would reach the caller exactly where nobody set a flag
+  // asking for them. Read at call time, not module load, so tests can toggle it.
+  const isVerbose = process.env.DEBUG === "1";
+  const message = isVerbose && err instanceof Error ? err.message : "Internal server error";
   res.status(500).json({
     jsonrpc: "2.0",
     error: { code: -32603, message },
@@ -166,11 +189,40 @@ export function jsonRpcErrorMiddleware(err: unknown, _req: Request, res: Respons
  * know, so it is deliberately NOT the default here.
  */
 export function parseTrustProxy(raw: string | undefined): boolean | number | string {
-  if (raw === undefined || raw === "true") return true;
-  if (raw === "false") return false;
+  if (raw === undefined) return true;
   const trimmed = raw.trim();
+  // Empty/whitespace reads as "not configured", not as an empty allowlist.
+  if (trimmed === "") return true;
+  // Case-insensitive: before SE4-3723 this was `TRUST_PROXY !== "false"`, so
+  // "True" and " true " both meant true and booted. Treating them as an IP
+  // allowlist instead makes Express throw and the server never start.
+  const lowered = trimmed.toLowerCase();
+  if (lowered === "true") return true;
+  if (lowered === "false") return false;
   if (/^\d+$/.test(trimmed)) return Number(trimmed);
-  return raw;
+  return trimmed;
+}
+
+/**
+ * Apply TRUST_PROXY to the app, degrading to the default rather than refusing to boot.
+ *
+ * Express compiles an allowlist inside `app.set` and throws synchronously on anything
+ * proxy-addr cannot parse, so an unparseable value left uncaught kills startup. Since we
+ * cannot reliably out-guess that parser, catch it here: warn loudly and fall back to the
+ * documented default, which is also the pre-SE4-3723 behaviour for such values.
+ */
+export function applyTrustProxy(app: express.Application, raw: string | undefined): void {
+  const value = parseTrustProxy(raw);
+  try {
+    app.set("trust proxy", value);
+  } catch (err) {
+    console.error(
+      `[MCP] TRUST_PROXY=${JSON.stringify(raw)} is not a valid Express 'trust proxy' setting ` +
+        `(${err instanceof Error ? err.message : String(err)}). Falling back to true. Use ` +
+        `'true', 'false', a hop count, or a comma-separated CIDR/IP allowlist.`
+    );
+    app.set("trust proxy", true);
+  }
 }
 
 /**
@@ -216,7 +268,7 @@ export async function startHttpServer(
   // This ensures req.protocol returns 'https' when behind a TLS-terminating proxy.
   // See parseTrustProxy's doc comment for the req.ip / rate-limiter evasion risk
   // at the default and how to remediate it (hop count or CIDR/IP allowlist).
-  app.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY));
+  applyTrustProxy(app, process.env.TRUST_PROXY);
 
   // Deliberately NO express.json(). toNodeHandler reads the raw request stream;
   // a body parser drains it first and every /mcp request fails with -32700
