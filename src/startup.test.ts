@@ -52,30 +52,34 @@ describe("startup configuration guards", () => {
 // say — is caught here and nowhere else.
 describe("issuer normalisation reaches the served document", () => {
   const distEntry = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");
-  // A fixed port is needed because index.ts logs the configured port, not the bound
-  // one, so PORT=0 would leave the test unable to find the server.
-  const PORT = 39117;
 
   it("serves an issuer with no trailing slash when the env var has one", async () => {
+    // PORT=0 lets the OS pick a free port, so this never collides with anything else
+    // on the machine or the CI runner. startHttpServer resolves the bound port from
+    // httpServer.address() before logging, so the startup line carries the real port
+    // and we can read it back out of the line we already wait for.
     const child = spawn(process.execPath, [distEntry], {
       env: {
         ...process.env,
         TRANSPORT_MODE: "http",
         SEQUENTUM_OAUTH_ISSUER: "https://issuer.example.test///",
         REQUIRE_AUTH: "false",
-        PORT: String(PORT),
+        PORT: "0",
         HOST: "127.0.0.1",
       },
       stdio: ["ignore", "ignore", "pipe"],
     });
 
     try {
-      await new Promise<void>((resolve, reject) => {
+      const port = await new Promise<string>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("server did not start in 15s")), 15_000);
+        let buffered = "";
         child.stderr.on("data", (chunk: Buffer) => {
-          if (chunk.toString().includes("running on HTTP")) {
+          buffered += chunk.toString();
+          const match = /running on HTTP at http:\/\/127\.0\.0\.1:(\d+)\//.exec(buffered);
+          if (match) {
             clearTimeout(timer);
-            resolve();
+            resolve(match[1]);
           }
         });
         child.on("exit", (code) => {
@@ -84,11 +88,11 @@ describe("issuer normalisation reaches the served document", () => {
         });
       });
 
-      const res = await fetch(`http://127.0.0.1:${PORT}/.well-known/oauth-protected-resource`);
+      const res = await fetch(`http://127.0.0.1:${port}/.well-known/oauth-protected-resource`);
       const body = (await res.json()) as { authorization_servers: string[] };
       expect(body.authorization_servers).toEqual(["https://issuer.example.test"]);
 
-      const redirect = await fetch(`http://127.0.0.1:${PORT}/.well-known/oauth-authorization-server`, {
+      const redirect = await fetch(`http://127.0.0.1:${port}/.well-known/oauth-authorization-server`, {
         redirect: "manual",
       });
       expect(redirect.headers.get("location")).toBe(
