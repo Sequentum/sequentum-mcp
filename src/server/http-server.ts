@@ -12,6 +12,7 @@ import express, { NextFunction, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import { buildAuthChallenge, SUPPORTED_SCOPES } from "../utils/oauth-metadata.js";
 import { buildAllowedOrigins, isAllowedOrigin } from "./cors.js";
+import { renderLandingPage } from "./landing-page.js";
 import { MCP_RATE_LIMIT_MAX, MCP_RATE_LIMIT_WINDOW_MS, RATE_LIMIT_ERROR_CODE } from "./constants.js";
 import { createSequentumMcpHandler } from "./mcp-handler.js";
 
@@ -119,6 +120,18 @@ function extractBearerToken(req: Request): string | null {
  */
 function getMcpServerOrigin(req: Request): string {
   return new URL(`${req.protocol}://${req.get("host")}`).origin;
+}
+
+/**
+ * As `getMcpServerOrigin`, but rejects a missing Host instead of rendering
+ * `http://undefined`. HTTP/1.0 allows no Host at all; the protocol routes have always
+ * tolerated that, but the landing page puts the result in front of a human, so a
+ * caller that cannot tell us who we are gets a 400 rather than a page of nonsense.
+ */
+function requireOrigin(req: Request): string {
+  const host = req.get("host");
+  if (!host) throw new Error("missing Host header");
+  return new URL(`${req.protocol}://${host}`).origin;
 }
 
 /**
@@ -343,6 +356,49 @@ export async function startHttpServer(
     },
   });
   app.use("/mcp", mcpRateLimiter);
+
+  // Human-facing landing page for the bare origin.
+  //
+  // This origin is the RFC 9728 `resource` identifier the server advertises, and an
+  // OAuth resource identifier is a URI — nothing obliges it to serve a document, which
+  // is why answering 404 here was never a protocol defect. It was a documentation one:
+  // the README, the catalog listings and both app-directory submissions all point
+  // people at the bare host, so every one of those links landed on `Cannot GET /`.
+  // Serving a page repairs all of them at once without editing a single reference.
+  //
+  // Registered as an exact path. Express matches `/` and nothing else, so this cannot
+  // shadow `/mcp`, `/health` or `/.well-known/*` — the tests below pin that. The same
+  // redirect expressed as a catch-all in a proxy in front of this app WOULD shadow
+  // them, so it belongs here and not in the ingress.
+  app.get("/", (req: Request, res: Response) => {
+    // Resolve the origin BEFORE touching the response. `getMcpServerOrigin` throws on
+    // a Host the URL parser rejects (`a<b`, an embedded space), and if the headers are
+    // already set by then the error middleware ships a JSON-RPC body still labelled
+    // text/html, logged against /mcp on a request that never went there.
+    let origin: string;
+    try {
+      origin = requireOrigin(req);
+    } catch {
+      res.status(400).type("text/plain").set("Cache-Control", "no-store").send("Bad Host header");
+      return;
+    }
+
+    // `private`, never `public`. The body varies by Host AND by req.protocol, which
+    // Express reads from the leftmost X-Forwarded-Proto — client-supplied under the
+    // default `trust proxy: true` (see parseTrustProxy). Host is part of a shared
+    // cache's key; the forwarded scheme is not, and is not in Vary, so `public` would
+    // let one anonymous request pin an hour of "connect over http://" onto the
+    // canonical page for every visitor.
+    //
+    // `private` bars shared caches — where that attack lives — while still letting the
+    // visitor's own browser cache: a browser does not send X-Forwarded-Proto, and no
+    // one can reach another user's private cache. The 400s above stay no-store; an
+    // error is never worth storing.
+    res
+      .type("html")
+      .set("Cache-Control", "private, max-age=3600")
+      .send(renderLandingPage(origin));
+  });
 
   // Health check endpoint
   app.get("/health", (_req: Request, res: Response) => {
