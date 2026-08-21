@@ -1,11 +1,11 @@
 # Troubleshooting Guide
 
-This guide covers common issues and their solutions when using the Sequentum MCP server. The recommended setup is the remote server at `https://mcp.sequentum.com/mcp` using OAuth authentication. A local setup via `npx` is also available as an alternative.
+This guide covers common issues and their solutions when using the Sequentum MCP server. The supported setup is the remote server at `https://mcp.sequentum.com/mcp` using OAuth authentication. The local `npx` setup is deprecated and will be removed in a future release; its issues are still documented below for anyone migrating off it.
 
 ## Table of Contents
 
 - [Remote Connection Issues (OAuth)](#remote-connection-issues-oauth)
-- [Local Connection Issues (API Key)](#local-connection-issues-api-key)
+- [Local Connection Issues (API Key, Deprecated)](#local-connection-issues-api-key-deprecated)
 - [Authentication Errors](#authentication-errors)
 - [API Errors](#api-errors)
 - [Agent Execution Issues](#agent-execution-issues)
@@ -66,9 +66,16 @@ Error: ECONNREFUSED or ETIMEDOUT connecting to mcp.sequentum.com
 
 ---
 
-## Local Connection Issues (API Key)
+## Local Connection Issues (API Key, Deprecated)
 
-These issues apply when running the MCP server locally via `npx sequentum-mcp`.
+> **Deprecated:** Running the MCP server locally over the stdio transport, authenticated
+> with `SEQUENTUM_API_KEY`, is deprecated and will be removed in a future release, along
+> with the `sequentum-mcp` npm package. Connect to `https://mcp.sequentum.com/mcp` over
+> HTTP with OAuth 2.1 instead -- see
+> [Deprecated: stdio and API-key auth](../README.md#deprecated-stdio-and-api-key-auth).
+
+These issues apply when running the MCP server locally via `npx sequentum-mcp`. They are
+kept for readers still on that path.
 
 ### SEQUENTUM_API_KEY required
 
@@ -100,7 +107,7 @@ Error: SEQUENTUM_API_KEY environment variable is required
 }
 ```
 
-> **Tip:** If you don't need to run locally, consider using the [remote OAuth setup](../README.md#getting-started) instead -- it doesn't require an API key.
+> **Migrate instead:** The [remote OAuth setup](../README.md#getting-started) requires no API key and no local Node.js install, and is the only setup that will remain supported.
 
 ---
 
@@ -325,7 +332,7 @@ Run agent 123 synchronously with a 5 minute timeout
 3. **Restart the MCP client** after adding or changing the server configuration
 4. **Check the MCP client logs** for error messages
 
-**Solutions for local (API key) setup:**
+**Solutions for the deprecated local (API key) setup:**
 
 1. **Check the MCP client logs** for error messages
 2. **Verify your JSON configuration** is valid (no trailing commas, proper quotes)
@@ -334,13 +341,13 @@ Run agent 123 synchronously with a 5 minute timeout
 
 ---
 
-### MCP server not starting (local mode)
+### MCP server not starting (local mode, deprecated)
 
-**Cause:** Node.js not installed or version too old. This only applies to the local npx setup.
+**Cause:** Node.js not installed or version too old. This only applies to the deprecated local npx setup.
 
 **Solutions:**
 
-1. **Install Node.js 18+** from [nodejs.org](https://nodejs.org/)
+1. **Install Node.js 20 or later** from [nodejs.org](https://nodejs.org/) -- `package.json` declares `"engines": {"node": ">=20"}`, and Node 18 fails at install
 2. **Verify installation:** `node --version`
 3. **Check npm is working:** `npm --version`
 
