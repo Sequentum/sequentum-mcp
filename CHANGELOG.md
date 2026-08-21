@@ -88,6 +88,29 @@
   modules (`agents`, `billing`, `builds`, `runs`, `schedules`, `spaces`) under
   `src/server/tools/`, dispatched via a lookup map.
 
+### Deprecated
+
+- **The stdio transport and `SEQUENTUM_API_KEY` authentication are deprecated**, together
+  with the **`sequentum-mcp` npm package**. Connect to `https://mcp.sequentum.com/mcp`
+  over HTTP with OAuth 2.1 instead. Nothing is removed in this release — existing installs
+  keep working — and no removal version or date has been set yet.
+
+  These are one deprecation, not two. The MCP authorization specification directs stdio
+  implementations not to follow it and to take credentials from the environment instead,
+  which is exactly why `SEQUENTUM_API_KEY` existed; moving the server to OAuth 2.1 as its
+  only authentication scheme therefore excludes stdio by construction.
+
+  This is scoped to the MCP server. Sequentum API keys remain fully supported for direct
+  REST integration against the Cloud API.
+
+- **Starting in stdio mode now prints a deprecation warning to stderr**, so the notice
+  reaches operators who never read the docs site.
+
+- **There is no supported self-hosted deployment.** The README's "Custom Sequentum
+  Instance" recipe is gone, and the HTTP-mode variable table no longer implies a
+  published container image — none is published. Callers who cannot route to
+  `mcp.sequentum.com` should contact support.
+
 ## [1.3.0] - TBD
 
 ### Added

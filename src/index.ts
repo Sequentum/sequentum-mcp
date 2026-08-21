@@ -8,7 +8,11 @@
  *
  * Supports two transport modes:
  *
- * 1. STDIO MODE (default) - For Claude Code and local development
+ * 1. STDIO MODE (default, DEPRECATED) - Local development, authenticated by API key.
+ *    Deprecated together with the `sequentum-mcp` npm package and scheduled for removal
+ *    in a future release; the MCP authorization specification directs stdio
+ *    implementations away from OAuth, so moving to OAuth 2.1 retires this path.
+ *    Connect to https://mcp.sequentum.com/mcp over HTTP instead.
  *    Environment Variables:
  *      SEQUENTUM_API_URL - Base URL of the Sequentum API (default: https://dashboard.sequentum.com)
  *      SEQUENTUM_API_KEY - Your API key (required, format: sk-...)
@@ -66,7 +70,7 @@ const API_KEY = process.env.SEQUENTUM_API_KEY;
 const DEBUG = process.env.DEBUG === "1";
 
 // Transport configuration
-// - "stdio": For Claude Code and local development (default)
+// - "stdio": Local development (default). DEPRECATED — removal planned; see the header.
 // - "http": For Claude Connectors (claude.ai, Claude Desktop)
 const TRANSPORT_MODE = process.env.TRANSPORT_MODE || "stdio";
 const HTTP_PORT = parseInt(process.env.PORT || "3000", 10);
@@ -117,6 +121,12 @@ if (DEBUG) {
  * Start the MCP server in stdio mode (for Claude Code and local development)
  */
 async function startStdioServer() {
+  console.error(
+    "DEPRECATION WARNING: the stdio transport and SEQUENTUM_API_KEY authentication are " +
+      "deprecated and will be removed in a future release, along with the sequentum-mcp " +
+      "npm package. Connect to https://mcp.sequentum.com/mcp over HTTP with OAuth 2.1 " +
+      "instead: https://docs.sequentum.com/mcp/connect"
+  );
   console.error("Authentication: API Key");
 
   const client = new SequentumApiClient(API_BASE_URL, API_KEY!);
