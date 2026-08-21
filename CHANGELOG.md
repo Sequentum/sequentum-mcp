@@ -48,6 +48,13 @@
 
 ### Added
 
+- **`GET /` now serves a landing page** instead of `404 Cannot GET /`, linking the docs,
+  the dashboard and the repository. The bare origin is the RFC 9728 `resource` identifier
+  and need not serve a document, so the 404 was never a protocol defect — but the README
+  and the directory listings all point readers at the bare host, and every one of those
+  links landed on an error. The page is static and shows the endpoint for the origin it
+  was reached through, so QA and self-hosted runs advertise themselves rather than
+  production. HTTP mode only; no protocol route or response changed.
 - **`SEQUENTUM_OAUTH_ISSUER`** — optional HTTP-mode variable naming this deployment's
   OAuth issuer identifier, defaulting to `SEQUENTUM_API_URL`. Set it when the API base
   URL and the public OAuth issuer differ. A malformed value refuses to start.
