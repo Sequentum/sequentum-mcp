@@ -34,7 +34,7 @@ Add the Sequentum MCP server to your client with this configuration:
 }
 ```
 
-**Most clients support the OAuth configuration.** Claude Desktop uses a different setup via Custom Connectors — see [Claude Desktop](#claude-desktop) below. For other clients, when you first connect, you'll be prompted to:
+**Most clients support the OAuth configuration.** Claude.ai and Claude Desktop are simpler still — Sequentum MCP is listed in Claude's connector directory, so there is nothing to enter by hand; see [Claude.ai and Claude Desktop](#claudeai-and-claude-desktop) below. For other clients, when you first connect, you'll be prompted to:
 
 1. Log in with your Sequentum account
 2. Accept the OAuth authorization
@@ -52,37 +52,17 @@ Go to `Cursor` > `Settings` > `Cursor Settings` > `MCP` and follow the prompts t
 
 You can also add the server manually by editing your `mcp.json` file using the [configuration above](#getting-started).
 
-### Claude Desktop
+### Claude.ai and Claude Desktop
 
-> **Note:** Custom connectors are currently in beta. Free plan users are limited to one custom connector.
+Sequentum MCP is listed in Claude's connector directory, so there is no URL to enter by hand and no custom connector to create.
 
-Claude Desktop connects to remote MCP servers using **Custom Connectors** rather than the config file. The setup differs based on your plan type. For full details, see [Claude's custom connectors documentation](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
+1. Open **Settings** and go to **Connectors**.
+2. Browse the **Directory**, select **Connectors**, and find **Sequentum MCP**.
+3. Click **Connect** and sign in with your Sequentum account.
 
-**Free, Pro, and Max plans:**
+Team and Enterprise workspaces: connector availability is governed at org level, so an admin may need to enable Sequentum MCP before members can connect from their own accounts.
 
-1. Navigate to **Settings** > **Connectors**.
-2. Click **"Add custom connector"** at the bottom of the section.
-3. Enter the Sequentum MCP server URL: `https://mcp.sequentum.com/mcp`
-4. Click **"Add"** to finish.
-
-**Team and Enterprise plans:**
-
-An Owner or Primary Owner must first add the connector to the organization:
-
-1. Navigate to **Organization settings** > **Connectors**.
-2. Click **"Add custom connector"** at the bottom of the section.
-3. Enter the Sequentum MCP server URL: `https://mcp.sequentum.com/mcp`
-4. Click **"Add"** to finish.
-
-Then, each team member connects individually:
-
-1. Navigate to **Settings** > **Connectors**.
-2. Find the Sequentum connector in the list (it will have a "Custom" label).
-3. Click **"Connect"** to authenticate.
-
-**Enabling per conversation:**
-
-Once configured, enable the Sequentum connector in individual conversations via the **"+"** button on the lower left of the chat interface, then select **"Connectors"**.
+**Enabling per conversation:** once connected, enable Sequentum in an individual conversation via the **+** button near the message composer, then select **Connectors**.
 
 ### ChatGPT
 
@@ -97,13 +77,15 @@ Once connected, enable Sequentum in a conversation via the **+** button near the
 
 ### Claude Code
 
-Run the following command in your terminal:
+Connect Sequentum MCP once from the connector directory (see [Claude.ai and Claude Desktop](#claudeai-and-claude-desktop) above) and it is available in Claude Code on the same account.
+
+To add it directly instead — useful per-project or in scripts:
 
 ```bash
 claude mcp add --transport http sequentum https://mcp.sequentum.com/mcp
 ```
 
-Then launch Claude Code with `claude`. You'll be prompted to authenticate with OAuth to Sequentum.
+Then launch Claude Code with `claude` and type `/mcp` to trigger the OAuth browser flow.
 
 ### VS Code / GitHub Copilot
 
@@ -307,7 +289,7 @@ The server exposes 18 read-only resources (7 static + 11 templates) that AI clie
 
 | Error | Solution |
 |-------|----------|
-| OAuth login not opening | Ensure your client supports OAuth and Streamable HTTP. Try restarting the client. For Claude Desktop, use [Custom Connectors](#claude-desktop) instead of the config file. |
+| OAuth login not opening | Ensure your client supports OAuth and Streamable HTTP. Try restarting the client. For Claude.ai and Claude Desktop, connect from the [connector directory](#claudeai-and-claude-desktop) rather than a config file. |
 | Connection refused | Verify the URL is `https://mcp.sequentum.com/mcp` and check your network connection. |
 | `SEQUENTUM_API_KEY required` | [Deprecated](#deprecated-stdio-and-api-key-auth) local stdio mode only. Add your API key to the `env` section of the MCP config, or migrate to the hosted server. |
 | `API Error 401: Unauthorized` | Your API key or OAuth token is invalid or expired. Re-authenticate or generate a new key. |

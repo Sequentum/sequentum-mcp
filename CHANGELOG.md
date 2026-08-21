@@ -88,6 +88,15 @@
   modules (`agents`, `billing`, `builds`, `runs`, `schedules`, `spaces`) under
   `src/server/tools/`, dispatched via a lookup map.
 
+- **Claude.ai and Claude Desktop setup instructions replaced with the connector-directory
+  flow.** Sequentum MCP is now listed in Claude's connector directory, so the
+  Add-custom-connector walkthrough — and the plan-tier caveats that came with it (the
+  custom-connector beta note, the one-connector limit on Free, the separate
+  Free/Pro/Max and Team/Enterprise procedures) — no longer applies. The Team and
+  Enterprise note is kept, since connector availability is still governed at org level.
+  Claude Code now leads with that account-level connection and keeps
+  `claude mcp add` for per-project and scripted setups.
+
 ### Deprecated
 
 - **The stdio transport and `SEQUENTUM_API_KEY` authentication are deprecated**, together
