@@ -1,6 +1,5 @@
 # Sequentum MCP
 
-[![npm version](https://img.shields.io/npm/v/sequentum-mcp.svg)](https://www.npmjs.com/package/sequentum-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 The [Sequentum MCP Server](https://mcp.sequentum.com) connects your AI coding assistant to Sequentum using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction), giving your AI tools the ability to create web scraping agents, run management, scheduling, analytics, and more. Sequentum hosts and manages a remote MCP server with OAuth authentication, so there's nothing to install.
@@ -35,7 +34,7 @@ Add the Sequentum MCP server to your client with this configuration:
 }
 ```
 
-**Most clients support the OAuth configuration.** Claude Desktop uses a different setup via Custom Connectors — see [Claude Desktop](#claude-desktop) below. For other clients, when you first connect, you'll be prompted to:
+**Most clients support the OAuth configuration.** Claude.ai and Claude Desktop are simpler still — Sequentum MCP is listed in Claude's connector directory, so there is nothing to enter by hand; see [Claude.ai and Claude Desktop](#claudeai-and-claude-desktop) below. For other clients, when you first connect, you'll be prompted to:
 
 1. Log in with your Sequentum account
 2. Accept the OAuth authorization
@@ -53,37 +52,17 @@ Go to `Cursor` > `Settings` > `Cursor Settings` > `MCP` and follow the prompts t
 
 You can also add the server manually by editing your `mcp.json` file using the [configuration above](#getting-started).
 
-### Claude Desktop
+### Claude.ai and Claude Desktop
 
-> **Note:** Custom connectors are currently in beta. Free plan users are limited to one custom connector.
+Sequentum MCP is listed in Claude's connector directory, so there is no URL to enter by hand and no custom connector to create.
 
-Claude Desktop connects to remote MCP servers using **Custom Connectors** rather than the config file. The setup differs based on your plan type. For full details, see [Claude's custom connectors documentation](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
+1. Open **Settings** and go to **Connectors**.
+2. Browse the **Directory**, select **Connectors**, and find **Sequentum MCP**.
+3. Click **Connect** and sign in with your Sequentum account.
 
-**Free, Pro, and Max plans:**
+Team and Enterprise workspaces: connector availability is governed at org level, so an admin may need to enable Sequentum MCP before members can connect from their own accounts.
 
-1. Navigate to **Settings** > **Connectors**.
-2. Click **"Add custom connector"** at the bottom of the section.
-3. Enter the Sequentum MCP server URL: `https://mcp.sequentum.com/mcp`
-4. Click **"Add"** to finish.
-
-**Team and Enterprise plans:**
-
-An Owner or Primary Owner must first add the connector to the organization:
-
-1. Navigate to **Organization settings** > **Connectors**.
-2. Click **"Add custom connector"** at the bottom of the section.
-3. Enter the Sequentum MCP server URL: `https://mcp.sequentum.com/mcp`
-4. Click **"Add"** to finish.
-
-Then, each team member connects individually:
-
-1. Navigate to **Settings** > **Connectors**.
-2. Find the Sequentum connector in the list (it will have a "Custom" label).
-3. Click **"Connect"** to authenticate.
-
-**Enabling per conversation:**
-
-Once configured, enable the Sequentum connector in individual conversations via the **"+"** button on the lower left of the chat interface, then select **"Connectors"**.
+**Enabling per conversation:** once connected, enable Sequentum in an individual conversation via the **+** button near the message composer, then select **Connectors**.
 
 ### ChatGPT
 
@@ -98,13 +77,15 @@ Once connected, enable Sequentum in a conversation via the **+** button near the
 
 ### Claude Code
 
-Run the following command in your terminal:
+Connect Sequentum MCP once from the connector directory (see [Claude.ai and Claude Desktop](#claudeai-and-claude-desktop) above) and it is available in Claude Code on the same account.
+
+To add it directly instead — useful per-project or in scripts:
 
 ```bash
 claude mcp add --transport http sequentum https://mcp.sequentum.com/mcp
 ```
 
-Then launch Claude Code with `claude`. You'll be prompted to authenticate with OAuth to Sequentum.
+Then launch Claude Code with `claude` and type `/mcp` to trigger the OAuth browser flow.
 
 ### VS Code / GitHub Copilot
 
@@ -133,17 +114,23 @@ Use the server URL `https://mcp.sequentum.com/mcp` in your client's MCP configur
 
 The server supports [Client ID Metadata Documents (CIMD)](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document-00) as the preferred client identification method, with [Dynamic Client Registration (RFC 7591)](https://datatracker.ietf.org/doc/html/rfc7591) as a fallback. MCP clients that support CIMD (such as Cursor) can use their own URL as a `client_id` without any prior registration.
 
-## Alternative: Local Setup (API Key)
+## Deprecated: stdio and API-key auth
 
-If you prefer to run the MCP server locally (e.g., for custom deployments, offline use, or CI/CD pipelines), you can use `npx` with an API key instead of the hosted OAuth server.
+> **Deprecated:** Running the MCP server locally over the **stdio** transport,
+> authenticated with `SEQUENTUM_API_KEY`, is deprecated and will be removed in a future
+> release. The `sequentum-mcp` npm package is deprecated along with it. Connect to
+> `https://mcp.sequentum.com/mcp` over HTTP with OAuth 2.1 instead — see
+> [Set Up Your Client](#set-up-your-client).
+>
+> This does not affect Sequentum API keys themselves, which remain fully supported for
+> the [REST API](https://docs.sequentum.com/api-reference/authentication).
 
-**Requirements for local setup:**
+The MCP [authorization specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
+directs stdio implementations not to use OAuth, and to take credentials from the
+environment instead. Moving the server to OAuth 2.1 therefore retires the stdio path
+along with it — the two deprecations are one decision, not two.
 
-- [Node.js](https://nodejs.org/) v20 or higher
-- [npm](https://www.npmjs.com/)
-- Sequentum API key
-
-Add the following config to your MCP client:
+If you are running this configuration today, it keeps working — on Node 20 or later:
 
 ```json
 {
@@ -159,38 +146,13 @@ Add the following config to your MCP client:
 }
 ```
 
-### Get Your API Key
+The API key is created in the [Sequentum Control Center](https://dashboard.sequentum.com)
+under **Settings** > **API Keys**, and `SEQUENTUM_API_URL` overrides the Sequentum
+instance it connects to (default `https://dashboard.sequentum.com`).
 
-1. Log in to the [Sequentum Control Center](https://dashboard.sequentum.com)
-2. Go to **Settings** > **API Keys**
-3. Click **Create API Key** and copy the generated key (starts with `sk-`)
-
-### Custom Sequentum Instance
-
-To connect to a custom Sequentum deployment, add the `SEQUENTUM_API_URL` environment variable:
-
-```json
-{
-  "mcpServers": {
-    "sequentum": {
-      "command": "npx",
-      "args": ["-y", "sequentum-mcp"],
-      "env": {
-        "SEQUENTUM_API_KEY": "sk-your-api-key-here",
-        "SEQUENTUM_API_URL": "https://your-custom-instance.sequentum.com"
-      }
-    }
-  }
-}
-```
-
-### Local Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `SEQUENTUM_API_KEY` | Yes | -- | Your Sequentum API key (format: `sk-...`). Get this from the Sequentum Control Center under Settings > API Keys. |
-| `SEQUENTUM_API_URL` | No | `https://dashboard.sequentum.com` | The base URL of your Sequentum instance. Override if using a custom deployment. |
-| `SEQUENTUM_OAUTH_ISSUER` | No | Value of `SEQUENTUM_API_URL` | HTTP mode only. This deployment's OAuth issuer identifier. Must be an absolute `https` URL with no query, fragment or userinfo, and must match the authorization server's `issuer` exactly. Set it only when the API base URL and the public OAuth issuer differ. |
+To migrate, delete that block and follow the setup instructions for your client above.
+If you need Sequentum MCP somewhere that cannot reach `mcp.sequentum.com`, contact
+support — there is no supported self-hosted deployment.
 
 ## Example Usage
 
@@ -327,9 +289,9 @@ The server exposes 18 read-only resources (7 static + 11 templates) that AI clie
 
 | Error | Solution |
 |-------|----------|
-| OAuth login not opening | Ensure your client supports OAuth and Streamable HTTP. Try restarting the client. For Claude Desktop, use [Custom Connectors](#claude-desktop) instead of the config file. |
+| OAuth login not opening | Ensure your client supports OAuth and Streamable HTTP. Try restarting the client. For Claude.ai and Claude Desktop, connect from the [connector directory](#claudeai-and-claude-desktop) rather than a config file. |
 | Connection refused | Verify the URL is `https://mcp.sequentum.com/mcp` and check your network connection. |
-| `SEQUENTUM_API_KEY required` | Local mode only. Add your API key to the `env` section of the MCP config. |
+| `SEQUENTUM_API_KEY required` | [Deprecated](#deprecated-stdio-and-api-key-auth) local stdio mode only. Add your API key to the `env` section of the MCP config, or migrate to the hosted server. |
 | `API Error 401: Unauthorized` | Your API key or OAuth token is invalid or expired. Re-authenticate or generate a new key. |
 | `API Error 404: Not Found` | The agent, run, or file doesn't exist, or you don't have access to it. |
 | `API Error 429: Too Many Requests` | Rate limit exceeded. Wait a moment and try again. |
@@ -339,10 +301,11 @@ For more troubleshooting help, see the [Troubleshooting Guide](./docs/troublesho
 ## HTTP Mode Configuration
 
 The hosted server at `mcp.sequentum.com` runs the Streamable HTTP transport
-(`TRANSPORT_MODE=http`) behind its own deployment configuration. If you self-host the
-server instead (e.g. via the provided Docker image), the following environment
-variables tune caching, rate limiting, and proxy trust for that transport. They have no
-effect in stdio mode.
+(`TRANSPORT_MODE=http`) behind its own deployment configuration. The following
+environment variables tune caching, rate limiting, and proxy trust for that transport;
+they have no effect in the deprecated stdio mode. They are documented for readers of
+this source — there is no supported self-hosted deployment, and no container image is
+published.
 
 **HTTP mode is stateless as of 2.0.0.** There is no `Mcp-Session-Id` header and no
 per-client session state on the server: every request is handled independently by a
@@ -353,8 +316,10 @@ down. `MAX_SESSIONS` is no longer read.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TRANSPORT_MODE` | `stdio` | Set to `http` to run the Streamable HTTP transport instead of stdio. |
+| `TRANSPORT_MODE` | `stdio` | Set to `http` to run the Streamable HTTP transport. The `stdio` default is [deprecated](#deprecated-stdio-and-api-key-auth) and will be removed in a future release; the hosted server sets `http`. |
 | `PORT` | `3000` | HTTP server port. |
+| `SEQUENTUM_API_URL` | `https://dashboard.sequentum.com` | Base URL of the Sequentum API this server proxies to. |
+| `SEQUENTUM_OAUTH_ISSUER` | Value of `SEQUENTUM_API_URL` | This deployment's OAuth issuer identifier, advertised in `/.well-known/oauth-protected-resource`. Must be an absolute `https` URL with no query, fragment or userinfo, and must match the authorization server's `issuer` exactly. Set it only when the API base URL and the public OAuth issuer differ; a malformed value refuses to start. |
 | `HOST` | `0.0.0.0` | HTTP server bind address. |
 | `LIST_CACHE_TTL_MS` | `3600000` (1 hour) | Freshness hint (`ttlMs`) attached to cacheable list-shaped results (`tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`, `server/discover`). Must be a non-negative integer string; a malformed value fails fast at startup instead of being silently truncated. |
 | `MCP_RATE_LIMIT_WINDOW_MS` | `60000` (1 minute) | Rate-limit window applied to the `/mcp` endpoint. |

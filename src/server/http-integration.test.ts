@@ -2,12 +2,31 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createServer, type Server as HttpServer } from "node:http";
 import { startHttpServer } from "./http-server.js";
 import { RATE_LIMIT_ERROR_CODE } from "./constants.js";
+import { connect } from "node:net";
 
 const ENVELOPE = {
   "io.modelcontextprotocol/protocolVersion": "2026-07-28",
   "io.modelcontextprotocol/clientInfo": { name: "integration-test", version: "1.0.0" },
   "io.modelcontextprotocol/clientCapabilities": {},
 };
+
+/**
+ * Send a hand-written request and return the raw response text.
+ *
+ * `fetch` validates and rewrites Host, so it cannot express the cases that matter
+ * here: a Host with HTML metacharacters, or HTTP/1.0 with no Host at all.
+ */
+function rawRequest(base: string, raw: string): Promise<string> {
+  const { hostname, port } = new URL(base);
+  return new Promise((resolve, reject) => {
+    const socket = connect({ host: hostname, port: Number(port) }, () => socket.write(raw));
+    let out = "";
+    socket.setTimeout(5000, () => socket.destroy(new Error("raw request timed out")));
+    socket.on("data", (chunk) => (out += chunk.toString("utf8")));
+    socket.on("end", () => resolve(out));
+    socket.on("error", reject);
+  });
+}
 
 describe("POST /mcp through the real Express app", () => {
   let server: HttpServer;
@@ -286,5 +305,126 @@ describe("/.well-known/oauth-protected-resource", () => {
     const text = await res.text();
     expect(text).not.toContain("token_endpoint");
     expect(text).not.toContain("registration_endpoint");
+  });
+});
+
+describe("GET / landing page", () => {
+  let server: HttpServer;
+  let base: string;
+
+  beforeEach(async () => {
+    process.env.REQUIRE_AUTH = "false";
+    server = await startHttpServer(
+      "https://api.example.test",
+      "https://issuer.example.test",
+      "9.9.9",
+      0,
+      "127.0.0.1"
+    );
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    base = `http://127.0.0.1:${addr.port}`;
+  });
+
+  afterEach(async () => {
+    delete process.env.REQUIRE_AUTH;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("serves an HTML document at the bare origin instead of 404", async () => {
+    const res = await fetch(`${base}/`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/text\/html/);
+    const body = await res.text();
+    expect(body).toContain("<title>Sequentum MCP Server</title>");
+  });
+
+  it("advertises the requested origin's own endpoint, not a hardcoded one", async () => {
+    // A page served from QA or localhost that told the reader to connect to production
+    // would be worse than the 404 it replaces.
+    const body = await (await fetch(`${base}/`)).text();
+    expect(body).toContain(`${base}/mcp`);
+    expect(body).not.toContain("mcp.sequentum.com");
+  });
+
+  it("does not shadow the protocol routes", async () => {
+    // The whole safety argument for adding a root route is that Express matches `/`
+    // exactly. If this ever regresses — or the same redirect is re-expressed as a
+    // proxy catch-all — these are the routes that would silently start serving HTML.
+    const health = await fetch(`${base}/health`);
+    expect(health.status).toBe(200);
+    expect((await health.json()) as { status: string }).toMatchObject({ status: "ok" });
+
+    const prm = await fetch(`${base}/.well-known/oauth-protected-resource`);
+    expect(prm.status).toBe(200);
+    expect((await prm.json()) as { resource: string }).toMatchObject({ resource: base });
+
+    const asMeta = await fetch(`${base}/.well-known/oauth-authorization-server`, {
+      redirect: "manual",
+    });
+    expect(asMeta.status).toBe(302);
+
+    const post = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "Mcp-Method": "tools/list",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { _meta: ENVELOPE } }),
+    });
+    expect(post.status).toBe(200);
+    expect(post.headers.get("content-type")).not.toMatch(/text\/html/);
+
+    expect((await fetch(`${base}/mcp`)).status).toBe(405);
+  });
+
+  it("is cacheable privately but never by a shared cache", async () => {
+    // The body varies by Host (which a shared cache keys on) AND by the leftmost
+    // X-Forwarded-Proto (which it does not, and which is client-supplied under the
+    // default trust proxy: true). `public` would let one anonymous request pin an
+    // hour of "connect over http://" onto the canonical page; `private` keeps the
+    // browser cache without exposing a shared one. The absence of `public` is the
+    // security property here — assert it directly, not just the happy string.
+    const res = await fetch(`${base}/`);
+    expect(res.headers.get("cache-control")).toBe("private, max-age=3600");
+    expect(res.headers.get("cache-control")).not.toMatch(/\bpublic\b/);
+  });
+
+  it("reflects a forwarded scheme into the body — the reason it must not be cached", async () => {
+    // Documents the reflection rather than asserting it is desirable. The page shows
+    // the same origin the PRM document advertises, so pinning the scheme here alone
+    // would make the two disagree; the no-store above is what makes it harmless.
+    const body = await (await fetch(`${base}/`, {
+      headers: { "x-forwarded-proto": "http" },
+    })).text();
+    expect(body).toContain("<code>http://127.0.0.1");
+  });
+
+  it("escapes a Host carrying characters URL.origin lets through", async () => {
+    // `"` is a legal host code point, so it reaches the template intact — undici
+    // will not send a Host like this, hence the raw socket. See landing-page.test.ts
+    // for the unit-level guarantee; this proves the live route is wired to it.
+    const res = await rawRequest(base, 'GET / HTTP/1.1\r\nHost: a"b\r\nConnection: close\r\n\r\n');
+    expect(res).toContain("200 OK");
+    expect(res).toContain("<code>http://a&quot;b/mcp</code>");
+    expect(res).not.toContain('<code>http://a"b/mcp</code>');
+  });
+
+  it("rejects a Host the URL parser refuses, without a mislabelled body", async () => {
+    // Resolving the origin after res.type("html") shipped a JSON-RPC error body
+    // labelled text/html — and, when this route was publicly cacheable, an hour of it.
+    const res = await rawRequest(base, "GET / HTTP/1.1\r\nHost: a<b\r\nConnection: close\r\n\r\n");
+    expect(res).toContain("400 Bad Request");
+    expect(res).toMatch(/content-type: text\/plain/i);
+    expect(res).toMatch(/cache-control: no-store/i);
+    expect(res).not.toMatch(/cache-control:[^\r\n]*(public|private|max-age)/i);
+    expect(res).not.toContain("jsonrpc");
+  });
+
+  it("rejects a request with no Host rather than rendering http://undefined", async () => {
+    const res = await rawRequest(base, "GET / HTTP/1.0\r\n\r\n");
+    expect(res).toContain("400 Bad Request");
+    expect(res).not.toContain("undefined");
   });
 });

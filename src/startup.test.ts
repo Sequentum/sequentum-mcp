@@ -103,3 +103,46 @@ describe("issuer normalisation reaches the served document", () => {
     }
   });
 });
+
+// The deprecation warning has to reach people running stdio, who by definition are not
+// reading the docs site. It is emitted before server.connect(), so it lands even if the
+// client tears the connection down immediately. Asserted against the built entrypoint
+// because main() runs at module top level and cannot be imported without starting up.
+describe("stdio deprecation warning", () => {
+  const distEntry = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");
+
+  it("warns on stderr when starting in stdio mode", async () => {
+    const child = spawn(process.execPath, [distEntry], {
+      env: {
+        ...process.env,
+        TRANSPORT_MODE: "stdio",
+        SEQUENTUM_API_KEY: "sk-test-key-not-used-at-startup",
+      },
+      stdio: ["pipe", "ignore", "pipe"],
+    });
+
+    try {
+      const stderr = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("no warning within 15s")), 15_000);
+        let buffered = "";
+        child.stderr.on("data", (chunk: Buffer) => {
+          buffered += chunk.toString();
+          if (buffered.includes("running on stdio")) {
+            clearTimeout(timer);
+            resolve(buffered);
+          }
+        });
+        child.on("exit", (code) => {
+          clearTimeout(timer);
+          reject(new Error(`server exited early with code ${code}: ${buffered}`));
+        });
+      });
+
+      expect(stderr).toContain("DEPRECATION WARNING");
+      expect(stderr).toContain("stdio transport and SEQUENTUM_API_KEY");
+      expect(stderr).toContain("https://mcp.sequentum.com/mcp");
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
+});

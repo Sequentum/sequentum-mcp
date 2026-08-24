@@ -657,7 +657,10 @@ export interface RunStatsApiModel {
 
 /**
  * Authentication mode for the MCP server
- * - apikey: Uses API key from SEQUENTUM_API_KEY environment variable (stdio mode)
+ * - apikey: Uses API key from SEQUENTUM_API_KEY environment variable (stdio mode).
+ *   DEPRECATED with the stdio transport; removal planned. A `@deprecated` tag cannot go
+ *   here: TypeScript has no per-member deprecation for string-literal unions, and tagging
+ *   `AuthMode` itself would wrongly mark `oauth2` too.
  * - oauth2: Receives Bearer tokens via Authorization header (HTTP mode)
  */
 export type AuthMode = "apikey" | "oauth2";

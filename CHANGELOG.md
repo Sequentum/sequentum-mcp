@@ -48,6 +48,13 @@
 
 ### Added
 
+- **`GET /` now serves a landing page** instead of `404 Cannot GET /`, linking the docs,
+  the dashboard and the repository. The bare origin is the RFC 9728 `resource` identifier
+  and need not serve a document, so the 404 was never a protocol defect — but the README
+  and the directory listings all point readers at the bare host, and every one of those
+  links landed on an error. The page is static and shows the endpoint for the origin it
+  was reached through, so QA and self-hosted runs advertise themselves rather than
+  production. HTTP mode only; no protocol route or response changed.
 - **`SEQUENTUM_OAUTH_ISSUER`** — optional HTTP-mode variable naming this deployment's
   OAuth issuer identifier, defaulting to `SEQUENTUM_API_URL`. Set it when the API base
   URL and the public OAuth issuer differ. A malformed value refuses to start.
@@ -80,6 +87,38 @@
 - Tool handlers split out of a single monolithic switch statement into six per-domain
   modules (`agents`, `billing`, `builds`, `runs`, `schedules`, `spaces`) under
   `src/server/tools/`, dispatched via a lookup map.
+
+- **Claude.ai and Claude Desktop setup instructions replaced with the connector-directory
+  flow.** Sequentum MCP is now listed in Claude's connector directory, so the
+  Add-custom-connector walkthrough — and the plan-tier caveats that came with it (the
+  custom-connector beta note, the one-connector limit on Free, the separate
+  Free/Pro/Max and Team/Enterprise procedures) — no longer applies. The Team and
+  Enterprise note is kept, since connector availability is still governed at org level.
+  Claude Code now leads with that account-level connection and keeps
+  `claude mcp add` for per-project and scripted setups.
+
+### Deprecated
+
+- **The stdio transport and `SEQUENTUM_API_KEY` authentication are deprecated**, together
+  with the **`sequentum-mcp` npm package**. Connect to `https://mcp.sequentum.com/mcp`
+  over HTTP with OAuth 2.1 instead. Nothing is removed in this release — existing installs
+  keep working — and no removal version or date has been set yet.
+
+  These are one deprecation, not two. The MCP authorization specification directs stdio
+  implementations not to follow it and to take credentials from the environment instead,
+  which is exactly why `SEQUENTUM_API_KEY` existed; moving the server to OAuth 2.1 as its
+  only authentication scheme therefore excludes stdio by construction.
+
+  This is scoped to the MCP server. Sequentum API keys remain fully supported for direct
+  REST integration against the Cloud API.
+
+- **Starting in stdio mode now prints a deprecation warning to stderr**, so the notice
+  reaches operators who never read the docs site.
+
+- **There is no supported self-hosted deployment.** The README's "Custom Sequentum
+  Instance" recipe is gone, and the HTTP-mode variable table no longer implies a
+  published container image — none is published. Callers who cannot route to
+  `mcp.sequentum.com` should contact support.
 
 ## [1.3.0] - TBD
 
