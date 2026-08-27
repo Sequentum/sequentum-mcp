@@ -33,18 +33,37 @@ These issues apply when connecting to the hosted Sequentum MCP server at `https:
 
 ### OAuth authentication failed or token expired
 
-**Error:**
-```
-Error: OAuth authentication failed
-```
+Access tokens last one hour. Your client renews them automatically in the
+background using its refresh token, so an expiring token is not something you
+should ever see.
 
-**Cause:** Your OAuth session has expired or the authorization was denied.
+A 401 that persists across retries therefore means something other than expiry:
 
-**Solutions:**
+- the connector was revoked from your Sequentum account, or
+- your user or organisation access changed.
 
-1. **Re-authenticate:** Log out of the MCP integration in your client and log back in
-2. **Check your Sequentum account** is active and has the necessary permissions
-3. **If you've joined a new Sequentum organization**, log out and log back in to refresh access
+Reconnect from **Settings → Connectors** to resolve either case.
+
+**Diagnosing a report as an operator.** The server logs one line per rejected
+token:
+
+    [MCP] auth=rejected reason=expired kid="STXjwgTe" age=417s client="claude-desktop"
+
+`reason` is one of `expired`, `bad-signature`, `malformed` or `bad-alg`.
+
+Lines reading `auth=unverifiable` are **not** rejections — the request was passed
+through and the API decided it. Three reasons appear there:
+
+- `jwks-unreachable` — the signing keys could not be fetched.
+- `unknown-kid` — the token was signed by a key we do not recognise, usually a
+  rotation we have not picked up yet.
+- `wrong-audience` — the token was minted for a different origin. This is
+  recorded rather than rejected on purpose: a refresh reuses the original
+  resource, so rejecting it would put the client in a 401/refresh loop it could
+  never escape.
+
+A sustained run of `jwks-unreachable` means validation has degraded to
+pass-through and needs attention.
 
 ---
 
@@ -156,26 +175,37 @@ These errors apply to both remote (OAuth) and local (API key) setups.
 
 ### API Error 401: Unauthorized
 
-**Error:**
-```
-Error: API Error 401: Unauthorized
-```
+Access tokens last one hour. Your client renews them automatically in the
+background using its refresh token, so an expiring token is not something you
+should ever see.
 
-**Cause:** Your credentials are invalid, expired, or have been revoked.
+A 401 that persists across retries therefore means something other than expiry:
 
-**Solutions:**
+- the connector was revoked from your Sequentum account, or
+- your user or organisation access changed.
 
-**For remote (OAuth) users:**
-1. **Re-authenticate** by logging out of the MCP integration and logging back in
-2. **Check your Sequentum account** is still active
+Reconnect from **Settings → Connectors** to resolve either case.
 
-**For local (API key) users:**
-1. **Generate a new API key:**
-   - Log in to the [Sequentum Control Center](https://dashboard.sequentum.com)
-   - Go to **Settings** > **API Keys**
-   - Create a new API key and update your configuration
-2. **Check for typos** in your API key (it should start with `sk-`)
-3. **Verify the key has not been revoked** in the Control Center
+**Diagnosing a report as an operator.** The server logs one line per rejected
+token:
+
+    [MCP] auth=rejected reason=expired kid="STXjwgTe" age=417s client="claude-desktop"
+
+`reason` is one of `expired`, `bad-signature`, `malformed` or `bad-alg`.
+
+Lines reading `auth=unverifiable` are **not** rejections — the request was passed
+through and the API decided it. Three reasons appear there:
+
+- `jwks-unreachable` — the signing keys could not be fetched.
+- `unknown-kid` — the token was signed by a key we do not recognise, usually a
+  rotation we have not picked up yet.
+- `wrong-audience` — the token was minted for a different origin. This is
+  recorded rather than rejected on purpose: a refresh reuses the original
+  resource, so rejecting it would put the client in a 401/refresh loop it could
+  never escape.
+
+A sustained run of `jwks-unreachable` means validation has degraded to
+pass-through and needs attention.
 
 ---
 
