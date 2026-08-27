@@ -12,6 +12,8 @@
  * from the signature check itself.
  */
 
+import type { JwksKeySource } from "./jwks-cache.js";
+
 /** A definite negative verdict: the token cannot work and the client must re-authenticate. */
 export type RejectReason =
   | "expired"
@@ -101,4 +103,79 @@ export function parseJwt(token: string): ParsedJwt | null {
     signingInput: `${headerSegment}.${payloadSegment}`,
     signature: new Uint8Array(Buffer.from(signatureSegment, "base64url")),
   };
+}
+
+/** Normalize `aud` (string or array, per RFC 7519) to a list of strings. */
+function audienceList(aud: unknown): string[] {
+  if (typeof aud === "string") return [aud];
+  if (Array.isArray(aud)) return aud.filter((entry): entry is string => typeof entry === "string");
+  return [];
+}
+
+/**
+ * Decide whether a Bearer token may be dispatched.
+ *
+ * Checks run in the order fixed by the design (spec §3.1):
+ * shape → `alg` → `exp` → `kid` → signature → `aud`.
+ *
+ * `exp` deliberately precedes the key lookup. An expiry check can only ever
+ * produce a rejection, never an acceptance, so it needs no verified signature —
+ * and running it first means an expired token is still rejected during a key
+ * rotation, when the lookup returns `unverifiable` and the caller fails open.
+ * A forged token claiming a future `exp` is still caught by the signature check.
+ *
+ * @param token - the raw Bearer value, with the `Bearer ` prefix already removed
+ * @param canonicalOrigin - this server's resource identifier, for the `aud` check
+ * @param keys - key source; the only component that performs I/O
+ */
+export async function validateToken(
+  token: string,
+  canonicalOrigin: string,
+  keys: JwksKeySource
+): Promise<Verdict> {
+  const parsed = parseJwt(token);
+  if (!parsed) return { kind: "rejected", reason: "malformed" };
+
+  if (parsed.header.alg !== "RS256") return { kind: "rejected", reason: "bad-alg" };
+
+  const kid = parsed.header.kid;
+  if (typeof kid !== "string" || kid.length === 0) {
+    return { kind: "rejected", reason: "malformed" };
+  }
+
+  const exp = parsed.payload.exp;
+  if (typeof exp !== "number" || !Number.isFinite(exp)) {
+    // A token with no usable expiry is treated as expired rather than accepted.
+    return { kind: "rejected", reason: "expired", kid };
+  }
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (exp + CLOCK_SKEW_SECONDS <= nowSeconds) {
+    return { kind: "rejected", reason: "expired", kid, exp };
+  }
+
+  const lookup = await keys.getKey(kid);
+  if (lookup.kind === "unknown") return { kind: "unverifiable", reason: "unknown-kid", kid };
+  if (lookup.kind === "unreachable") {
+    return { kind: "unverifiable", reason: "jwks-unreachable", kid };
+  }
+
+  let verified = false;
+  try {
+    verified = await crypto.subtle.verify(
+      { name: "RSASSA-PKCS1-v1_5" },
+      lookup.key,
+      parsed.signature.slice(),
+      new TextEncoder().encode(parsed.signingInput)
+    );
+  } catch {
+    verified = false;
+  }
+  if (!verified) return { kind: "rejected", reason: "bad-signature", kid };
+
+  const aud = audienceList(parsed.payload.aud);
+  if (!aud.includes(canonicalOrigin) && !aud.includes(LEGACY_AUDIENCE)) {
+    return { kind: "rejected", reason: "wrong-audience", kid };
+  }
+
+  return { kind: "valid", claims: { aud, exp, kid } };
 }
