@@ -18,6 +18,14 @@ function jwksResponse(keys: unknown[]) {
   return new Response(JSON.stringify({ keys }), { status: 200, headers: { "content-type": "application/json" } });
 }
 
+/** Convert a base64url string (no padding) to standard base64 (`+`/`/`, `=`-padded). */
+function toStandardBase64(base64url: string): string {
+  const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
+  const remainder = base64.length % 4;
+  const padding = remainder === 0 ? "" : "=".repeat(4 - remainder);
+  return base64 + padding;
+}
+
 describe("createJwksCache", () => {
   it("fetches the JWKS and returns a usable key for a known kid", async () => {
     const { jwk } = await keyFixture("k1");
@@ -124,6 +132,37 @@ describe("createJwksCache", () => {
     expect(await cache.getKey("sym")).toEqual({ kind: "unknown" });
     expect(await cache.getKey("no-modulus")).toEqual({ kind: "unknown" });
     expect(await cache.getKey("wrong-alg")).toEqual({ kind: "unknown" });
+  });
+
+  it("imports a key whose n/e use the standard base64 alphabet, matching what Control Center actually serves", async () => {
+    // Every other fixture in this file derives n/e from crypto.subtle.exportKey("jwk", ...),
+    // which emits RFC 7518 base64url. Production does not: OAuthController.cs builds the
+    // JWKS document with Convert.ToBase64String(parameters.Modulus) for n and
+    // Convert.ToBase64String(parameters.Exponent) for e -- the *standard* base64
+    // alphabet, with `+`, `/` and `=` padding -- and only base64url-converts kid. A
+    // 2048-bit modulus reliably contains `+` or `/` and always ends in `==`, so none
+    // of the other fixtures parse the bytes production actually serves.
+    //
+    // This currently works only because Node's crypto.subtle.importKey happens to
+    // accept the standard alphabet for a JWK import too. Nothing pins that. If it
+    // ever stops, every JWKS entry silently fails to import, the cache stays empty,
+    // and every request degrades to unverifiable: unknown-kid -- with no test here
+    // failing to say why.
+    const { jwk } = await keyFixture("k1");
+    const standardJwk = {
+      kty: "RSA",
+      use: "sig",
+      alg: "RS256",
+      kid: "k1",
+      n: toStandardBase64(jwk.n as string),
+      e: toStandardBase64(jwk.e as string),
+    };
+    const fetchFn = vi.fn().mockResolvedValue(jwksResponse([standardJwk]));
+    const cache = createJwksCache(API, { fetchFn: fetchFn as unknown as typeof fetch });
+
+    const result = await cache.getKey("k1");
+
+    expect(result.kind).toBe("key");
   });
 
   it("coalesces concurrent lookups into a single fetch", async () => {

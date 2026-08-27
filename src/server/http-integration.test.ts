@@ -633,6 +633,11 @@ describe("token validation on /mcp (SE4-3856)", () => {
   it("fails open when the JWKS cannot be reached", async () => {
     // Degraded, not broken: the request reaches the handler and the API remains
     // the authority, exactly as before this change.
+    //
+    // Exact 200, not just "not 401": `not.toBe(401)` would also pass if the
+    // gate crashed into the error middleware, which is not what this asserts.
+    // This is the test that proves the fail-open design's whole point --
+    // availability -- so it needs to be the strictest one here, not the loosest.
     await new Promise<void>((resolve) => jwks.close(() => resolve()));
     const token = await mint({
       exp: Math.floor(Date.now() / 1000) + 3600,
@@ -641,7 +646,7 @@ describe("token validation on /mcp (SE4-3856)", () => {
 
     const res = await post(token);
 
-    expect(res.status).not.toBe(401);
+    expect(res.status).toBe(200);
   });
 
   it("skips validation entirely when REQUIRE_AUTH=false", async () => {
@@ -654,5 +659,48 @@ describe("token validation on /mcp (SE4-3856)", () => {
     } finally {
       delete process.env.REQUIRE_AUTH;
     }
+  });
+
+  describe("MCP_CANONICAL_ORIGIN takes priority over the Host header", () => {
+    // The outer beforeEach pins MCP_CANONICAL_ORIGIN to `${ORIGIN_ENV}:${addr.port}`,
+    // which is byte-identical to what getMcpServerOrigin derives from the request's
+    // Host header. That makes the env branch in canonicalOrigin() untested: deleting
+    // it entirely would not fail a single test above. Overriding it here to a
+    // genuinely distinct origin, and then asserting on an audience equal to the
+    // Host-derived value (now NOT the canonical one), is what actually proves the
+    // env var wins over Host rather than merely coinciding with it. The outer
+    // afterEach deletes MCP_CANONICAL_ORIGIN unconditionally, so no extra cleanup
+    // is needed here.
+    const CANONICAL = "https://mcp.example.test";
+
+    beforeEach(() => {
+      process.env.MCP_CANONICAL_ORIGIN = CANONICAL;
+    });
+
+    it("accepts a token whose audience is the pinned canonical origin", async () => {
+      const token = await mint({
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        aud: CANONICAL,
+      });
+
+      const res = await post(token);
+
+      expect(res.status).toBe(200);
+    });
+
+    it("fails open (200, not 401) for a token whose audience is the Host-derived origin instead of the pinned one", async () => {
+      // This token's aud matches what Host would derive, but MCP_CANONICAL_ORIGIN
+      // now points elsewhere, so it no longer matches. That must produce
+      // unverifiable: wrong-audience (fail-open), not a rejection -- and the
+      // request still reaches the handler and gets a real 200.
+      const token = await mint({
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        aud: base,
+      });
+
+      const res = await post(token);
+
+      expect(res.status).toBe(200);
+    });
   });
 });

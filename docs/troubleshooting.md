@@ -33,9 +33,10 @@ These issues apply when connecting to the hosted Sequentum MCP server at `https:
 
 ### OAuth authentication failed or token expired
 
-Access tokens last one hour. Your client renews them automatically in the
-background using its refresh token, so an expiring token is not something you
-should ever see.
+Access tokens last one hour. Your client does not refresh on a timer -- the
+server prompts the renewal by returning a 401 on your next request once the
+token expires, and your client redeems its refresh token right then, so you
+should not notice anything beyond a brief pause.
 
 A 401 that persists across retries therefore means something other than expiry:
 
@@ -182,9 +183,10 @@ Error: API Error 401: Unauthorized
 
 **Remote connector (OAuth).**
 
-Access tokens last one hour. Your client renews them automatically in the
-background using its refresh token, so an expiring token is not something you
-should ever see.
+Access tokens last one hour. Your client does not refresh on a timer -- the
+server prompts the renewal by returning a 401 on your next request once the
+token expires, and your client redeems its refresh token right then, so you
+should not notice anything beyond a brief pause.
 
 A 401 that persists across retries therefore means something other than expiry:
 
