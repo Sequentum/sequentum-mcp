@@ -175,6 +175,13 @@ These errors apply to both remote (OAuth) and local (API key) setups.
 
 ### API Error 401: Unauthorized
 
+**Error:**
+```
+Error: API Error 401: Unauthorized
+```
+
+**Remote connector (OAuth).**
+
 Access tokens last one hour. Your client renews them automatically in the
 background using its refresh token, so an expiring token is not something you
 should ever see.
@@ -206,6 +213,15 @@ through and the API decided it. Three reasons appear there:
 
 A sustained run of `jwks-unreachable` means validation has degraded to
 pass-through and needs attention.
+
+**Local setup (API key — deprecated).**
+
+1. **Generate a new API key:**
+   - Log in to the [Sequentum Control Center](https://dashboard.sequentum.com)
+   - Go to **Settings** > **API Keys**
+   - Create a new API key and update your configuration
+2. **Check for typos** in your API key (it should start with `sk-`)
+3. **Verify the key has not been revoked** in the Control Center
 
 ---
 
