@@ -153,9 +153,25 @@ function sendAuthChallenge(req: Request, res: Response): void {
  * origin from the caller-controlled `Host` header, which is weak as a comparison
  * target. Falling back to it keeps a misconfigured deployment working rather
  * than rejecting everyone; the startup warning says which mode is active.
+ *
+ * The env value is run through `new URL(...).origin` so a trailing slash or
+ * unusual casing does not make every comparison fail — `validateToken` also
+ * normalizes defensively, but a value this malformed is worth a loud warning
+ * here rather than silently degrading every request to `unverifiable`.
  */
 function canonicalOrigin(req: Request): string {
-  return process.env.MCP_CANONICAL_ORIGIN || getMcpServerOrigin(req);
+  const configured = process.env.MCP_CANONICAL_ORIGIN;
+  if (!configured) return getMcpServerOrigin(req);
+
+  try {
+    return new URL(configured).origin;
+  } catch {
+    console.error(
+      `[MCP] Warning: MCP_CANONICAL_ORIGIN=${JSON.stringify(configured)} is not a valid URL; ` +
+      "falling back to the caller-supplied Host header for this request"
+    );
+    return getMcpServerOrigin(req);
+  }
 }
 
 /**
@@ -558,7 +574,7 @@ export async function startHttpServer(
   }
 
   // Handle POST requests for client-to-server messages
-  app.post("/mcp", (req: Request, res: Response, next) => {
+  app.post("/mcp", (req: Request, res: Response, next: NextFunction) => {
     void passesAuthGate(req, res, jwksCache)
       .then((ok) => {
         if (ok) return nodeHandler(req, res);
@@ -580,7 +596,7 @@ export async function startHttpServer(
   // remove that discovery signal. An authenticated GET is delegated to the
   // handler, which answers 405 Method not allowed: the standalone SSE stream
   // was a session construct and no longer exists.
-  app.get("/mcp", (req: Request, res: Response, next) => {
+  app.get("/mcp", (req: Request, res: Response, next: NextFunction) => {
     void passesAuthGate(req, res, jwksCache)
       .then((ok) => {
         if (ok) return nodeHandler(req, res);

@@ -500,6 +500,11 @@ describe("token validation on /mcp (SE4-3856)", () => {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         authorization: `Bearer ${token}`,
+        // Required on a modern-era (2026-07-28) request: the SDK 400s if the
+        // header and body method disagree, which is a body-vs-header parity
+        // check the pass-through tests below need to clear to reach 200 rather
+        // than being masked by a loose `not.toBe(401)` assertion.
+        "Mcp-Method": "tools/list",
       },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { _meta: ENVELOPE } }),
     });
@@ -606,7 +611,23 @@ describe("token validation on /mcp (SE4-3856)", () => {
 
     const res = await post(token);
 
-    expect(res.status).not.toBe(401);
+    // Exact 200, not just "not 401": `not.toBe(401)` would also pass if the
+    // gate crashed into the error middleware, which is not what this asserts.
+    expect(res.status).toBe(200);
+  });
+
+  it("lets a valid token through when its audience keeps the /mcp path", async () => {
+    // The regression guard for the audience-by-origin ruling: ResourceUriHelper.
+    // NormalizeResourceUri keeps the path, so a real-world audience looks like
+    // this, not like the bare origin.
+    const token = await mint({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: `${process.env.MCP_CANONICAL_ORIGIN}/mcp`,
+    });
+
+    const res = await post(token);
+
+    expect(res.status).toBe(200);
   });
 
   it("fails open when the JWKS cannot be reached", async () => {
@@ -627,7 +648,9 @@ describe("token validation on /mcp (SE4-3856)", () => {
     process.env.REQUIRE_AUTH = "false";
     try {
       const res = await post("sk-not-a-jwt");
-      expect(res.status).not.toBe(401);
+      // Exact 200, not just "not 401": `not.toBe(401)` would also pass if the
+      // gate crashed into the error middleware, which is not what this asserts.
+      expect(res.status).toBe(200);
     } finally {
       delete process.env.REQUIRE_AUTH;
     }

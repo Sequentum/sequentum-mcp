@@ -18,12 +18,21 @@ import type { JwksKeySource } from "./jwks-cache.js";
 export type RejectReason =
   | "expired"
   | "bad-signature"
-  | "wrong-audience"
   | "malformed"
   | "bad-alg";
 
-/** We could not reach a verdict. Distinct from `RejectReason` — see {@link Verdict}. */
-export type UnverifiableReason = "jwks-unreachable" | "unknown-kid";
+/**
+ * We could not reach a verdict. Distinct from `RejectReason` — see {@link Verdict}.
+ *
+ * `wrong-audience` lives here, not in `RejectReason`, because it is the one check a
+ * client's refresh cannot resolve: Control Center's refresh grant reuses the stored
+ * `Resource` and mints a new token with the *same* `aud`, so rejecting on audience
+ * would 401 → refresh → 401 forever — worse than the bug SE4-3856 fixes. The backend
+ * itself sets `ValidateAudience = false` for the same reason, documenting that a
+ * token's audience may legitimately be "any URI (localhost, tunnel URL, external
+ * domain)". Treating a mismatch as unverifiable fails the request open instead.
+ */
+export type UnverifiableReason = "jwks-unreachable" | "unknown-kid" | "wrong-audience";
 
 /** The claims a caller may act on, populated only for a `valid` verdict. */
 export interface Claims {
@@ -113,6 +122,39 @@ function audienceList(aud: unknown): string[] {
 }
 
 /**
+ * Reduce a value to its URL origin, or return it unchanged if it does not parse
+ * as a URL. Used defensively on the caller-supplied `canonicalOrigin` too: a
+ * trailing slash or unusual casing must not make every comparison fail.
+ */
+function normalizeOrigin(value: string): string {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Does this one `aud` entry authorize `canonicalOrigin`?
+ *
+ * Compared by ORIGIN, not by exact string: `ResourceUriHelper.NormalizeResourceUri`
+ * normalizes with `GetLeftPart(UriPartial.Path)`, so a real audience keeps its path
+ * (`https://mcp.sequentum.com/mcp`), and an exact match against the bare origin
+ * would reject tokens that authenticate successfully in production today.
+ *
+ * An entry that does not parse as a URL cannot match by origin — it can only match
+ * `LEGACY_AUDIENCE` literally — and must never throw.
+ */
+function audienceMatches(entry: string, normalizedCanonicalOrigin: string): boolean {
+  if (entry === LEGACY_AUDIENCE) return true;
+  try {
+    return new URL(entry).origin === normalizedCanonicalOrigin;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Decide whether a Bearer token may be dispatched.
  *
  * Checks run in the order fixed by the design (spec §3.1):
@@ -173,8 +215,9 @@ export async function validateToken(
   if (!verified) return { kind: "rejected", reason: "bad-signature", kid };
 
   const aud = audienceList(parsed.payload.aud);
-  if (!aud.includes(canonicalOrigin) && !aud.includes(LEGACY_AUDIENCE)) {
-    return { kind: "rejected", reason: "wrong-audience", kid };
+  const normalizedCanonicalOrigin = normalizeOrigin(canonicalOrigin);
+  if (!aud.some((entry) => audienceMatches(entry, normalizedCanonicalOrigin))) {
+    return { kind: "unverifiable", reason: "wrong-audience", kid };
   }
 
   return { kind: "valid", claims: { aud, exp, kid } };

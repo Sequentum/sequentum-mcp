@@ -205,7 +205,9 @@ describe("validateToken", () => {
     expect(source.getKey).not.toHaveBeenCalled();
   });
 
-  it("rejects a token minted for a different resource", async () => {
+  it("fails open on a token minted for a different resource", async () => {
+    // Not `rejected`: a refresh cannot fix a wrong `aud` (the grant reuses the
+    // stored Resource), so a mismatch here must not start a 401-refresh-401 loop.
     const pair = await generatePair();
     const token = await signJwt(
       pair.privateKey,
@@ -214,17 +216,55 @@ describe("validateToken", () => {
     );
 
     expect(await validateToken(token, ORIGIN, keySource({ k1: pair.publicKey }))).toMatchObject({
-      kind: "rejected",
+      kind: "unverifiable",
       reason: "wrong-audience",
     });
   });
 
-  it("rejects a missing audience", async () => {
+  it("fails open on a missing audience", async () => {
     const pair = await generatePair();
     const token = await signJwt(pair.privateKey, { alg: "RS256", kid: "k1" }, { exp: future() });
 
     expect(await validateToken(token, ORIGIN, keySource({ k1: pair.publicKey }))).toMatchObject({
-      kind: "rejected",
+      kind: "unverifiable",
+      reason: "wrong-audience",
+    });
+  });
+
+  it("accepts an audience that keeps the canonical origin's path", async () => {
+    // ResourceUriHelper.NormalizeResourceUri normalizes with
+    // GetLeftPart(UriPartial.Path), so a real audience keeps its path.
+    const pair = await generatePair();
+    const token = await signJwt(
+      pair.privateKey,
+      { alg: "RS256", kid: "k1" },
+      { exp: future(), aud: `${ORIGIN}/mcp` }
+    );
+
+    expect((await validateToken(token, ORIGIN, keySource({ k1: pair.publicKey }))).kind).toBe("valid");
+  });
+
+  it("accepts an audience with a trailing slash on the canonical origin", async () => {
+    const pair = await generatePair();
+    const token = await signJwt(
+      pair.privateKey,
+      { alg: "RS256", kid: "k1" },
+      { exp: future(), aud: `${ORIGIN}/` }
+    );
+
+    expect((await validateToken(token, ORIGIN, keySource({ k1: pair.publicKey }))).kind).toBe("valid");
+  });
+
+  it("fails open on an audience for a different origin", async () => {
+    const pair = await generatePair();
+    const token = await signJwt(
+      pair.privateKey,
+      { alg: "RS256", kid: "k1" },
+      { exp: future(), aud: "https://someone-else.test/mcp" }
+    );
+
+    expect(await validateToken(token, ORIGIN, keySource({ k1: pair.publicKey }))).toMatchObject({
+      kind: "unverifiable",
       reason: "wrong-audience",
     });
   });
