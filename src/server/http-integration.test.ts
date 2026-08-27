@@ -138,15 +138,47 @@ describe("POST /mcp authentication", () => {
   let upstream: HttpServer;
   /** Every Authorization header the stub Sequentum API received. */
   let upstreamAuthHeaders: (string | undefined)[];
+  /** Signs tokens for the "valid token" case below; also backs the stub JWKS document. */
+  let pair: CryptoKeyPair;
+
+  const KID = "auth-test-key";
+
+  function segment(obj: unknown): string {
+    return Buffer.from(JSON.stringify(obj), "utf8").toString("base64url");
+  }
+
+  async function mint(payload: Record<string, unknown>): Promise<string> {
+    const input = `${segment({ alg: "RS256", kid: KID })}.${segment(payload)}`;
+    const sig = await crypto.subtle.sign(
+      { name: "RSASSA-PKCS1-v1_5" },
+      pair.privateKey,
+      new TextEncoder().encode(input)
+    );
+    return `${input}.${Buffer.from(sig).toString("base64url")}`;
+  }
 
   beforeEach(async () => {
     process.env.REQUIRE_AUTH = "true";
 
+    pair = await crypto.subtle.generateKey(
+      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["sign", "verify"]
+    );
+    const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+
     // A throwaway stand-in for the Sequentum API, so we can observe what the
     // per-request SequentumApiClient actually sends upstream. list_agents hits
-    // GET /api/v1/agent/all, whose success shape is a plain array.
+    // GET /api/v1/agent/all, whose success shape is a plain array. It also serves
+    // this describe's own JWKS document, since apiBaseUrl and the JWKS source are
+    // the same origin (SE4-3856 pre-dispatch validation now fetches it).
     upstreamAuthHeaders = [];
     upstream = createServer((req, res) => {
+      if (req.url === "/api/oauth/certs") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ keys: [{ kty: "RSA", use: "sig", alg: "RS256", kid: KID, n: jwk.n, e: jwk.e }] }));
+        return;
+      }
       upstreamAuthHeaders.push(req.headers.authorization);
       res.writeHead(200, { "content-type": "application/json" });
       res.end("[]");
@@ -194,12 +226,21 @@ describe("POST /mcp authentication", () => {
   });
 
   it("passes the caller's bearer token through to the upstream API", async () => {
+    // A well-formed, validly-signed token: SE4-3856 rejects an opaque bearer value
+    // pre-dispatch, so the pass-through this test cares about can only be observed
+    // with a token that clears validation. MCP_CANONICAL_ORIGIN is unset in this
+    // describe, so the audience check falls back to the caller-observed origin.
+    const token = await mint({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: base,
+    });
+
     const res = await fetch(`${base}/mcp`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
-        authorization: "Bearer test-token-abc123",
+        authorization: `Bearer ${token}`,
         "Mcp-Method": "tools/call",
         "Mcp-Name": "list_agents",
       },
@@ -224,7 +265,7 @@ describe("POST /mcp authentication", () => {
     // The whole point: the token travelled from the inbound HTTP header, through
     // the per-request factory, onto that request's SequentumApiClient, and out
     // to the upstream API.
-    expect(upstreamAuthHeaders).toContain("Bearer test-token-abc123");
+    expect(upstreamAuthHeaders).toContain(`Bearer ${token}`);
   });
 });
 
@@ -426,5 +467,169 @@ describe("GET / landing page", () => {
     const res = await rawRequest(base, "GET / HTTP/1.0\r\n\r\n");
     expect(res).toContain("400 Bad Request");
     expect(res).not.toContain("undefined");
+  });
+});
+
+describe("token validation on /mcp (SE4-3856)", () => {
+  let server: HttpServer;
+  let jwks: HttpServer;
+  let base: string;
+  let pair: CryptoKeyPair;
+
+  const KID = "test-key";
+  const ORIGIN_ENV = "http://127.0.0.1";
+
+  function segment(obj: unknown): string {
+    return Buffer.from(JSON.stringify(obj), "utf8").toString("base64url");
+  }
+
+  async function mint(payload: Record<string, unknown>): Promise<string> {
+    const input = `${segment({ alg: "RS256", kid: KID })}.${segment(payload)}`;
+    const sig = await crypto.subtle.sign(
+      { name: "RSASSA-PKCS1-v1_5" },
+      pair.privateKey,
+      new TextEncoder().encode(input)
+    );
+    return `${input}.${Buffer.from(sig).toString("base64url")}`;
+  }
+
+  function post(token: string) {
+    return fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { _meta: ENVELOPE } }),
+    });
+  }
+
+  beforeEach(async () => {
+    delete process.env.REQUIRE_AUTH;
+
+    pair = await crypto.subtle.generateKey(
+      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["sign", "verify"]
+    );
+    const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+
+    // A local stand-in for Control Center that serves only the JWKS document.
+    jwks = createServer((req, res) => {
+      if (req.url === "/api/oauth/certs") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ keys: [{ kty: "RSA", use: "sig", alg: "RS256", kid: KID, n: jwk.n, e: jwk.e }] }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => jwks.listen(0, "127.0.0.1", () => resolve()));
+    const jwksAddr = jwks.address();
+    if (!jwksAddr || typeof jwksAddr === "string") throw new Error("expected a TCP address");
+    const apiBase = `http://127.0.0.1:${jwksAddr.port}`;
+
+    server = await startHttpServer(apiBase, apiBase, "9.9.9", 0, "127.0.0.1");
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    base = `http://127.0.0.1:${addr.port}`;
+    process.env.MCP_CANONICAL_ORIGIN = `${ORIGIN_ENV}:${addr.port}`;
+  });
+
+  afterEach(async () => {
+    delete process.env.MCP_CANONICAL_ORIGIN;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) => jwks.close(() => resolve()));
+  });
+
+  it("answers an expired token with 401 and a WWW-Authenticate challenge", async () => {
+    // THE regression guard for SE4-3856. Before this change the response was
+    // 200 with the failure buried in a tool result, so no client ever refreshed.
+    const token = await mint({
+      exp: Math.floor(Date.now() / 1000) - 3600,
+      aud: process.env.MCP_CANONICAL_ORIGIN,
+    });
+
+    const res = await post(token);
+
+    expect(res.status).toBe(401);
+    const challenge = res.headers.get("www-authenticate");
+    expect(challenge).toContain('error="invalid_token"');
+    expect(challenge).toContain("resource_metadata=");
+  });
+
+  it("answers a token signed by an unknown key with 401", async () => {
+    const attacker = await crypto.subtle.generateKey(
+      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["sign", "verify"]
+    );
+    const input = `${segment({ alg: "RS256", kid: KID })}.${segment({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: process.env.MCP_CANONICAL_ORIGIN,
+    })}`;
+    const sig = await crypto.subtle.sign(
+      { name: "RSASSA-PKCS1-v1_5" },
+      attacker.privateKey,
+      new TextEncoder().encode(input)
+    );
+
+    const res = await post(`${input}.${Buffer.from(sig).toString("base64url")}`);
+
+    expect(res.status).toBe(401);
+  });
+
+  it("answers a non-JWT bearer value with 401", async () => {
+    const res = await post("sk-not-a-jwt");
+    expect(res.status).toBe(401);
+  });
+
+  it("answers an expired token on GET /mcp with 401", async () => {
+    const token = await mint({
+      exp: Math.floor(Date.now() / 1000) - 3600,
+      aud: process.env.MCP_CANONICAL_ORIGIN,
+    });
+
+    const res = await fetch(`${base}/mcp`, {
+      method: "GET",
+      headers: { accept: "text/event-stream", authorization: `Bearer ${token}` },
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  it("lets a valid token through to the handler", async () => {
+    const token = await mint({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: process.env.MCP_CANONICAL_ORIGIN,
+    });
+
+    const res = await post(token);
+
+    expect(res.status).not.toBe(401);
+  });
+
+  it("fails open when the JWKS cannot be reached", async () => {
+    // Degraded, not broken: the request reaches the handler and the API remains
+    // the authority, exactly as before this change.
+    await new Promise<void>((resolve) => jwks.close(() => resolve()));
+    const token = await mint({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: process.env.MCP_CANONICAL_ORIGIN,
+    });
+
+    const res = await post(token);
+
+    expect(res.status).not.toBe(401);
+  });
+
+  it("skips validation entirely when REQUIRE_AUTH=false", async () => {
+    process.env.REQUIRE_AUTH = "false";
+    try {
+      const res = await post("sk-not-a-jwt");
+      expect(res.status).not.toBe(401);
+    } finally {
+      delete process.env.REQUIRE_AUTH;
+    }
   });
 });

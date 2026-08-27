@@ -43,7 +43,7 @@ const MAX_LOGGED_FIELD_LENGTH = 200;
  * server-chosen enums, not attacker input, so quoting them would only churn
  * the format for no gain.
  */
-function loggable(value: string): string {
+export function loggable(value: string): string {
   return JSON.stringify(value.slice(0, MAX_LOGGED_FIELD_LENGTH));
 }
 
