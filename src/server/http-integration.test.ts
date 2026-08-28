@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server as HttpServer } from "node:http";
 import { startHttpServer } from "./http-server.js";
 import { RATE_LIMIT_ERROR_CODE } from "./constants.js";
@@ -701,6 +701,59 @@ describe("token validation on /mcp (SE4-3856)", () => {
       const res = await post(token);
 
       expect(res.status).toBe(200);
+    });
+  });
+
+  describe("an unparseable MCP_CANONICAL_ORIGIN falls back to the Host header", () => {
+    // canonicalOrigin()'s catch branch had no coverage: deleting the whole
+    // try/catch would not fail a test. It cannot be pinned by status alone,
+    // because wrong-audience is fail-open -- a broken fallback answers 200 too.
+    // So assert on the logs: the warning proves the catch ran, and the ABSENCE
+    // of a wrong-audience line proves the fallback really resolved to the
+    // Host-derived origin rather than to some other value that merely failed open.
+    const MALFORMED = "mcp.sequentum.com";  // no scheme, so `new URL` throws
+
+    let errors: string[];
+
+    beforeEach(() => {
+      process.env.MCP_CANONICAL_ORIGIN = MALFORMED;
+      errors = [];
+      vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+        errors.push(args.map(String).join(" "));
+      });
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("warns and validates the token against the Host-derived origin", async () => {
+      const token = await mint({
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        aud: base,
+      });
+
+      const res = await post(token);
+
+      expect(res.status).toBe(200);
+      expect(errors.some((line) => line.includes("MCP_CANONICAL_ORIGIN") && line.includes("not a valid URL")))
+        .toBe(true);
+      expect(errors.some((line) => line.includes("wrong-audience"))).toBe(false);
+    });
+
+    it("still rejects an expired token, so the fallback does not weaken the gate", async () => {
+      // The fallback must only affect which origin `aud` is compared against.
+      // Expiry is checked before the audience, so a malformed env value must not
+      // turn the SE4-3856 regression guard back into a 200.
+      const token = await mint({
+        exp: Math.floor(Date.now() / 1000) - 3600,
+        aud: base,
+      });
+
+      const res = await post(token);
+
+      expect(res.status).toBe(401);
+      expect(res.headers.get("www-authenticate")).toContain("Bearer");
     });
   });
 });
