@@ -705,12 +705,12 @@ describe("token validation on /mcp (SE4-3856)", () => {
   });
 
   describe("an unparseable MCP_CANONICAL_ORIGIN falls back to the Host header", () => {
-    // canonicalOrigin()'s catch branch had no coverage: deleting the whole
-    // try/catch would not fail a test. It cannot be pinned by status alone,
-    // because wrong-audience is fail-open -- a broken fallback answers 200 too.
-    // So assert on the logs: the warning proves the catch ran, and the ABSENCE
-    // of a wrong-audience line proves the fallback really resolved to the
-    // Host-derived origin rather than to some other value that merely failed open.
+    // canonicalOrigin()'s malformed-value path had no coverage: deleting it
+    // would not fail a test. Status alone cannot pin it either, because
+    // wrong-audience is fail-open -- a fallback that resolved to the WRONG
+    // origin also answers 200. The discriminating signal is the ABSENCE of a
+    // wrong-audience log line, which only holds if the fallback really landed
+    // on the Host-derived origin that this token's `aud` names.
     const MALFORMED = "mcp.sequentum.com";  // no scheme, so `new URL` throws
 
     let errors: string[];
@@ -727,7 +727,7 @@ describe("token validation on /mcp (SE4-3856)", () => {
       vi.restoreAllMocks();
     });
 
-    it("warns and validates the token against the Host-derived origin", async () => {
+    it("validates the token against the Host-derived origin, silently", async () => {
       const token = await mint({
         exp: Math.floor(Date.now() / 1000) + 3600,
         aud: base,
@@ -736,9 +736,10 @@ describe("token validation on /mcp (SE4-3856)", () => {
       const res = await post(token);
 
       expect(res.status).toBe(200);
-      expect(errors.some((line) => line.includes("MCP_CANONICAL_ORIGIN") && line.includes("not a valid URL")))
-        .toBe(true);
       expect(errors.some((line) => line.includes("wrong-audience"))).toBe(false);
+      // The per-request path stays quiet; auditCanonicalOrigin owns the warning.
+      // Without this, reinstating a per-request warn would go unnoticed.
+      expect(errors.some((line) => line.includes("not a valid URL"))).toBe(false);
     });
 
     it("still rejects an expired token, so the fallback does not weaken the gate", async () => {

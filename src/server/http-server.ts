@@ -147,30 +147,62 @@ function sendAuthChallenge(req: Request, res: Response): void {
 }
 
 /**
+ * The `origin` of a parseable absolute URL, or null when the value is malformed.
+ *
+ * Normalizing through `new URL(...).origin` means a trailing slash, a path or
+ * unusual casing does not make every audience comparison fail. `validateToken`
+ * also normalizes defensively; this is the deployment-facing half.
+ */
+function parseOrigin(value: string): string | null {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * This server's resource identifier, used for the token `aud` check.
  *
  * `MCP_CANONICAL_ORIGIN` is preferred because `getMcpServerOrigin` derives the
  * origin from the caller-controlled `Host` header, which is weak as a comparison
  * target. Falling back to it keeps a misconfigured deployment working rather
- * than rejecting everyone; the startup warning says which mode is active.
+ * than rejecting everyone.
  *
- * The env value is run through `new URL(...).origin` so a trailing slash or
- * unusual casing does not make every comparison fail — `validateToken` also
- * normalizes defensively, but a value this malformed is worth a loud warning
- * here rather than silently degrading every request to `unverifiable`.
+ * Deliberately silent: the env value is fixed for the life of the process, so a
+ * warning here would repeat one unchanging fact on every request forever.
+ * `auditCanonicalOrigin` reports the mode once, at startup.
  */
 function canonicalOrigin(req: Request): string {
   const configured = process.env.MCP_CANONICAL_ORIGIN;
   if (!configured) return getMcpServerOrigin(req);
+  return parseOrigin(configured) ?? getMcpServerOrigin(req);
+}
 
-  try {
-    return new URL(configured).origin;
-  } catch {
+/**
+ * Report which audience-comparison mode this process will use, once at startup.
+ *
+ * Both degraded modes fall back to the caller-supplied `Host` header, which is
+ * spoofable when `trust proxy` is on, so each gets a warning an operator sees
+ * while watching a deploy — the moment the value can still be corrected.
+ * Exported for tests.
+ */
+export function auditCanonicalOrigin(): void {
+  const configured = process.env.MCP_CANONICAL_ORIGIN;
+
+  if (!configured) {
+    console.error(
+      "[MCP] Warning: MCP_CANONICAL_ORIGIN is unset; token audience validation " +
+      "will use the caller-supplied Host header"
+    );
+    return;
+  }
+
+  if (parseOrigin(configured) === null) {
     console.error(
       `[MCP] Warning: MCP_CANONICAL_ORIGIN=${JSON.stringify(configured)} is not a valid URL; ` +
-      "falling back to the caller-supplied Host header for this request"
+      "token audience validation will use the caller-supplied Host header"
     );
-    return getMcpServerOrigin(req);
   }
 }
 
@@ -566,12 +598,7 @@ export async function startHttpServer(
   // McpServer per call, and a request-scoped cache would refetch every time.
   const jwksCache = createJwksCache(apiBaseUrl);
 
-  if (!process.env.MCP_CANONICAL_ORIGIN) {
-    console.error(
-      "[MCP] Warning: MCP_CANONICAL_ORIGIN is unset; token audience validation " +
-      "will use the caller-supplied Host header"
-    );
-  }
+  auditCanonicalOrigin();
 
   // Handle POST requests for client-to-server messages
   app.post("/mcp", (req: Request, res: Response, next: NextFunction) => {
