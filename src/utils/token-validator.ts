@@ -62,8 +62,8 @@ export const CLOCK_SKEW_SECONDS = 60;
 
 /**
  * Audience stamped on tokens minted without an RFC 8707 `resource` parameter
- * (`SeControlCenter/OAuth/OAuthService.cs:220`). Accepted alongside the canonical
- * origin so a client that omits `resource` keeps working.
+ * (`SeControlCenter/OAuth/OAuthService.GenerateUserToken`). Accepted alongside
+ * the canonical origin so a client that omits `resource` keeps working.
  */
 export const LEGACY_AUDIENCE = "Sequentum Enterprise";
 
