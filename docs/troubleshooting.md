@@ -33,18 +33,38 @@ These issues apply when connecting to the hosted Sequentum MCP server at `https:
 
 ### OAuth authentication failed or token expired
 
-**Error:**
-```
-Error: OAuth authentication failed
-```
+Access tokens last one hour. Your client does not refresh on a timer -- the
+server prompts the renewal by returning a 401 on your next request once the
+token expires, and your client redeems its refresh token right then, so you
+should not notice anything beyond a brief pause.
 
-**Cause:** Your OAuth session has expired or the authorization was denied.
+A 401 that persists across retries therefore means something other than expiry:
 
-**Solutions:**
+- the connector was revoked from your Sequentum account, or
+- your user or organisation access changed.
 
-1. **Re-authenticate:** Log out of the MCP integration in your client and log back in
-2. **Check your Sequentum account** is active and has the necessary permissions
-3. **If you've joined a new Sequentum organization**, log out and log back in to refresh access
+Reconnect from **Settings → Connectors** to resolve either case.
+
+**Diagnosing a report as an operator.** The server logs one line per rejected
+token:
+
+    [MCP] auth=rejected reason=expired kid="STXjwgTe" age=417s client="claude-desktop"
+
+`reason` is one of `expired`, `bad-signature`, `malformed` or `bad-alg`.
+
+Lines reading `auth=unverifiable` are **not** rejections — the request was passed
+through and the API decided it. Three reasons appear there:
+
+- `jwks-unreachable` — the signing keys could not be fetched.
+- `unknown-kid` — the token was signed by a key we do not recognise, usually a
+  rotation we have not picked up yet.
+- `wrong-audience` — the token was minted for a different origin. This is
+  recorded rather than rejected on purpose: a refresh reuses the original
+  resource, so rejecting it would put the client in a 401/refresh loop it could
+  never escape.
+
+A sustained run of `jwks-unreachable` means validation has degraded to
+pass-through and needs attention.
 
 ---
 
@@ -161,15 +181,43 @@ These errors apply to both remote (OAuth) and local (API key) setups.
 Error: API Error 401: Unauthorized
 ```
 
-**Cause:** Your credentials are invalid, expired, or have been revoked.
+**Remote connector (OAuth).**
 
-**Solutions:**
+Access tokens last one hour. Your client does not refresh on a timer -- the
+server prompts the renewal by returning a 401 on your next request once the
+token expires, and your client redeems its refresh token right then, so you
+should not notice anything beyond a brief pause.
 
-**For remote (OAuth) users:**
-1. **Re-authenticate** by logging out of the MCP integration and logging back in
-2. **Check your Sequentum account** is still active
+A 401 that persists across retries therefore means something other than expiry:
 
-**For local (API key) users:**
+- the connector was revoked from your Sequentum account, or
+- your user or organisation access changed.
+
+Reconnect from **Settings → Connectors** to resolve either case.
+
+**Diagnosing a report as an operator.** The server logs one line per rejected
+token:
+
+    [MCP] auth=rejected reason=expired kid="STXjwgTe" age=417s client="claude-desktop"
+
+`reason` is one of `expired`, `bad-signature`, `malformed` or `bad-alg`.
+
+Lines reading `auth=unverifiable` are **not** rejections — the request was passed
+through and the API decided it. Three reasons appear there:
+
+- `jwks-unreachable` — the signing keys could not be fetched.
+- `unknown-kid` — the token was signed by a key we do not recognise, usually a
+  rotation we have not picked up yet.
+- `wrong-audience` — the token was minted for a different origin. This is
+  recorded rather than rejected on purpose: a refresh reuses the original
+  resource, so rejecting it would put the client in a 401/refresh loop it could
+  never escape.
+
+A sustained run of `jwks-unreachable` means validation has degraded to
+pass-through and needs attention.
+
+**Local setup (API key — deprecated).**
+
 1. **Generate a new API key:**
    - Log in to the [Sequentum Control Center](https://dashboard.sequentum.com)
    - Go to **Settings** > **API Keys**
