@@ -11,6 +11,7 @@ import http from "http";
 import express, { type NextFunction, type Request, type Response } from "express";
 import {
   applyTrustProxy,
+  auditCanonicalOrigin,
   handleOpenAIChallenge,
   jsonRpcErrorMiddleware,
   parseTrustProxy,
@@ -306,5 +307,63 @@ describe("shutdownInstance", () => {
 
     expect(spy.mock.calls.flat().join(" ")).toMatch(/Error closing the MCP handler/);
     spy.mockRestore();
+  });
+});
+
+describe("auditCanonicalOrigin", () => {
+  // The audience-comparison mode is reported once here rather than on every
+  // request: MCP_CANONICAL_ORIGIN comes from the task definition and cannot
+  // change while the process lives, so a per-request warning would repeat one
+  // unchanging fact forever. That makes startup the only place an operator
+  // learns the server fell back to the spoofable Host header -- and the only
+  // moment the value can still be corrected -- so all three modes are pinned.
+  const original = process.env.MCP_CANONICAL_ORIGIN;
+
+  function captureWarnings(): string[] {
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    });
+    return lines;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (original === undefined) delete process.env.MCP_CANONICAL_ORIGIN;
+    else process.env.MCP_CANONICAL_ORIGIN = original;
+  });
+
+  it("warns when unset", () => {
+    delete process.env.MCP_CANONICAL_ORIGIN;
+    const lines = captureWarnings();
+
+    auditCanonicalOrigin();
+
+    expect(lines.join(" ")).toMatch(/MCP_CANONICAL_ORIGIN is unset/);
+    expect(lines.join(" ")).toMatch(/Host header/);
+  });
+
+  it("warns when set to a value new URL cannot parse", () => {
+    // A scheme-less host is the realistic typo: it looks like an origin to a
+    // human editing a task definition, but `new URL` rejects it outright.
+    process.env.MCP_CANONICAL_ORIGIN = "mcp.sequentum.com";
+    const lines = captureWarnings();
+
+    auditCanonicalOrigin();
+
+    expect(lines.join(" ")).toMatch(/not a valid URL/);
+    // The bad value is echoed so the operator can see the typo, not just that
+    // one exists.
+    expect(lines.join(" ")).toContain("mcp.sequentum.com");
+  });
+
+  it("stays silent on a valid origin, including one carrying a path", () => {
+    // A path is harmless -- only `.origin` is used -- so it must not warn.
+    process.env.MCP_CANONICAL_ORIGIN = "https://mcp.sequentum.com/mcp";
+    const lines = captureWarnings();
+
+    auditCanonicalOrigin();
+
+    expect(lines).toEqual([]);
   });
 });

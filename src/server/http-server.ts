@@ -14,7 +14,9 @@ import { buildAuthChallenge, SUPPORTED_SCOPES } from "../utils/oauth-metadata.js
 import { buildAllowedOrigins, isAllowedOrigin } from "./cors.js";
 import { renderLandingPage } from "./landing-page.js";
 import { MCP_RATE_LIMIT_MAX, MCP_RATE_LIMIT_WINDOW_MS, RATE_LIMIT_ERROR_CODE } from "./constants.js";
-import { createSequentumMcpHandler } from "./mcp-handler.js";
+import { createJwksCache, type JwksKeySource } from "../utils/jwks-cache.js";
+import { validateToken } from "../utils/token-validator.js";
+import { createSequentumMcpHandler, loggable } from "./mcp-handler.js";
 
 const DEBUG = process.env.DEBUG === '1';
 
@@ -142,6 +144,117 @@ function sendAuthChallenge(req: Request, res: Response): void {
   const challenge = buildAuthChallenge(getMcpServerOrigin(req));
   res.setHeader("WWW-Authenticate", challenge.wwwAuthenticate);
   res.status(401).json(challenge.body);
+}
+
+/**
+ * The `origin` of a parseable absolute URL, or null when the value is malformed.
+ *
+ * Normalizing through `new URL(...).origin` means a trailing slash, a path or
+ * unusual casing does not make every audience comparison fail. `validateToken`
+ * also normalizes defensively; this is the deployment-facing half.
+ */
+function parseOrigin(value: string): string | null {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * This server's resource identifier, used for the token `aud` check.
+ *
+ * `MCP_CANONICAL_ORIGIN` is preferred because `getMcpServerOrigin` derives the
+ * origin from the caller-controlled `Host` header, which is weak as a comparison
+ * target. Falling back to it keeps a misconfigured deployment working rather
+ * than rejecting everyone.
+ *
+ * Deliberately silent: the env value is fixed for the life of the process, so a
+ * warning here would repeat one unchanging fact on every request forever.
+ * `auditCanonicalOrigin` reports the mode once, at startup.
+ */
+function canonicalOrigin(req: Request): string {
+  const configured = process.env.MCP_CANONICAL_ORIGIN;
+  if (!configured) return getMcpServerOrigin(req);
+  return parseOrigin(configured) ?? getMcpServerOrigin(req);
+}
+
+/**
+ * Report which audience-comparison mode this process will use, once at startup.
+ *
+ * Both degraded modes fall back to the caller-supplied `Host` header, which is
+ * spoofable when `trust proxy` is on, so each gets a warning an operator sees
+ * while watching a deploy — the moment the value can still be corrected.
+ * Exported for tests.
+ */
+export function auditCanonicalOrigin(): void {
+  const configured = process.env.MCP_CANONICAL_ORIGIN;
+
+  if (!configured) {
+    console.error(
+      "[MCP] Warning: MCP_CANONICAL_ORIGIN is unset; token audience validation " +
+      "will use the caller-supplied Host header"
+    );
+    return;
+  }
+
+  if (parseOrigin(configured) === null) {
+    console.error(
+      `[MCP] Warning: MCP_CANONICAL_ORIGIN=${JSON.stringify(configured)} is not a valid URL; ` +
+      "token audience validation will use the caller-supplied Host header"
+    );
+  }
+}
+
+/**
+ * One line per token rejection, in the `key=value` shape used by mcp-handler's
+ * era log. Never emits the token: a truncated `kid` is the only token-derived
+ * value here.
+ */
+function logAuthOutcome(req: Request, outcome: string, reason: string, kid?: string, exp?: number): void {
+  const client = req.get("user-agent") ?? "unknown";
+  const parts = [`[MCP] auth=${outcome}`, `reason=${reason}`];
+  if (kid) parts.push(`kid=${loggable(kid.slice(0, 8))}`);
+  if (typeof exp === "number") parts.push(`age=${Math.max(0, Math.floor(Date.now() / 1000) - exp)}s`);
+  parts.push(`client=${loggable(client)}`);
+  console.error(parts.join(" "));
+}
+
+/**
+ * Shared auth gate for POST and GET /mcp.
+ *
+ * Returns true if the request may proceed. On a definite rejection it has
+ * already sent the 401 + RFC 9728 challenge, which is the signal MCP clients use
+ * to redeem a refresh token (SE4-3856).
+ */
+async function passesAuthGate(req: Request, res: Response, keys: JwksKeySource): Promise<boolean> {
+  const requireAuth = process.env.REQUIRE_AUTH !== "false";
+  const token = extractBearerToken(req);
+
+  if (requireAuth && !token) {
+    sendAuthChallenge(req, res);
+    console.error("[MCP] 401 - Authentication required, no Bearer token provided");
+    return false;
+  }
+
+  // REQUIRE_AUTH=false is the test escape hatch: no token gate, no validation.
+  if (!requireAuth || !token) return true;
+
+  const verdict = await validateToken(token, canonicalOrigin(req), keys);
+
+  if (verdict.kind === "rejected") {
+    logAuthOutcome(req, "rejected", verdict.reason, verdict.kid, verdict.exp);
+    sendAuthChallenge(req, res);
+    return false;
+  }
+
+  if (verdict.kind === "unverifiable") {
+    // Degraded to pass-through; the API stays the authority. A sustained run of
+    // these means validation is silently off and needs attention.
+    logAuthOutcome(req, "unverifiable", verdict.reason, verdict.kid);
+  }
+
+  return true;
 }
 
 /**
@@ -481,22 +594,19 @@ export async function startHttpServer(
   const mcpHandler = createSequentumMcpHandler(apiBaseUrl, version);
   const nodeHandler = toNodeHandler(mcpHandler);
 
+  // One cache per server, not per request: the stateless handler builds a fresh
+  // McpServer per call, and a request-scoped cache would refetch every time.
+  const jwksCache = createJwksCache(apiBaseUrl);
+
+  auditCanonicalOrigin();
+
   // Handle POST requests for client-to-server messages
-  app.post("/mcp", (req: Request, res: Response, next) => {
-    // Require authentication (unless REQUIRE_AUTH=false for testing). The 401 +
-    // RFC 9728 WWW-Authenticate challenge is how directory probers and
-    // spec-conformant clients discover this resource's authorization server.
-    const requireAuth = process.env.REQUIRE_AUTH !== "false";
-    const token = extractBearerToken(req);
-    if (DEBUG && token) {
-      console.error("[DEBUG] Bearer token received");
-    }
-    if (requireAuth && !token) {
-      sendAuthChallenge(req, res);
-      console.error("[MCP] 401 - Authentication required, no Bearer token provided");
-      return;
-    }
-    void nodeHandler(req, res).catch(next);
+  app.post("/mcp", (req: Request, res: Response, next: NextFunction) => {
+    void passesAuthGate(req, res, jwksCache)
+      .then((ok) => {
+        if (ok) return nodeHandler(req, res);
+      })
+      .catch(next);
   });
 
   // Kept as a no-op 200: clients send DELETE on disconnect and the SDK would
@@ -513,13 +623,12 @@ export async function startHttpServer(
   // remove that discovery signal. An authenticated GET is delegated to the
   // handler, which answers 405 Method not allowed: the standalone SSE stream
   // was a session construct and no longer exists.
-  app.get("/mcp", (req: Request, res: Response, next) => {
-    const requireAuth = process.env.REQUIRE_AUTH !== "false";
-    if (requireAuth && !extractBearerToken(req)) {
-      sendAuthChallenge(req, res);
-      return;
-    }
-    void nodeHandler(req, res).catch(next);
+  app.get("/mcp", (req: Request, res: Response, next: NextFunction) => {
+    void passesAuthGate(req, res, jwksCache)
+      .then((ok) => {
+        if (ok) return nodeHandler(req, res);
+      })
+      .catch(next);
   });
 
   // Error middleware — catches whatever the /mcp routes' `.catch(next)` forwards
