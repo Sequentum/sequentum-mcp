@@ -287,6 +287,14 @@ The server exposes 18 read-only resources (7 static + 11 templates) that AI clie
 
 ## Troubleshooting
 
+### Verifying scope enforcement end to end
+
+`npm run probe -- --env qa --mode log-only` runs the real OAuth flow against QA (browser login
+and consent, loopback callback, PKCE), then calls the V1 API directly and through this server
+with tokens of three scope profiles and checks CloudWatch for the Control Center's scope-check
+lines. See [docs/oauth-scope-probe.md](./docs/oauth-scope-probe.md).
+
+
 | Error | Solution |
 |-------|----------|
 | OAuth login not opening | Ensure your client supports OAuth and Streamable HTTP. Try restarting the client. For Claude.ai and Claude Desktop, connect from the [connector directory](#claudeai-and-claude-desktop) rather than a config file. |

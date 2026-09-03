@@ -23,6 +23,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "smoke": "vitest run src/smoke.test.ts",
+    "probe": "node scripts/oauth-scope-probe.mjs",
     "validate:registry": "node scripts/validate-registry.mjs",
     "check:versions": "node scripts/check-versions.mjs",
     "prepublishOnly": "npm run validate:registry && npm run check:versions"
