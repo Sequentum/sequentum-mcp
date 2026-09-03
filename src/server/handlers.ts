@@ -54,6 +54,16 @@ export function formatToolError(error: unknown): {
     if (error.isUnauthorized) {
       errorPrefix = "Authentication Failed";
       errorMessage = "Your API key or OAuth token is invalid or has expired. Please check your credentials.";
+    } else if (error.isInsufficientScope) {
+      // SE4-3929: distinguished from the generic 403 below so the caller learns this is a
+      // scope problem, not a permissions problem, and is told what to do about it.
+      errorPrefix = "Insufficient Scope";
+      // The scope name comes from the upstream WWW-Authenticate header, which is not
+      // guaranteed to carry one -- hence the two phrasings rather than an empty slot.
+      const need = error.requiredScope
+        ? `the "${error.requiredScope}" scope, which this Sequentum MCP connection was not granted`
+        : "an OAuth scope that this Sequentum MCP connection was not granted";
+      errorMessage = `This action requires ${need}. Disconnect and reconnect the Sequentum MCP server, then approve the requested permissions, to re-authorize.`;
     } else if (error.isForbidden) {
       errorPrefix = "Access Denied";
       errorMessage = "You don't have permission to perform this action. Check your API key permissions.";

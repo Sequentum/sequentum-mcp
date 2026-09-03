@@ -94,10 +94,13 @@ npm run probe -- --env qa --mode enforce                              # after th
 | Mode | Scope matches | Scope mismatches |
 |---|---|---|
 | `log-only` | V1 2xx, MCP tool ok, no log line | V1 2xx, MCP tool ok, **and** a `Scope check would deny (log-only) … required=X granted=Y clientId=Z` line in CloudWatch |
-| `enforce` | V1 2xx, MCP tool ok | V1 **403** with `errorCode: insufficient_scope` and `WWW-Authenticate: Bearer error="insufficient_scope", scope="X"`; MCP tool error starting `Access Denied`; a `Scope check denied …` line |
+| `enforce` | V1 2xx, MCP tool ok | V1 **403** with `errorCode: insufficient_scope` and `WWW-Authenticate: Bearer error="insufficient_scope", scope="X"`; MCP tool error `Insufficient Scope: … the "X" scope …`; a `Scope check denied …` line |
 
-This server collapses any upstream 403 into a fixed "Access Denied" message, so scope *names*
-are only asserted from direct V1 responses and CloudWatch, never from MCP output.
+On a build carrying **SE4-3929**, the MCP tool error names the missing scope directly. On an
+older build it still collapses any upstream 403 into the fixed "Access Denied" text; this probe
+accepts either, but flags the old text in the summary as `old build: scope name not surfaced`.
+Scope *names* are always asserted from direct V1 responses and CloudWatch as well, regardless
+of which build the MCP server is on.
 
 **`SE4-3896 NOT DEPLOYED HERE`** in the summary means a revoked client kept refreshing. That
 is what a build without the revoke-on-refresh fix produces. It is reported as a failed row so

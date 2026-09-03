@@ -34,13 +34,47 @@ export class ApiRequestError extends Error {
   public readonly statusText: string;
   /** The API endpoint that was called */
   public readonly endpoint: string;
+  /**
+   * The response body's `errorCode` field (e.g. `"insufficient_scope"` from
+   * `ScopeEnforcementFilter`), or null if the body had none or could not be parsed.
+   */
+  public readonly errorCode: string | null;
+  /** The response's raw `WWW-Authenticate` header, or null if absent. */
+  public readonly wwwAuthenticate: string | null;
 
-  constructor(statusCode: number, statusText: string, message: string, endpoint: string) {
+  constructor(
+    statusCode: number,
+    statusText: string,
+    message: string,
+    endpoint: string,
+    details?: { errorCode?: string | null; wwwAuthenticate?: string | null }
+  ) {
     super(message);
     this.name = "ApiRequestError";
     this.statusCode = statusCode;
     this.statusText = statusText;
     this.endpoint = endpoint;
+    this.errorCode = details?.errorCode ?? null;
+    this.wwwAuthenticate = details?.wwwAuthenticate ?? null;
+  }
+
+  /**
+   * True for a 403 whose body or `WWW-Authenticate` header identifies the cause as a scope
+   * the caller's token lacks (SE4-3929), as opposed to a 403 for any other reason.
+   */
+  get isInsufficientScope(): boolean {
+    if (this.statusCode !== 403) return false;
+    if (this.errorCode === "insufficient_scope") return true;
+    return /\berror="insufficient_scope"/.test(this.wwwAuthenticate ?? "");
+  }
+
+  /**
+   * The scope named in the `WWW-Authenticate` header's `scope="…"` parameter, or null if the
+   * header is absent or carries none. Only meaningful when {@link isInsufficientScope} is true.
+   */
+  get requiredScope(): string | null {
+    const match = /\bscope="([^"]*)"/.exec(this.wwwAuthenticate ?? "");
+    return match && match[1].length > 0 ? match[1] : null;
   }
 
   /** True for 401 Unauthorized */
@@ -277,6 +311,8 @@ export interface ApiErrorBody {
   status?: number;
   detail?: string;
   instance?: string;
+  // SE4-3929: ScopeEnforcementFilter's machine-readable reason code (e.g. "insufficient_scope").
+  errorCode?: string;
 }
 
 /**

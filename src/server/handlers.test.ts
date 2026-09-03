@@ -74,6 +74,30 @@ describe("formatToolError", () => {
     );
   });
 
+  it("names the missing scope for an insufficient_scope 403 (SE4-3929)", () => {
+    const result = formatToolError(
+      new ApiRequestError(403, "Forbidden", "Insufficient scope", "/agents", {
+        errorCode: "insufficient_scope",
+        wwwAuthenticate: 'Bearer error="insufficient_scope", scope="billing:read"',
+      })
+    );
+    expect(result.content[0].text).toBe(
+      'Insufficient Scope: This action requires the "billing:read" scope, which this Sequentum MCP connection was not granted. Disconnect and reconnect the Sequentum MCP server, then approve the requested permissions, to re-authorize.'
+    );
+    expect(result.isError).toBe(true);
+  });
+
+  it("still names the problem for an insufficient_scope 403 with no scope in the header", () => {
+    const result = formatToolError(
+      new ApiRequestError(403, "Forbidden", "Insufficient scope", "/agents", {
+        errorCode: "insufficient_scope",
+      })
+    );
+    expect(result.content[0].text).toBe(
+      "Insufficient Scope: This action requires an OAuth scope that this Sequentum MCP connection was not granted. Disconnect and reconnect the Sequentum MCP server, then approve the requested permissions, to re-authorize."
+    );
+  });
+
   it("formats not found API errors", () => {
     const result = formatToolError(
       new ApiRequestError(404, "Not Found", "Agent 42 not found", "/agents/42")

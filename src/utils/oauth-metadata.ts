@@ -11,14 +11,39 @@
  *   3. DCR  - Dynamic Client Registration (fallback)
  */
 
-/** Scopes shared by Authorization Server Metadata and Protected Resource Metadata. */
-export const SUPPORTED_SCOPES = [
+/**
+ * The six scopes with API meaning that the Control Center enforces (SE4-3895), i.e. its
+ * `OAuthScopes.ResourceScopes`. Exported so `SUPPORTED_SCOPES` below and the tests that
+ * pin the list share one definition of "the six" instead of retyping it.
+ */
+export const API_SCOPES = [
   "agents:read",
+  "agents:write",
   "runs:read",
   "spaces:read",
-  "agents:write",
-  "offline_access",
+  "spaces:write",
+  "billing:read",
 ] as const;
+
+/**
+ * The authorization server's own refresh-token grant scope. Not an API scope -- it grants no
+ * access to any resource -- so it lives outside {@link API_SCOPES}, but MCP clients must
+ * request it to be issued a refresh token. `resource-scopes.ts` appends it to whatever list
+ * the Control Center returns, which is why it is exported rather than written out twice.
+ */
+export const OFFLINE_ACCESS_SCOPE = "offline_access";
+
+/**
+ * Fallback `scopes_supported` list, served only until `resource-scopes.ts` has successfully
+ * fetched the Control Center's own `/api/oauth/resource-metadata` document (SE4-3929); a
+ * later failed refresh keeps the last list fetched rather than reverting to this one.
+ *
+ * Derived from {@link API_SCOPES} so the two cannot disagree, but note what that does and
+ * does not buy: it guarantees the fallback covers every scope listed *here*, not every scope
+ * the Control Center enforces. `API_SCOPES` is still a hand-maintained mirror and will lag a
+ * scope newly added upstream -- closing that gap is the live fetch's job, not this list's.
+ */
+export const SUPPORTED_SCOPES = [...API_SCOPES, OFFLINE_ACCESS_SCOPE] as const;
 
 /**
  * RFC 9728 §5.1 — WWW-Authenticate challenge for unauthenticated MCP requests.

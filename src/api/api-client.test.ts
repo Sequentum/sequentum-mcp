@@ -778,6 +778,51 @@ describe("SequentumApiClient", () => {
       }
     });
 
+    it("should capture errorCode and WWW-Authenticate from a 403 insufficient_scope response (SE4-3929)", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        headers: new Headers({
+          "www-authenticate": 'Bearer error="insufficient_scope", scope="billing:read"',
+        }),
+        text: async () =>
+          '{"statusCode":403,"statusDescription":"Forbidden","message":"Insufficient scope","severity":"Warning","errorCode":"insufficient_scope"}',
+      } as Response);
+
+      try {
+        await client.getAllAgents();
+        expect.fail("Should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiRequestError);
+        const apiErr = error as ApiRequestError;
+        expect(apiErr.isForbidden).toBe(true);
+        expect(apiErr.errorCode).toBe("insufficient_scope");
+        expect(apiErr.wwwAuthenticate).toBe('Bearer error="insufficient_scope", scope="billing:read"');
+        expect(apiErr.isInsufficientScope).toBe(true);
+        expect(apiErr.requiredScope).toBe("billing:read");
+      }
+    });
+
+    it("leaves errorCode and wwwAuthenticate null for a plain 403 with neither present", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        text: async () => '{"message": "Not allowed"}',
+      } as Response);
+
+      try {
+        await client.getAllAgents();
+        expect.fail("Should have thrown");
+      } catch (error) {
+        const apiErr = error as ApiRequestError;
+        expect(apiErr.errorCode).toBeNull();
+        expect(apiErr.wwwAuthenticate).toBeNull();
+        expect(apiErr.isInsufficientScope).toBe(false);
+      }
+    });
+
     it("should throw ApiRequestError with isUnauthorized for 401", async () => {
       vi.mocked(fetch).mockResolvedValueOnce({
         ok: false,
@@ -2362,6 +2407,76 @@ describe("ApiRequestError", () => {
     expect(new ApiRequestError(502, "BG", "msg", "/").isServerError).toBe(true);
     expect(new ApiRequestError(503, "SU", "msg", "/").isServerError).toBe(true);
     expect(new ApiRequestError(400, "BR", "msg", "/").isServerError).toBe(false);
+  });
+
+  it("still works with the original four-argument constructor (errorCode/wwwAuthenticate optional)", () => {
+    const error = new ApiRequestError(403, "Forbidden", "msg", "/api/test");
+    expect(error.errorCode).toBeNull();
+    expect(error.wwwAuthenticate).toBeNull();
+    expect(error.isInsufficientScope).toBe(false);
+    expect(error.requiredScope).toBeNull();
+  });
+
+  describe("isInsufficientScope / requiredScope / errorCode (SE4-3929)", () => {
+    it("is true when errorCode is insufficient_scope on a 403", () => {
+      const error = new ApiRequestError(403, "Forbidden", "msg", "/api/test", {
+        errorCode: "insufficient_scope",
+      });
+      expect(error.errorCode).toBe("insufficient_scope");
+      expect(error.isInsufficientScope).toBe(true);
+    });
+
+    it("is true when the WWW-Authenticate header names insufficient_scope, even without errorCode", () => {
+      const error = new ApiRequestError(403, "Forbidden", "msg", "/api/test", {
+        wwwAuthenticate: 'Bearer error="insufficient_scope", scope="billing:read"',
+      });
+      expect(error.isInsufficientScope).toBe(true);
+      expect(error.requiredScope).toBe("billing:read");
+    });
+
+    it("parses the required scope from the WWW-Authenticate header", () => {
+      const error = new ApiRequestError(403, "Forbidden", "msg", "/api/test", {
+        errorCode: "insufficient_scope",
+        wwwAuthenticate: 'Bearer error="insufficient_scope", scope="spaces:write"',
+      });
+      expect(error.requiredScope).toBe("spaces:write");
+    });
+
+    it("requiredScope is null when the header has no scope= parameter", () => {
+      const error = new ApiRequestError(403, "Forbidden", "msg", "/api/test", {
+        errorCode: "insufficient_scope",
+        wwwAuthenticate: 'Bearer error="insufficient_scope"',
+      });
+      expect(error.requiredScope).toBeNull();
+    });
+
+    it("requiredScope handles extra parameters and spacing around scope=", () => {
+      const error = new ApiRequestError(403, "Forbidden", "msg", "/api/test", {
+        wwwAuthenticate: 'Bearer realm="mcp.example.com", error="insufficient_scope",  scope="agents:write"  ',
+      });
+      expect(error.requiredScope).toBe("agents:write");
+    });
+
+    it("is false for a plain 403 with a different errorCode", () => {
+      const error = new ApiRequestError(403, "Forbidden", "msg", "/api/test", {
+        errorCode: "some_other_reason",
+      });
+      expect(error.isInsufficientScope).toBe(false);
+      expect(error.requiredScope).toBeNull();
+    });
+
+    it("is false for a non-403 status even with errorCode insufficient_scope", () => {
+      const error = new ApiRequestError(401, "Unauthorized", "msg", "/api/test", {
+        errorCode: "insufficient_scope",
+      });
+      expect(error.isInsufficientScope).toBe(false);
+    });
+
+    it("is false when neither errorCode nor header is present", () => {
+      const error = new ApiRequestError(403, "Forbidden", "msg", "/api/test", {});
+      expect(error.isInsufficientScope).toBe(false);
+      expect(error.requiredScope).toBeNull();
+    });
   });
 });
 

@@ -120,6 +120,18 @@
   published container image — none is published. Callers who cannot route to
   `mcp.sequentum.com` should contact support.
 
+### Fixed
+
+- **SE4-3929: `scopes_supported` in the protected-resource metadata document is now derived
+  from the Control Center's own resource-metadata document** instead of a hardcoded array,
+  so it can no longer drift out of sync with what the Control Center actually enforces (it
+  had already drifted, omitting `spaces:write` and `billing:read`). The previous hardcoded
+  list is served until the first successful fetch; after that, a refresh that fails keeps the
+  last list fetched rather than reverting.
+- **SE4-3929: a tool call rejected upstream with `insufficient_scope` now names the missing
+  scope** in the tool error, instead of the generic "Access Denied" text used for every 403.
+  Reconnecting and re-authorizing the MCP connection is suggested directly in the message.
+
 ## [1.3.0] - TBD
 
 ### Added

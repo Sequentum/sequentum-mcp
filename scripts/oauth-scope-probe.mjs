@@ -24,6 +24,8 @@ import { execFile, spawn } from "node:child_process";
 import { promisify, parseArgs } from "node:util";
 import readline from "node:readline/promises";
 import process from "node:process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const execFileP = promisify(execFile);
 
@@ -546,15 +548,22 @@ function judgeV1(call, granted, mode) {
   return { expected: "403 insufficient_scope", observed, ok, note: ok ? "" : `errorCode=${JSON.stringify(code)} WWW-Authenticate=${JSON.stringify(www)}` };
 }
 
-// Only allow/deny is asserted from MCP: the server collapses upstream 403s into a fixed
-// "Access Denied" text, so scope names come from CloudWatch and direct V1 calls.
+// SE4-3929 made insufficient_scope 403s surface the required scope by name in the tool error
+// ("Insufficient Scope: ... the \"<scope>\" scope ..."); the fixed "Access Denied" text is the
+// pre-SE4-3929 behaviour and is still accepted so this probe keeps working against a build that
+// has not picked up that fix yet -- but flagged, since the scope name is unavailable there.
 function judgeMcp(call, granted, mode) {
   const mismatch = !granted.has(call.required);
   if (call.httpStatus !== 200 || call.isError === null) return { expected: "tool result", observed: `HTTP ${call.httpStatus}`, ok: false, note: call.text };
   const observed = call.isError ? "tool error" : "tool ok";
   if (mode === "log-only" || !mismatch) return { expected: "tool ok", observed, ok: !call.isError, note: call.isError ? call.text : "" };
-  const ok = call.isError && call.text.startsWith("Access Denied");
-  return { expected: "tool error (Access Denied)", observed, ok, note: ok ? "" : call.text };
+  if (call.isError && call.text.startsWith("Insufficient Scope") && call.text.includes(`"${call.required}"`)) {
+    return { expected: "tool error (Insufficient Scope)", observed, ok: true, note: "" };
+  }
+  if (call.isError && call.text.startsWith("Access Denied")) {
+    return { expected: "tool error (Insufficient Scope)", observed, ok: true, note: "old build: scope name not surfaced (SE4-3929 not deployed here)" };
+  }
+  return { expected: "tool error (Insufficient Scope)", observed, ok: false, note: call.text };
 }
 
 function expectedLogLine(mode, method, path, required, grantedScope, clientId) {
@@ -973,14 +982,23 @@ async function main() {
   return report.failed() ? 1 : 0;
 }
 
-main().then(
-  (code) => process.exit(code),
-  (e) => {
-    if (e instanceof ProbeExit) {
-      console.error(e.message);
-      process.exit(2);
-    }
-    console.error(e);
-    process.exit(1);
-  },
-);
+// Only run main() when this file is the process's entry point, not when it is imported --
+// e.g. by tests/oauth-scope-probe.test.ts, which imports the pure judge functions below and
+// must not trigger a live CLI run (browser windows, AWS calls, exit codes) as a side effect
+// of loading the module. `npm run probe` still runs exactly as before.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().then(
+    (code) => process.exit(code),
+    (e) => {
+      if (e instanceof ProbeExit) {
+        console.error(e.message);
+        process.exit(2);
+      }
+      console.error(e);
+      process.exit(1);
+    },
+  );
+}
+
+// Exported for tests/oauth-scope-probe.test.ts: pure functions, no I/O, no process access.
+export { judgeMcp, judgeV1, expectedLogLine };

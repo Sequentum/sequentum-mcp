@@ -301,6 +301,7 @@ lines. See [docs/oauth-scope-probe.md](./docs/oauth-scope-probe.md).
 | Connection refused | Verify the URL is `https://mcp.sequentum.com/mcp` and check your network connection. |
 | `SEQUENTUM_API_KEY required` | [Deprecated](#deprecated-stdio-and-api-key-auth) local stdio mode only. Add your API key to the `env` section of the MCP config, or migrate to the hosted server. |
 | `API Error 401: Unauthorized` | Your API key or OAuth token is invalid or expired. Re-authenticate or generate a new key. |
+| `Insufficient Scope: This action requires the "…" scope` | Disconnect and reconnect the Sequentum MCP server, then approve the requested permissions, to re-authorize with the scope named in the message. If it recurs right after reconnecting, the client may have cached a stale scope list — check the connector's OAuth settings. |
 | `API Error 404: Not Found` | The agent, run, or file doesn't exist, or you don't have access to it. |
 | `API Error 429: Too Many Requests` | Rate limit exceeded. Wait a moment and try again. |
 

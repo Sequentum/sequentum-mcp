@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildAuthChallenge } from "./oauth-metadata.js";
+import { buildAuthChallenge, SUPPORTED_SCOPES, API_SCOPES } from "./oauth-metadata.js";
 
 describe("buildAuthChallenge", () => {
   it("uses RFC 9728 resource_metadata parameter (not the wrong `resource=` form)", () => {
@@ -47,5 +47,36 @@ describe("buildAuthChallenge", () => {
     expect(body.error.data.protectedResourceMetadata).toBe(
       "https://example.com/.well-known/oauth-protected-resource"
     );
+  });
+});
+
+describe("SUPPORTED_SCOPES (fallback list)", () => {
+  // Listed literally, not via API_SCOPES, so a future deletion in the source fails this test.
+  const ENFORCED_API_SCOPES = [
+    "agents:read",
+    "agents:write",
+    "runs:read",
+    "spaces:read",
+    "spaces:write",
+    "billing:read",
+  ];
+
+  it("is a superset of every scope the Control Center enforces", () => {
+    for (const scope of ENFORCED_API_SCOPES) {
+      expect(SUPPORTED_SCOPES).toContain(scope);
+    }
+  });
+
+  it("includes offline_access", () => {
+    expect(SUPPORTED_SCOPES).toContain("offline_access");
+  });
+
+  it("has no duplicate entries", () => {
+    expect(new Set(SUPPORTED_SCOPES).size).toBe(SUPPORTED_SCOPES.length);
+  });
+
+  it("API_SCOPES is exactly the six API scopes, without offline_access", () => {
+    expect([...API_SCOPES].sort()).toEqual([...ENFORCED_API_SCOPES].sort());
+    expect(API_SCOPES).not.toContain("offline_access");
   });
 });
