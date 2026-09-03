@@ -82,6 +82,17 @@
   "how many agents are in space X" was to call `get_space_agents` and count the returned array,
   which produced wrong answers on large spaces. `get_space_agents`'s description now points
   counting questions at the new tool. (SE4-3921)
+- **`get_personal_agent_count` tool.** Returns the number of agents in the caller's personal
+  space (agents with no `spaceId`) as a single `{ totalCount }` value. "Personal" is not a space,
+  so `get_space_agent_count` cannot serve it. (SE4-3921)
+- **`get_agent_run_summary` tool.** Returns exact run totals for an agent — an overall count plus
+  a per-status breakdown — computed server-side across all run history, never capped.
+  `get_agent_runs` now also reports `returned`/`limit`/`truncated` so a capped list of the most
+  recent 50 runs can no longer be mistaken for the full set. (SE4-3921)
+- **`get_agent_search_count` tool.** Returns the exact number of agents matching a search term
+  as a single `{ totalCount }` value, matched the same way as `search_agents` but never capped.
+  `search_agents` now also reports `returned`/`limit`/`truncated` so a capped result can no
+  longer be mistaken for the full set of matches. (SE4-3921)
 - `TRUST_PROXY` widened to accept a hop count or a comma-separated CIDR/IP allowlist,
   in addition to `true`/`false`.
 - A JSON-RPC error middleware on `/mcp` that returns a sanitized JSON-RPC error object

@@ -104,6 +104,12 @@ const get_agent: ToolHandler = async (args, { apiClient }) => {
   return jsonResult(agent);
 };
 
+/**
+ * The API's own default when maxRecords is omitted on /agent/search. Mirrored here so the
+ * handler always sends an explicit limit and can tell whether the result was capped.
+ */
+const SEARCH_DEFAULT_LIMIT = 50;
+
 const search_agents: ToolHandler = async (args, { apiClient }) => {
   const params = args;
   const query = validateString(params, "query")!;
@@ -111,8 +117,40 @@ const search_agents: ToolHandler = async (args, { apiClient }) => {
     throw new Error("Search query cannot be empty");
   }
   const maxRecords = validateNumber(params, "maxRecords", { required: false, min: 1, max: 1000, integer: true });
-  const agents = await apiClient.searchAgents(query, maxRecords);
-  return jsonResult(summarizeAgents(agents));
+  const limit = maxRecords ?? SEARCH_DEFAULT_LIMIT;
+  const agents = await apiClient.searchAgents(query, limit);
+  const returned = Array.isArray(agents) ? agents.length : 0;
+  const truncated = returned >= limit;
+
+  return jsonResult({
+    agents: summarizeAgents(agents),
+    returned,
+    limit,
+    truncated,
+    ...(truncated
+      ? {
+          note:
+            "This result was capped at the limit, so more agents may match than are listed. " +
+            "Do NOT count these to answer 'how many agents match' - call get_agent_search_count " +
+            "for the exact number, or raise maxRecords (max 1000).",
+        }
+      : {}),
+  });
+};
+
+/**
+ * Returns the exact number of agents matching a search term, computed server-side, so no
+ * counting of a capped list is required. See SE4-3921.
+ */
+const get_agent_search_count: ToolHandler = async (args, { apiClient }) => {
+  const params = args;
+  const query = validateString(params, "query")!;
+  if (!query.trim()) {
+    throw new Error("Search query cannot be empty");
+  }
+  const includeArchived = validateBoolean(params, "includeArchived", false);
+  const count = await apiClient.getAgentSearchCount(query, includeArchived);
+  return jsonResult(count);
 };
 
 /**
@@ -350,6 +388,7 @@ export const agentToolHandlers: Record<string, ToolHandler> = {
   list_agents,
   get_agent,
   search_agents,
+  get_agent_search_count,
   get_personal_agent_count,
   get_agent_runs,
   get_agent_run_summary,

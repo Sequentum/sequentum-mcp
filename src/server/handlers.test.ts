@@ -722,7 +722,7 @@ describe("agent builder handler dispatch", () => {
 describe("toolDispatch", () => {
   it("exposes a handler for every agent tool", () => {
     const expected = [
-      "list_agents", "get_agent", "search_agents", "get_personal_agent_count",
+      "list_agents", "get_agent", "search_agents", "get_agent_search_count", "get_personal_agent_count",
       "get_agent_runs", "get_agent_run_summary", "get_run_status",
       "start_agent", "stop_agent", "kill_agent", "delete_run", "get_run_files",
       "get_file_download_url", "get_agent_versions", "restore_agent_version",
@@ -767,6 +767,35 @@ describe("toolDispatch", () => {
 
     expect(getSpaceAgentCount).toHaveBeenCalledWith(42);
     expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({ totalCount: 73 });
+  });
+
+  it("search_agents always sends an explicit limit and flags a capped result", async () => {
+    const searchAgents = vi.fn().mockResolvedValue(
+      Array.from({ length: 50 }, (_, i) => ({ id: i + 1, name: `checkout ${i}` }))
+    );
+    const apiClient = { searchAgents } as unknown as SequentumApiClient;
+    const result = await toolDispatch.search_agents(
+      { query: "checkout" },
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+    );
+
+    expect(searchAgents).toHaveBeenCalledWith("checkout", 50);
+    const parsed = JSON.parse((result.content[0] as { text: string }).text);
+    expect(parsed.returned).toBe(50);
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.note).toContain("get_agent_search_count");
+  });
+
+  it("get_agent_search_count returns the server-provided total", async () => {
+    const getAgentSearchCount = vi.fn().mockResolvedValue({ totalCount: 214 });
+    const apiClient = { getAgentSearchCount } as unknown as SequentumApiClient;
+    const result = await toolDispatch.get_agent_search_count(
+      { query: "checkout" },
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+    );
+
+    expect(getAgentSearchCount).toHaveBeenCalledWith("checkout", undefined);
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({ totalCount: 214 });
   });
 
   it("get_agent_run_summary returns the server-provided totals", async () => {
@@ -860,7 +889,7 @@ describe("tool registration invariants", () => {
 // ==========================================
 
 describe("createMcpServer via SDK v2", () => {
-  it("advertises all 42 tools in declaration order, with annotations intact", async () => {
+  it("advertises all 43 tools in declaration order, with annotations intact", async () => {
     const apiClient = {} as unknown as SequentumApiClient;
     const server = createMcpServer(apiClient, "9.9.9");
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -869,7 +898,7 @@ describe("createMcpServer via SDK v2", () => {
 
     try {
       const result = await client.listTools();
-      expect(result.tools).toHaveLength(42);
+      expect(result.tools).toHaveLength(43);
       expect(result.tools.map((t) => t.name)).toEqual(tools.map((t) => t.name));
 
       // Annotations must survive registration — a hard directory review requirement.
@@ -899,7 +928,7 @@ describe("createMcpServer via SDK v2", () => {
 
     try {
       const result = await client.listTools();
-      expect(result.tools).toHaveLength(42);
+      expect(result.tools).toHaveLength(43);
       for (const listed of result.tools) {
         expect(listed.title, `${listed.name} is missing a top-level title`).toBeTruthy();
         expect(

@@ -1,6 +1,6 @@
 # Tool Reference
 
-The Sequentum MCP Server provides 40 tools across 9 categories for managing web scraping agents, runs, schedules, and more. These tools become available once you connect to the server at `https://mcp.sequentum.com/mcp` -- see the [OAuth setup](../README.md#getting-started).
+The Sequentum MCP Server provides 43 tools across 9 categories for managing web scraping agents, runs, schedules, and more. These tools become available once you connect to the server at `https://mcp.sequentum.com/mcp` -- see the [OAuth setup](../README.md#getting-started).
 
 > **Pagination:** Tools that return lists (`list_agents`, `get_agent_runs`, `get_credit_history`, `get_agents_usage`, `get_agent_runs_cost`) support pagination via `pageIndex` (1-based) and `recordsPerPage`. When the result is paginated, the response includes the total count so you know if more pages are available.
 
@@ -12,8 +12,11 @@ The Sequentum MCP Server provides 40 tools across 9 categories for managing web 
 | [`list_agents`](#list_agents) | List agents with IDs, names, status, and configuration |
 | [`get_agent`](#get_agent) | Get detailed info about a specific agent |
 | [`search_agents`](#search_agents) | Search agents by name or description |
+| [`get_agent_search_count`](#get_agent_search_count) | Get the exact number of agents matching a search term |
+| [`get_personal_agent_count`](#get_personal_agent_count) | Get the number of agents in the user's personal space |
 | **Run Management** | |
 | [`get_agent_runs`](#get_agent_runs) | Get execution history for an agent |
+| [`get_agent_run_summary`](#get_agent_run_summary) | Get exact run totals for an agent, with a per-status breakdown |
 | [`get_run_status`](#get_run_status) | Get the current status of a specific run |
 | [`start_agent`](#start_agent) | Start an agent execution (async or sync) |
 | [`stop_agent`](#stop_agent) | Stop a running agent |
@@ -132,11 +135,11 @@ Search for agents by name or description (case-insensitive partial match). Faste
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `query` | string | Yes | Search term to match against agent names and descriptions. |
-| `maxRecords` | number | No | Maximum results to return. Default: 50, Max: 1000. |
+| `maxRecords` | number | No | Maximum results to return. Default: 50, Max: 1000. A smaller value silently returns fewer matches, so never use it when totals matter — use `get_agent_search_count` instead. |
 
 #### Returns
 
-Array of matching agents with `id`, `name`, `status`, `configType`.
+An object with `agents` (matching agents with `id`, `name`, `status`, `configType`), plus `returned`, `limit` and `truncated`. At most 50 matches are returned unless you raise `maxRecords`; when `truncated` is `true`, more agents match than are listed. Never count `agents` to answer "how many agents match" — use [`get_agent_search_count`](#get_agent_search_count) for the exact number.
 
 #### Example Prompts
 
@@ -144,6 +147,57 @@ Array of matching agents with `id`, `name`, `status`, `configType`.
 Find the Amazon scraper
 Which agent handles product data?
 Search for pricing agents
+```
+
+> **See also:** [`get_agent_search_count`](#get_agent_search_count) if you only need how many agents match.
+
+---
+
+### get_agent_search_count
+
+Get the exact number of agents matching a search term, as a single total. Use this for any question about how many agents match a name or description, instead of calling `search_agents` and counting the results, which returns at most 50 matches by default.
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `query` | string | Yes | Search term to match against agent names and descriptions. Case-insensitive. |
+| `includeArchived` | boolean | No | Include archived agents in the count. Default: `false`. |
+
+#### Returns
+
+An object with `totalCount`, the number of matching agents. Matched the same way as `search_agents` — names and descriptions, case-insensitive — and never capped.
+
+#### Example Prompts
+
+```
+How many agents have checkout in the name?
+How many scrapers match "pricing"?
+```
+
+> **See also:** [`search_agents`](#search_agents) to list the matching agents themselves.
+
+---
+
+### get_personal_agent_count
+
+Get the number of agents in the user's personal space as a single total. The Control Center lists these under "Personal" — they belong to no space.
+
+#### Parameters
+
+None.
+
+#### Returns
+
+An object with `totalCount`, the number of personal agents. The total excludes archived agents and counts only agents.
+
+> **Note:** "Personal" is not a space and has no `spaceId`, so [`get_space_agent_count`](#get_space_agent_count) and [`search_space_by_name`](#search_space_by_name) cannot be used for it, and `list_agents` with `spaceId=0` returns 0.
+
+#### Example Prompts
+
+```
+How many agents do I have in Personal?
+What is my personal agent count?
 ```
 
 ---
@@ -163,7 +217,7 @@ Get execution history for an agent showing past runs with status, timing, and re
 
 #### Returns
 
-Array of runs with `id`, `status`, `startTime`, `endTime`, `recordsExtracted`, `recordsExported`, `errorMessage`.
+An object with `runs` (array of runs with `id`, `status`, `startTime`, `endTime`, `recordsExtracted`, `recordsExported`, `errorMessage`), plus `returned`, `limit` and `truncated`. Only the most recent runs are returned — 50 unless you raise `maxRecords`; when `truncated` is `true`, more runs exist than were returned. Never count `runs` to answer "how many runs", "how many failed" or "how many succeeded" — use [`get_agent_run_summary`](#get_agent_run_summary) instead.
 
 #### Example Prompts
 
@@ -173,7 +227,33 @@ Show run history for agent 456
 How many records were extracted by agent 789?
 ```
 
-> **See also:** [`get_run_status`](#get_run_status) when you only need one run's status, [`get_run_diagnostics`](#get_run_diagnostics) to investigate a failed run.
+> **See also:** [`get_agent_run_summary`](#get_agent_run_summary) for exact run totals, [`get_run_status`](#get_run_status) when you only need one run's status, [`get_run_diagnostics`](#get_run_diagnostics) to investigate a failed run.
+
+---
+
+### get_agent_run_summary
+
+Get exact run totals for an agent: the overall count plus a breakdown by run status. Use this for any question about how many times an agent ran, failed, succeeded or was stopped, instead of calling `get_agent_runs` and counting the results, which returns only the most recent 50 by default.
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `agentId` | number | Yes | The unique ID of the agent. Get this from `list_agents` or `search_agents`. |
+
+#### Returns
+
+An object with `totalCount`, and `statusCounts` — one entry per status with `status`, `statusName` and `count`. Counted across both current runs and run history, and never capped. Statuses with no runs are omitted. "Failure" and "Failed" are distinct statuses, as are "Completed" and "Success" — add the pairs together for a single failed or succeeded figure.
+
+#### Example Prompts
+
+```
+How many times did agent 123 run?
+How many runs failed for agent 456?
+Total, failed and successful runs for agent 789
+```
+
+> **See also:** [`get_agent_runs`](#get_agent_runs) to list the runs themselves.
 
 ---
 

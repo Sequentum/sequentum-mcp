@@ -176,16 +176,19 @@ How much did I spend on server time vs exports last week?
 
 ## Available Tools
 
-The Sequentum MCP Server provides 40 tools across 9 categories for interacting with the Sequentum platform. See the [Tool Reference](./docs/tool-reference.md) for detailed documentation.
+The Sequentum MCP Server provides 43 tools across 9 categories for interacting with the Sequentum platform. See the [Tool Reference](./docs/tool-reference.md) for detailed documentation.
 
 <!-- BEGIN AUTO GENERATED TOOLS -->
 
-- **Agent Management** (3 tools)
+- **Agent Management** (5 tools)
   - [`list_agents`](docs/tool-reference.md#list_agents)
   - [`get_agent`](docs/tool-reference.md#get_agent)
   - [`search_agents`](docs/tool-reference.md#search_agents)
-- **Run Management** (6 tools)
+  - [`get_agent_search_count`](docs/tool-reference.md#get_agent_search_count)
+  - [`get_personal_agent_count`](docs/tool-reference.md#get_personal_agent_count)
+- **Run Management** (7 tools)
   - [`get_agent_runs`](docs/tool-reference.md#get_agent_runs)
+  - [`get_agent_run_summary`](docs/tool-reference.md#get_agent_run_summary)
   - [`get_run_status`](docs/tool-reference.md#get_run_status)
   - [`start_agent`](docs/tool-reference.md#start_agent)
   - [`stop_agent`](docs/tool-reference.md#stop_agent)

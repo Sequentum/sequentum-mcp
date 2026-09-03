@@ -427,6 +427,24 @@ export class SequentumApiClient {
   }
 
   /**
+   * Get the number of agents matching a search term. Matched the same way as searchAgents,
+   * but never capped, so it is the only safe source for "how many agents match" questions.
+   * @param query - The search term to match against agent names and descriptions
+   * @param includeArchived - Include archived agents in the count
+   */
+  async getAgentSearchCount(
+    query: string,
+    includeArchived?: boolean
+  ): Promise<SpaceAgentCountApiModel> {
+    const params = new URLSearchParams();
+    params.append("query", query);
+    if (includeArchived) params.append("includeArchived", "true");
+    return this.request<SpaceAgentCountApiModel>(
+      `/api/v1/agent/search/count?${params.toString()}`
+    );
+  }
+
+  /**
    * Get the number of agents in the caller's personal space (agents with no space).
    * "Personal" is not a space and has no spaceId, so it cannot be counted through
    * getSpaceAgentCount.

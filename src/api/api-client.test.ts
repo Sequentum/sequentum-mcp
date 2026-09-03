@@ -1820,6 +1820,43 @@ describe("SequentumApiClient", () => {
     });
   });
 
+  describe("getAgentSearchCount", () => {
+    it("should fetch the exact number of matching agents", async () => {
+      const mockCount = { totalCount: 214 };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockCount,
+      } as Response);
+
+      const result = await client.getAgentSearchCount("checkout");
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent/search/count?query=checkout",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockCount);
+    });
+
+    it("should pass includeArchived when requested", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ totalCount: 260 }),
+      } as Response);
+
+      await client.getAgentSearchCount("checkout", true);
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent/search/count?query=checkout&includeArchived=true",
+        expect.any(Object)
+      );
+    });
+  });
+
   describe("getAgentRunSummary", () => {
     it("should fetch aggregate run counts for an agent", async () => {
       const mockSummary = {

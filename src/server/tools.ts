@@ -100,18 +100,45 @@ export const tools: Tool[] = [
       "Search for agents by name or description (case-insensitive partial match). " +
       "FASTER than list_agents when user mentions a specific agent name. " +
       "Answers: 'Find the Amazon scraper', 'Which agent handles product data?', 'Search for pricing agents'. " +
-      "Returns: Matching agents with id, name, status, configType. " +
+      "Returns: An object with agents (matching agents with id, name, status, configType), plus returned, limit and truncated. " +
+      "TRUNCATION: At most 50 matches are returned unless you raise maxRecords. When truncated is true, more agents match than are listed. " +
+      "NEVER count this array to answer 'how many agents match' — use get_agent_search_count for the exact number. " +
       "TIP: Prefer this over list_agents when user mentions an agent by name.",
     inputSchema: {
       type: "object" as const,
       properties: {
         query: { type: "string", description: "Search term to match against agent names and descriptions. Case-insensitive." },
-        maxRecords: { type: "number", description: "Maximum results to return. Default: 50, Max: 1000." },
+        maxRecords: { type: "number", description: "Maximum results to return. Default: 50, Max: 1000. A smaller value silently returns fewer matches, so never use it when totals matter — use get_agent_search_count instead." },
       },
       required: ["query"],
     },
     annotations: {
       title: "Search Agents",
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "get_agent_search_count",
+    description:
+      "Get the exact number of agents matching a search term, as a single total. " +
+      "USE THIS for any question about how many agents match a name or description — do NOT call " +
+      "search_agents and count the results, which returns at most 50 matches by default. " +
+      "Answers: 'How many agents have checkout in the name?', 'How many scrapers match X?'. " +
+      "Returns: An object with totalCount, the number of matching agents. " +
+      "Matched the same way as search_agents — names and descriptions, case-insensitive — and never capped, " +
+      "so this equals what search_agents would return if its limit were high enough.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        query: { type: "string", description: "Search term to match against agent names and descriptions. Case-insensitive. At least 2 characters." },
+        includeArchived: { type: "boolean", description: "Include archived agents in the count. Default: false." },
+      },
+      required: ["query"],
+    },
+    annotations: {
+      title: "Get Agent Search Count",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: false,
