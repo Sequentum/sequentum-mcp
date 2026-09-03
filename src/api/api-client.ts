@@ -22,6 +22,8 @@ import {
   AgentRunsApiResponse,
   SpaceApiModel,
   SpaceAgentApiModel,
+  SpaceAgentCountApiModel,
+  AgentRunSummaryApiModel,
   RunSpaceAgentsResultApiModel,
   RunsSummaryApiModel,
   RecordsSummaryApiModel,
@@ -424,6 +426,17 @@ export class SequentumApiClient {
     );
   }
 
+  /**
+   * Get the number of agents in the caller's personal space (agents with no space).
+   * "Personal" is not a space and has no spaceId, so it cannot be counted through
+   * getSpaceAgentCount.
+   */
+  async getPersonalAgentCount(): Promise<SpaceAgentCountApiModel> {
+    return this.request<SpaceAgentCountApiModel>(
+      `/api/v1/agent/personal/count`
+    );
+  }
+
   // ==========================================
   // Run Operations
   // ==========================================
@@ -440,6 +453,18 @@ export class SequentumApiClient {
     const query = maxRecords ? `?maxRecords=${maxRecords}` : "";
     return this.request<AgentRunApiModel[]>(
       `/api/v1/agent/${agentId}/runs${query}`
+    );
+  }
+
+  /**
+   * Get aggregate run counts for an agent: the total plus a per-status breakdown,
+   * across both current runs and run history. Unlike getAgentRuns this is never
+   * capped, so it is the only safe source for "how many runs" questions.
+   * @param agentId - The ID of the agent
+   */
+  async getAgentRunSummary(agentId: number): Promise<AgentRunSummaryApiModel> {
+    return this.request<AgentRunSummaryApiModel>(
+      `/api/v1/agent/${agentId}/runs/summary`
     );
   }
 
@@ -930,6 +955,16 @@ export class SequentumApiClient {
   async getSpaceAgents(spaceId: number): Promise<SpaceAgentApiModel[]> {
     return this.request<SpaceAgentApiModel[]>(
       `/api/v1/spaces/${spaceId}/agents`
+    );
+  }
+
+  /**
+   * Get the number of agents in a space
+   * @param spaceId - The ID of the space
+   */
+  async getSpaceAgentCount(spaceId: number): Promise<SpaceAgentCountApiModel> {
+    return this.request<SpaceAgentCountApiModel>(
+      `/api/v1/spaces/${spaceId}/agents/count`
     );
   }
 

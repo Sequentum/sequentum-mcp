@@ -77,6 +77,11 @@
   and configurable list-cache freshness via `LIST_CACHE_TTL_MS` — all three parsed
   strictly, failing fast at startup on a malformed value instead of silently truncating
   it.
+- **`get_space_agent_count` tool.** Returns the number of agents in a space as a single
+  `{ totalCount }` value, backed by a server-side `COUNT(*)`. Previously the only way to answer
+  "how many agents are in space X" was to call `get_space_agents` and count the returned array,
+  which produced wrong answers on large spaces. `get_space_agents`'s description now points
+  counting questions at the new tool. (SE4-3921)
 - `TRUST_PROXY` widened to accept a hop count or a comma-separated CIDR/IP allowlist,
   in addition to `true`/`false`.
 - A JSON-RPC error middleware on `/mcp` that returns a sanitized JSON-RPC error object

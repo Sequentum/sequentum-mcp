@@ -1,6 +1,6 @@
 # Tool Reference
 
-The Sequentum MCP Server provides 39 tools across 9 categories for managing web scraping agents, runs, schedules, and more. These tools become available once you connect to the server at `https://mcp.sequentum.com/mcp` -- see the [OAuth setup](../README.md#getting-started).
+The Sequentum MCP Server provides 40 tools across 9 categories for managing web scraping agents, runs, schedules, and more. These tools become available once you connect to the server at `https://mcp.sequentum.com/mcp` -- see the [OAuth setup](../README.md#getting-started).
 
 > **Pagination:** Tools that return lists (`list_agents`, `get_agent_runs`, `get_credit_history`, `get_agents_usage`, `get_agent_runs_cost`) support pagination via `pageIndex` (1-based) and `recordsPerPage`. When the result is paginated, the response includes the total count so you know if more pages are available.
 
@@ -45,6 +45,7 @@ The Sequentum MCP Server provides 39 tools across 9 categories for managing web 
 | [`list_spaces`](#list_spaces) | List all accessible spaces |
 | [`get_space`](#get_space) | Get details of a specific space |
 | [`get_space_agents`](#get_space_agents) | List agents in a space |
+| [`get_space_agent_count`](#get_space_agent_count) | Get the number of agents in a space |
 | [`search_space_by_name`](#search_space_by_name) | Find a space by name |
 | [`run_space_agents`](#run_space_agents) | Start all agents in a space (batch) |
 | **Analytics & Diagnostics** | |
@@ -971,7 +972,35 @@ Show agents in the Production folder
 List scrapers in the Bot Blocking space
 ```
 
-> **See also:** [`run_space_agents`](#run_space_agents) to start all agents in the space at once.
+> **See also:** [`get_space_agent_count`](#get_space_agent_count) if you only need how many agents there are, [`run_space_agents`](#run_space_agents) to start all agents in the space at once.
+
+---
+
+### get_space_agent_count
+
+Get the number of agents in a space as a single total. Use this for any question about how many
+agents a space contains, instead of listing the agents and counting them.
+
+#### Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `spaceId` | number | Yes | The unique ID of the space. Get this from `list_spaces` or `search_space_by_name`. |
+
+#### Returns
+
+An object with `totalCount`, the number of agents in the space. The total excludes archived
+agents and counts only agents, matching [`get_space_agents`](#get_space_agents).
+
+#### Example Prompts
+
+```
+How many agents are in space 123?
+What's the total agent count for the Production folder?
+Does the Bot Blocking space have more than 50 agents?
+```
+
+> **See also:** [`get_space_agents`](#get_space_agents) to list the agents themselves.
 
 ---
 
