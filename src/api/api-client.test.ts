@@ -1844,6 +1844,113 @@ describe("SequentumApiClient", () => {
     });
   });
 
+  describe("getSpaceAgentCount", () => {
+    it("should fetch the agent count for a space", async () => {
+      const mockCount = { totalCount: 73 };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockCount,
+      } as Response);
+
+      const result = await client.getSpaceAgentCount(5);
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/spaces/5/agents/count",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockCount);
+    });
+  });
+
+  describe("getAgentSearchCount", () => {
+    it("should fetch the exact number of matching agents", async () => {
+      const mockCount = { totalCount: 214 };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockCount,
+      } as Response);
+
+      const result = await client.getAgentSearchCount("checkout");
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent/search/count?query=checkout",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockCount);
+    });
+
+    it("should pass includeArchived when requested", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ totalCount: 260 }),
+      } as Response);
+
+      await client.getAgentSearchCount("checkout", true);
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent/search/count?query=checkout&includeArchived=true",
+        expect.any(Object)
+      );
+    });
+  });
+
+  describe("getAgentRunSummary", () => {
+    it("should fetch aggregate run counts for an agent", async () => {
+      const mockSummary = {
+        totalCount: 395,
+        statusCounts: [
+          { status: 9, statusName: "Completed", count: 272 },
+          { status: 7, statusName: "Failed", count: 72 },
+          { status: 8, statusName: "Stopped", count: 51 },
+        ],
+      };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockSummary,
+      } as Response);
+
+      const result = await client.getAgentRunSummary(289);
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent/289/runs/summary",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockSummary);
+    });
+  });
+
+  describe("getPersonalAgentCount", () => {
+    it("should fetch the agent count for the personal space", async () => {
+      const mockCount = { totalCount: 238 };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockCount,
+      } as Response);
+
+      const result = await client.getPersonalAgentCount();
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent/personal/count",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockCount);
+    });
+  });
+
   describe("searchSpaceByName", () => {
     it("should search for a space by name", async () => {
       const mockSpace = { id: 3, name: "Bot Blocking" };

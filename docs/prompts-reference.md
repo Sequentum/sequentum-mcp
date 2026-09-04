@@ -162,7 +162,7 @@ Get a comprehensive overview of all agents in a space including their statuses, 
 
 1. Uses `search_space_by_name` to find the space.
 2. Uses `get_space` to retrieve its details.
-3. Uses `get_space_agents` to list all agents in the space.
+3. Uses `get_space_agent_count` to get the total number of agents, and `get_space_agents` to list them.
 4. Notes each agent's current status and last activity.
 5. For agents with failed status, uses `get_latest_failure` to retrieve failure details.
 6. Provides a summary including: total agents, agents by status (running, completed, failed, never run), recent failures with causes, and overall space health.

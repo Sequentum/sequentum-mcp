@@ -44,6 +44,7 @@ docs/superpowers/
 
 # Local Claude Code instructions (not committed to public repo)
 /CLAUDE.local.md
+.claude/plans/
 
 # App-directory submission artifacts (not committed to public repo)
 docs/annotation-hint-justifications.md

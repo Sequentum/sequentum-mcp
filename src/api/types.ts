@@ -587,6 +587,37 @@ export interface SpaceAgentApiModel {
 }
 
 /**
+ * Agent count for a space, or for the personal space
+ */
+export interface SpaceAgentCountApiModel {
+  /** Number of agents matching the request */
+  totalCount: number;
+}
+
+/**
+ * Number of an agent's runs that ended in one particular status
+ */
+export interface AgentRunStatusCountApiModel {
+  /** The numeric RunStatus value */
+  status: number;
+  /** The RunStatus name, e.g. "Completed", "Failed", "Stopped" */
+  statusName: string;
+  /** Number of runs with this status */
+  count: number;
+}
+
+/**
+ * Aggregate run counts for an agent, across current runs and run history.
+ * Never capped, unlike the run list.
+ */
+export interface AgentRunSummaryApiModel {
+  /** Total number of runs for the agent */
+  totalCount: number;
+  /** Per-status breakdown; statuses with no runs are omitted */
+  statusCounts: AgentRunStatusCountApiModel[];
+}
+
+/**
  * Result of running all agents in a space
  */
 export interface RunSpaceAgentsResultApiModel {
