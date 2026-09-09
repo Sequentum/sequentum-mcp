@@ -10,7 +10,14 @@ import {
 import { tools } from "./tools.js";
 import { resources, resourceTemplates } from "./resources.js";
 import { getPromptMessages, prompts } from "./prompts.js";
-import { PRE_CALL_CHECK, PROMPT_HANDLING_POLICY, SUFFICIENCY_POLICY, SUFFICIENCY_REQUIREMENTS } from "./policies.js";
+import {
+  PRE_CALL_CHECK,
+  PROMPT_HANDLING_POLICY,
+  SERVER_CAPABILITY_SUMMARY,
+  SERVER_INSTRUCTIONS,
+  SUFFICIENCY_POLICY,
+  SUFFICIENCY_REQUIREMENTS,
+} from "./policies.js";
 import {
   ApiRequestError,
   AuthenticationError,
@@ -962,7 +969,22 @@ describe("createMcpServer via SDK v2", () => {
 // ==========================================
 
 describe("policy wiring", () => {
-  it("server instructions equal SUFFICIENCY_POLICY", async () => {
+  it("SERVER_INSTRUCTIONS is the capability summary, a blank line, then SUFFICIENCY_POLICY verbatim", () => {
+    expect(SERVER_INSTRUCTIONS).toBe(`${SERVER_CAPABILITY_SUMMARY}\n\n${SUFFICIENCY_POLICY}`);
+    expect(SERVER_INSTRUCTIONS.startsWith(SERVER_CAPABILITY_SUMMARY)).toBe(true);
+    expect(SERVER_INSTRUCTIONS).toContain(SUFFICIENCY_POLICY);
+  });
+
+  it("the capability summary names every domain the server covers and gives no behavioural direction", () => {
+    for (const domain of ["agents", "runs", "schedules", "spaces", "credits", "files", "Agent Builder"]) {
+      expect(SERVER_CAPABILITY_SUMMARY).toContain(domain);
+    }
+    // Connectors Directory review criterion: describe what the server does, do not tell
+    // the model how to behave. These phrases are the usual tells.
+    expect(SERVER_CAPABILITY_SUMMARY).not.toMatch(/\b(you must|you should|always|never|before calling)\b/i);
+  });
+
+  it("server instructions are SERVER_INSTRUCTIONS: summary first, sufficiency policy verbatim after", async () => {
     const mockApiClient = makeMinimalMockClient();
     const server = createMcpServer(mockApiClient, "test");
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
@@ -970,7 +992,10 @@ describe("policy wiring", () => {
     const connectedClient = new Client({ name: "policy-test-client", version: "1.0" });
     await connectedClient.connect(clientTransport);
     try {
-      expect(connectedClient.getInstructions()).toBe(SUFFICIENCY_POLICY);
+      const instructions = connectedClient.getInstructions();
+      expect(instructions).toBe(SERVER_INSTRUCTIONS);
+      expect(instructions?.startsWith(SERVER_CAPABILITY_SUMMARY)).toBe(true);
+      expect(instructions).toContain(SUFFICIENCY_POLICY);
     } finally {
       await connectedClient.close();
     }

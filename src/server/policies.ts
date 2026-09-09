@@ -31,7 +31,8 @@ export const SUFFICIENCY_REQUIREMENTS =
   "(3) any qualifiers that affect scope (section, filters, language, etc.)";
 
 /**
- * Server-level instruction injected via the MCP `instructions` field in handlers.ts.
+ * Server-level policy block that forms the second half of {@link SERVER_INSTRUCTIONS}
+ * (the MCP `instructions` field, wired in handlers.ts).
  * Governs when the model must ask for clarification before invoking any build/run tool.
  */
 export const SUFFICIENCY_POLICY =
@@ -43,6 +44,25 @@ export const SUFFICIENCY_POLICY =
   "This includes copying details from one site onto a different site, or reusing a prior request's data schema for a conceptually different request — even when prior inferences were accepted.\n\n" +
   "When the request is genuinely underspecified, you MUST ask one consolidated clarifying question covering all gaps before any tool call — ask everything you need in one round-trip, not sequentially. " +
   "When you would need to extrapolate by analogy, you MUST state your inference in one short line and ask the user to confirm before any tool call.";
+
+/**
+ * One-paragraph statement of what this server covers, for clients that defer MCP tools and
+ * discover them through tool search: the `instructions` field is what tells the model when
+ * this server is worth searching. Capability only, no behavioural direction (Connectors
+ * Directory review criterion: describe what the server does, do not tell the model how to
+ * behave). Keep the domain list in sync with the tool table when tools are added.
+ */
+export const SERVER_CAPABILITY_SUMMARY =
+  "Sequentum MCP server: manages Sequentum web-data extraction agents and their runs, run output files and run diagnostics, " +
+  "agent schedules, spaces (folders of agents), credits (balance, history and spending reports), " +
+  "and builds new agents from a natural-language prompt with Agent Builder.";
+
+/**
+ * The full `instructions` string delivered in `server/discover` (2026-07-28) and in the
+ * legacy `initialize` result: the capability summary first, so tool search finds the server,
+ * then the sufficiency policy as its own block. Wired in handlers.ts.
+ */
+export const SERVER_INSTRUCTIONS = `${SERVER_CAPABILITY_SUMMARY}\n\n${SUFFICIENCY_POLICY}`;
 
 /**
  * Argument-sufficiency requirement injected into every build/run tool description.

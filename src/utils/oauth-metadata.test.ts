@@ -18,6 +18,12 @@ describe("buildAuthChallenge", () => {
     expect(wwwAuthenticate).toContain('error="invalid_token"');
   });
 
+  it("carries no scope parameter and never mentions offline_access (MCP 2026-07-28 SHOULD NOT)", () => {
+    const { wwwAuthenticate } = buildAuthChallenge("https://mcp.sequentum.com");
+    expect(wwwAuthenticate).not.toMatch(/\bscope=/);
+    expect(wwwAuthenticate).not.toContain("offline_access");
+  });
+
   it("returns a JSON-RPC body with protectedResourceMetadata", () => {
     const { body } = buildAuthChallenge("https://mcp.sequentum.com");
     expect(body.error.code).toBe(-32001);
@@ -61,14 +67,12 @@ describe("SUPPORTED_SCOPES (fallback list)", () => {
     "billing:read",
   ];
 
-  it("is a superset of every scope the Control Center enforces", () => {
-    for (const scope of ENFORCED_API_SCOPES) {
-      expect(SUPPORTED_SCOPES).toContain(scope);
-    }
+  it("is exactly the six scopes the Control Center enforces", () => {
+    expect([...SUPPORTED_SCOPES].sort()).toEqual([...ENFORCED_API_SCOPES].sort());
   });
 
-  it("includes offline_access", () => {
-    expect(SUPPORTED_SCOPES).toContain("offline_access");
+  it("does not include offline_access (MCP 2026-07-28 authorization: SHOULD NOT advertise it)", () => {
+    expect(SUPPORTED_SCOPES).not.toContain("offline_access");
   });
 
   it("has no duplicate entries", () => {

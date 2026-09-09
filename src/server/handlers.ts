@@ -12,7 +12,7 @@ import {
   fromJsonSchema,
   type JsonSchemaType,
 } from "@modelcontextprotocol/server";
-import { SUFFICIENCY_POLICY } from "./policies.js";
+import { SERVER_INSTRUCTIONS } from "./policies.js";
 import { AGENT_BUILD_ERROR_MESSAGE, LIST_CACHE_TTL_MS } from "./constants.js";
 import { SequentumApiClient } from "../api/api-client.js";
 import { ApiRequestError, RateLimitError, AuthenticationError } from "../api/types.js";
@@ -193,12 +193,15 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
       // 2026-07-28 has no `initialize` handshake) and also in the legacy
       // `initialize` result the SDK still answers for 2025-era clients — so
       // this text reaches both eras, and clients on either MAY skip it, making
-      // it advisory, not guaranteed to be read. The same requirements are
-      // restated per-tool via PRE_CALL_CHECK on start_agent, run_space_agents,
-      // and start_agent_build, which travel in tools/list and cannot be skipped.
-      // Canonical text + JSDoc live in policies.ts; keep these in sync if the
-      // policy's name or scope changes.
-      instructions: SUFFICIENCY_POLICY,
+      // it advisory, not guaranteed to be read. It opens with a capability
+      // summary so clients that defer tools and use tool search know when this
+      // server is worth searching (SE4-3960), then restates the sufficiency
+      // policy. The same requirements are restated per-tool via PRE_CALL_CHECK
+      // on start_agent, run_space_agents, and start_agent_build, which travel
+      // in tools/list and cannot be skipped. Canonical text + JSDoc live in
+      // policies.ts (SERVER_INSTRUCTIONS); keep these in sync if the policy's
+      // name or scope changes.
+      instructions: SERVER_INSTRUCTIONS,
       // Cache hints for the 2026-07-28 cacheable result types (`ttlMs`/`cacheScope`).
       // List-shaped results (and server/discover) are safe to cache publicly: they
       // carry no per-caller data and are only invalidated by a deploy.

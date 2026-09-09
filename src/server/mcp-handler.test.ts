@@ -18,7 +18,7 @@ vi.mock("../api/api-client.js", () => ({
 }));
 
 import { SequentumApiClient } from "../api/api-client.js";
-import { createSequentumMcpHandler } from "./mcp-handler.js";
+import { createSequentumMcpHandler, resolveTraceContext, traceContextFromMeta } from "./mcp-handler.js";
 
 const ENVELOPE = {
   "io.modelcontextprotocol/protocolVersion": "2026-07-28",
@@ -435,6 +435,116 @@ describe("era logging", () => {
     await handler.close();
   });
 
+  it("logs a traceparent carried in params._meta when no header is present (SEP-414)", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const traceparent = "00-11111111111111111111111111111111-2222222222222222-01";
+    await handler.fetch(
+      new Request("http://localhost/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "Mcp-Method": "tools/list",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: { _meta: { ...ENVELOPE, traceparent } },
+        }),
+      })
+    );
+    const logged = spy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain(`traceparent=${JSON.stringify(traceparent)}`);
+    spy.mockRestore();
+    await handler.close();
+  });
+
+  it("prefers the params._meta traceparent over the header when both are present", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const fromMeta = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01";
+    const fromHeader = "00-cccccccccccccccccccccccccccccccc-dddddddddddddddd-01";
+    await handler.fetch(
+      new Request("http://localhost/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "Mcp-Method": "tools/list",
+          traceparent: fromHeader,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: { _meta: { ...ENVELOPE, traceparent: fromMeta } },
+        }),
+      })
+    );
+    const logged = spy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain(`traceparent=${JSON.stringify(fromMeta)}`);
+    expect(logged).not.toContain(fromHeader);
+    spy.mockRestore();
+    await handler.close();
+  });
+
+  it("logs baggage from params._meta as a third optional field after tracestate", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    await handler.fetch(
+      new Request("http://localhost/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "Mcp-Method": "tools/list",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: { _meta: { ...ENVELOPE, tracestate: "congo=1", baggage: "tenant=acme" } },
+        }),
+      })
+    );
+    const logged = spy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toMatch(/tracestate="congo=1" baggage="tenant=acme"/);
+    spy.mockRestore();
+    await handler.close();
+  });
+
+  it("still returns the SDK parse error for a malformed JSON body", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const res = await handler.fetch(
+      new Request("http://localhost/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: "{ this is not json",
+      })
+    );
+    expect(res.status).toBe(400);
+    const body = JSON.parse(await res.text());
+    expect(body.error.code).toBe(-32700);
+    spy.mockRestore();
+    await handler.close();
+  });
+
+  it("modern-era requests still work end to end when the body is pre-parsed by the wrapper", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const body = await call(handler, "tools/list");
+    expect(Array.isArray(body.result.tools)).toBe(true);
+    expect(spy.mock.calls.map((c) => String(c[0])).join("\n")).toContain("era=modern");
+    spy.mockRestore();
+    await handler.close();
+  });
+
   // Security regression guard: an earlier task established that this server must
   // never leak credentials into logs. Confirm the era line logs auth presence,
   // never the Authorization header's value.
@@ -559,5 +669,64 @@ describe("era logging", () => {
     expect(logged).toContain(`client=${JSON.stringify("A".repeat(200))}`);
     spy.mockRestore();
     await handler.close();
+  });
+});
+
+describe("traceContextFromMeta", () => {
+  const TP = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+
+  it("reads traceparent, tracestate and baggage from params._meta", () => {
+    const body = {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: { _meta: { ...ENVELOPE, traceparent: TP, tracestate: "congo=t61rcWkgMzE", baggage: "userId=alice" } },
+    };
+    expect(traceContextFromMeta(body)).toEqual({
+      traceparent: TP,
+      tracestate: "congo=t61rcWkgMzE",
+      baggage: "userId=alice",
+    });
+  });
+
+  it("omits keys that are absent, empty, or not strings", () => {
+    const body = { params: { _meta: { traceparent: "", tracestate: 42, baggage: null } } };
+    expect(traceContextFromMeta(body)).toEqual({});
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["null", null],
+    ["a string", "not json"],
+    ["an array (JSON-RPC batch)", [{ params: { _meta: { traceparent: TP } } }]],
+    ["no params", { jsonrpc: "2.0", id: 1, method: "ping" }],
+    ["params without _meta", { params: { name: "list_agents" } }],
+    ["_meta not an object", { params: { _meta: "x" } }],
+  ])("returns {} for %s", (_label, body) => {
+    expect(traceContextFromMeta(body)).toEqual({});
+  });
+});
+
+describe("resolveTraceContext", () => {
+  const META_TP = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01";
+  const HDR_TP = "00-cccccccccccccccccccccccccccccccc-dddddddddddddddd-01";
+
+  it("prefers _meta over the header for the same key", () => {
+    const headers = new Headers({ traceparent: HDR_TP });
+    expect(resolveTraceContext({ traceparent: META_TP }, headers)).toEqual({ traceparent: META_TP });
+  });
+
+  it("falls back to the header when _meta lacks the key", () => {
+    const headers = new Headers({ traceparent: HDR_TP, tracestate: "rojo=1" });
+    expect(resolveTraceContext({ baggage: "k=v" }, headers)).toEqual({
+      traceparent: HDR_TP,
+      tracestate: "rojo=1",
+      baggage: "k=v",
+    });
+  });
+
+  it("returns {} when neither source has any key", () => {
+    expect(resolveTraceContext({}, new Headers())).toEqual({});
+    expect(resolveTraceContext({}, undefined)).toEqual({});
   });
 });

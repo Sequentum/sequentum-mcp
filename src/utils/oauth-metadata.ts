@@ -26,10 +26,14 @@ export const API_SCOPES = [
 ] as const;
 
 /**
- * The authorization server's own refresh-token grant scope. Not an API scope -- it grants no
- * access to any resource -- so it lives outside {@link API_SCOPES}, but MCP clients must
- * request it to be issued a refresh token. `resource-scopes.ts` appends it to whatever list
- * the Control Center returns, which is why it is exported rather than written out twice.
+ * The authorization server's refresh-token grant scope. It is a *client* concern, not a
+ * resource requirement: MCP 2026-07-28 (Authorization, "Refresh Tokens") says an MCP server
+ * SHOULD NOT list it in `scopes_supported` or in the `WWW-Authenticate` scope parameter.
+ * Clients that want a refresh token request it themselves when the authorization server's
+ * RFC 8414 metadata advertises it, which the Control Center's does.
+ *
+ * Exported so `resource-scopes.ts` can strip it from whatever the Control Center's own
+ * resource document returns, and so tests name the scope once.
  */
 export const OFFLINE_ACCESS_SCOPE = "offline_access";
 
@@ -38,12 +42,13 @@ export const OFFLINE_ACCESS_SCOPE = "offline_access";
  * fetched the Control Center's own `/api/oauth/resource-metadata` document (SE4-3929); a
  * later failed refresh keeps the last list fetched rather than reverting to this one.
  *
- * Derived from {@link API_SCOPES} so the two cannot disagree, but note what that does and
- * does not buy: it guarantees the fallback covers every scope listed *here*, not every scope
- * the Control Center enforces. `API_SCOPES` is still a hand-maintained mirror and will lag a
- * scope newly added upstream -- closing that gap is the live fetch's job, not this list's.
+ * Equal to {@link API_SCOPES} by construction: the resource document describes access to the
+ * resource, and `offline_access` is not that (see {@link OFFLINE_ACCESS_SCOPE}). Note what
+ * this does and does not buy: it guarantees the fallback covers every scope listed *here*,
+ * not every scope the Control Center enforces. `API_SCOPES` is still a hand-maintained
+ * mirror and will lag a scope newly added upstream; closing that gap is the live fetch's job.
  */
-export const SUPPORTED_SCOPES = [...API_SCOPES, OFFLINE_ACCESS_SCOPE] as const;
+export const SUPPORTED_SCOPES: readonly string[] = API_SCOPES;
 
 /**
  * RFC 9728 §5.1 — WWW-Authenticate challenge for unauthenticated MCP requests.
