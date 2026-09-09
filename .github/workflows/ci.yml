@@ -49,10 +49,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The conformance CLI (0.2.0-alpha.11) imports fs.globSync, which Node
+      # added in 22. The server itself still supports Node 20; only this test
+      # tool needs 22 or later.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       - name: Install dependencies
