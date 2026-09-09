@@ -264,6 +264,26 @@ describe("tool annotations", () => {
     }
   });
 
+  it("every tool has idempotentHint defined (SE4-3959)", () => {
+    for (const tool of tools) {
+      expect(
+        typeof tool.annotations?.idempotentHint,
+        `Tool "${tool.name}" is missing annotations.idempotentHint`
+      ).toBe("boolean");
+    }
+  });
+
+  it("every read-only tool has idempotentHint: true", () => {
+    const readOnlyTools = tools.filter((t) => t.annotations?.readOnlyHint === true);
+    expect(readOnlyTools.length).toBe(26);
+    for (const tool of readOnlyTools) {
+      expect(
+        tool.annotations?.idempotentHint,
+        `Read-only tool "${tool.name}" should be idempotentHint: true`
+      ).toBe(true);
+    }
+  });
+
   it("every read-only tool has destructiveHint: false and openWorldHint: false", () => {
     const readOnlyTools = tools.filter((t) => t.annotations?.readOnlyHint === true);
     for (const tool of readOnlyTools) {
@@ -324,6 +344,28 @@ describe("tool annotations", () => {
     stop_agent_build:       false,
   };
 
+  // idempotentHint: true  → calling again with the same arguments reaches the same end
+  //                         state, so a client may retry a timed-out call without asking
+  // idempotentHint: false → a repeat call has a different effect (creates another run,
+  //                         schedule, build or version; or escalates, as kill_agent does)
+  const expectedIdempotentHint: Record<string, boolean> = {
+    // Converge on one end state.
+    stop_agent:             true,  // second stop on a stopping/stopped run is a no-op
+    delete_run:             true,  // second delete finds nothing
+    delete_agent_schedule:  true,  // second delete finds nothing
+    update_agent_schedule:  true,  // same fields applied twice leave the same state
+    enable_agent_schedule:  true,  // enabling an enabled schedule changes nothing
+    disable_agent_schedule: true,  // disabling a disabled schedule changes nothing
+    stop_agent_build:       true,  // description: no effect once the session is terminal
+    // Each call creates something new, or escalates.
+    start_agent:            false, // creates a new run per call
+    kill_agent:             false, // description: 1st call graceful stop, 2nd forces termination
+    restore_agent_version:  false, // each restore creates a new version record
+    create_agent_schedule:  false, // creates a new schedule per call
+    run_space_agents:       false, // starts a new batch of runs per call
+    start_agent_build:      false, // starts a new build session per call
+  };
+
   function assertPerToolAnnotation(
     annotationName: string,
     expected: Record<string, boolean>,
@@ -371,6 +413,14 @@ describe("tool annotations", () => {
       "DestructiveHint",
       expectedDestructiveHint,
       (t) => t.annotations?.destructiveHint,
+    );
+  });
+
+  it("every write tool has the correct idempotentHint value", () => {
+    assertPerToolAnnotation(
+      "IdempotentHint",
+      expectedIdempotentHint,
+      (t) => t.annotations?.idempotentHint,
     );
   });
 });
