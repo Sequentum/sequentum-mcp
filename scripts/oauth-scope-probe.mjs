@@ -864,9 +864,13 @@ async function check3922(oauth, env, listener, report) {
   // --- Concurrent redemption: fire two refreshes of the SAME token at once. The rotation lock
   // (SETNX on the token's hash) must let exactly one through; the loser gets the generic body,
   // not a distinct error, so it cannot be told apart from an unknown token.
+  // resource must be repeated on every refresh here (RFC 8707): the grant was issued with one
+  // (grantSe3922 -> oauth.authorizeUrl always sets it), and OAuthController's resource check --
+  // unrelated to SE4-3922, pre-existing -- rejects a refresh that omits it with invalid_target
+  // before any of the checks these tests are actually pinning ever run.
   const [ra, rb] = await Promise.all([
-    rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r0, client_id: clientId }),
-    rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r0, client_id: clientId }),
+    rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r0, client_id: clientId, resource: env.mcpOrigin }),
+    rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r0, client_id: clientId, resource: env.mcpOrigin }),
   ]);
   const winners = [ra, rb].filter((r) => r.status === 200).length;
   report.add(
@@ -888,15 +892,15 @@ async function check3922(oauth, env, listener, report) {
 
   // --- client_id binding. Both failures here are refuse-only (checked ahead of every
   // side-effecting branch in the handler), so r1 is still live after either one.
-  let r = await rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r1 }); // client_id omitted
+  let r = await rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r1, resource: env.mcpOrigin }); // client_id omitted
   let j = judgeTokenError(r, 400, "invalid_request", "client_id is required");
   report.add(row("3922", "refresh, no client_id", "-", "400 invalid_request", j.observed, j.ok));
 
-  r = await rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r1, client_id: `${clientId}-wrong` });
+  r = await rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r1, client_id: `${clientId}-wrong`, resource: env.mcpOrigin });
   j = judgeTokenError(r, 400, "invalid_grant", GENERIC_INVALID_GRANT);
   report.add(row("3922", "refresh, wrong client_id", "-", "400 invalid_grant (generic)", j.observed, j.ok, "same body as an unknown token, by design -- see the ticket's decision on this"));
 
-  r = await rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r1, client_id: clientId });
+  r = await rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r1, client_id: clientId, resource: env.mcpOrigin });
   const r2 = r.status === 200 ? (tryJson(r.text)?.refresh_token ?? null) : null;
   report.add(row("3922", "refresh, correct client_id", "-", "200 + rotated token", r.status === 200 ? `HTTP 200${r2 ? "" : " (no rotated token in body)"}` : `HTTP ${r.status} ${short(r.text, 60)}`, r.status === 200 && Boolean(r2)));
   if (!r2) {
@@ -909,11 +913,11 @@ async function check3922(oauth, env, listener, report) {
   // is an ordinary "unknown token" miss, not a distinctly-worded "revoked grant" response --
   // RevokeGrantAsync deletes the live token outright rather than tagging it. That asymmetry is
   // deliberate; see OAuthController.cs's HandleRefreshTokenGrant comments.
-  r = await rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r1, client_id: clientId });
+  r = await rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r1, client_id: clientId, resource: env.mcpOrigin });
   j = judgeTokenError(r, 400, "invalid_grant", "Refresh token has already been used; re-authorize");
   report.add(row("3922", "reuse: replay superseded token", "-", "400 already used", j.observed, j.ok));
 
-  r = await rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r2, client_id: clientId });
+  r = await rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r2, client_id: clientId, resource: env.mcpOrigin });
   j = judgeTokenError(r, 400, "invalid_grant", GENERIC_INVALID_GRANT);
   report.add(row("3922", "reuse: next token after grant revoked", "-", "400 invalid_grant (generic)", j.observed, j.ok, "the revoked grant's live token was deleted outright, so this is an ordinary miss, not distinct 'revoked' wording"));
 }
