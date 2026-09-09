@@ -88,10 +88,14 @@ export function createResourceScopesSource(
       const upstream = (body as { scopes_supported?: unknown })?.scopes_supported;
       if (!isNonEmptyStringArray(upstream)) return;
 
-      // The Control Center's resource document deliberately excludes offline_access (it
-      // describes access to the resource, not the authorization server's own grants); our
-      // clients need it to receive refresh tokens, so it is always appended, de-duplicated.
-      scopes = [...new Set([...upstream, OFFLINE_ACCESS_SCOPE])];
+      // MCP 2026-07-28 (Authorization, "Refresh Tokens"): an MCP server SHOULD NOT list
+      // offline_access in scopes_supported. It is the authorization server's grant, not a
+      // resource requirement, and clients request it themselves when the AS metadata
+      // advertises it. The Control Center's resource document already omits it; strip it
+      // anyway so this document can never re-acquire it through an upstream change.
+      const filtered = [...new Set(upstream.filter((scope) => scope !== OFFLINE_ACCESS_SCOPE))];
+      if (filtered.length === 0) return; // nothing usable: treat like a malformed document
+      scopes = filtered;
       fetchedAt = now();
     } catch {
       // Swallowed: a failed fetch leaves the previous (possibly still-fallback) list in place.
