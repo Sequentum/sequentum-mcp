@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // oauth-scope-probe -- live probe of OAuth scope enforcement on the Sequentum external V1 API
-// (SE4-3895) and of revoke-on-refresh (SE4-3896), run against a deployed environment.
+// (SE4-3895), of revoke-on-refresh (SE4-3896), and of refresh-token hardening -- client_id
+// binding, reuse detection, concurrent-redemption locking (SE4-3922) -- run against a deployed
+// environment.
 //
 // It performs the same authorization-code flow an MCP client performs (Dynamic Client
 // Registration, browser consent with PKCE, loopback callback, token exchange), then exercises
@@ -791,9 +793,135 @@ async function check3896(oauth, token, report, admin) {
   report.add(row("3896", "refresh after revoke", "-", "400 invalid_grant", `HTTP ${r2.status} ${err ?? ""}`.trim(), ok2, ok2 ? "" : short(r2.text, 80)));
 }
 
+// --------------------------------------------------------------------------------------
+// SE4-3922: refresh-token hardening -- absolute grant lifetime, mandatory client_id binding,
+// reuse detection, concurrent-redemption locking. Every check here is HTTP-level (status code +
+// exact error body); no CloudWatch dependency, unlike the scope checks above. All exact wording
+// is pinned against SeControlCenter/OAuth/OAuthController.cs's HandleRefreshTokenGrant.
+//
+// Absolute lifetime (90 days) is NOT exercised here -- unreachable in a live QA run without
+// changing the server's clock. It is covered by SeControlCenter.Tests.OAuth.TestRefreshTokenStore
+// and TestOAuthControllerRefreshTokenLifecycle only; see docs/oauth-scope-probe.md.
+// --------------------------------------------------------------------------------------
+
+const GENERIC_INVALID_GRANT = "Refresh token is invalid or expired"; // OAuthController.GenericInvalidGrantBody
+
+// Bypasses OAuthClient.refresh() so client_id can be omitted or forged.
+function rawRefreshRequest(env, form) {
+  return fetchTimed(`${env.baseUrl}/api/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body: new URLSearchParams(form).toString(),
+  });
+}
+
+function judgeTokenError(r, expectedStatus, expectedError, expectedDescription) {
+  const body = tryJson(r.text);
+  const ok = r.status === expectedStatus && body?.error === expectedError && body?.error_description === expectedDescription;
+  const observed = `HTTP ${r.status} ${JSON.stringify(body ?? short(r.text, 80))}`;
+  return { ok, observed };
+}
+
+// A dedicated, disposable grant for the checks below: reuse detection ends by revoking the
+// whole grant, so this must not be the same chain SE4-3896 needs afterward. Uses the client_id
+// already registered for this run -- only one more consent click, no new DCR client.
+async function grantSe3922(oauth, listener, report) {
+  const { verifier, challenge } = pkcePair();
+  const state = b64url(randomBytes(24));
+  const url = oauth.authorizeUrl(["offline_access"], state, challenge);
+  log("--- SE4-3922: requesting a dedicated offline_access grant for refresh-token hardening checks");
+  log(`  consent URL (paste it into the logged-in browser if the tab does not load): ${url}`);
+  if (!openBrowser(url)) log("Could not open a browser automatically; use the URL above.");
+  const cb = await listener.waitFor(state, CONSENT_TIMEOUT_MS);
+  if (!cb) {
+    report.add(row("3922", "consent", "-", "callback", "timeout", false, "no callback within timeout"));
+    return null;
+  }
+  if (cb.error) {
+    report.add(row("3922", "consent", "-", "code", cb.error, false, cb.error_description ?? ""));
+    return null;
+  }
+  try {
+    const token = await oauth.exchange(cb.code, verifier);
+    report.add(row("3922", "token exchange", "-", "200", `scope='${token.scope}'`, true, token.refreshToken ? "refresh_token issued" : "no refresh_token"));
+    if (!token.refreshToken) {
+      report.add(row("3922", "grant setup", "-", "refresh_token issued", "none issued", false, "requested offline_access but no refresh_token was returned"));
+      return null;
+    }
+    return token;
+  } catch (e) {
+    report.add(row("3922", "token exchange", "-", "200", "error", false, String(e.message ?? e)));
+    return null;
+  }
+}
+
+async function check3922(oauth, env, listener, report) {
+  const token = await grantSe3922(oauth, listener, report);
+  if (!token) return;
+  const clientId = oauth.clientId;
+  const r0 = token.refreshToken;
+
+  // --- Concurrent redemption: fire two refreshes of the SAME token at once. The rotation lock
+  // (SETNX on the token's hash) must let exactly one through; the loser gets the generic body,
+  // not a distinct error, so it cannot be told apart from an unknown token.
+  const [ra, rb] = await Promise.all([
+    rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r0, client_id: clientId }),
+    rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r0, client_id: clientId }),
+  ]);
+  const winners = [ra, rb].filter((r) => r.status === 200).length;
+  report.add(
+    row(
+      "3922",
+      "concurrent redemption",
+      "-",
+      "exactly one 200",
+      `${winners} of 2 succeeded (HTTP ${ra.status}/${rb.status})`,
+      winners === 1,
+      winners === 1 ? "" : `bodies: ${short(ra.text, 60)} | ${short(rb.text, 60)}`,
+    ),
+  );
+  const r1 = winners === 1 ? (tryJson((ra.status === 200 ? ra : rb).text)?.refresh_token ?? null) : null;
+  if (!r1) {
+    report.add(row("3922", "client_id / reuse checks", "-", "-", "skipped", true, "no live token survived the concurrency check to continue with"));
+    return;
+  }
+
+  // --- client_id binding. Both failures here are refuse-only (checked ahead of every
+  // side-effecting branch in the handler), so r1 is still live after either one.
+  let r = await rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r1 }); // client_id omitted
+  let j = judgeTokenError(r, 400, "invalid_request", "client_id is required");
+  report.add(row("3922", "refresh, no client_id", "-", "400 invalid_request", j.observed, j.ok));
+
+  r = await rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r1, client_id: `${clientId}-wrong` });
+  j = judgeTokenError(r, 400, "invalid_grant", GENERIC_INVALID_GRANT);
+  report.add(row("3922", "refresh, wrong client_id", "-", "400 invalid_grant (generic)", j.observed, j.ok, "same body as an unknown token, by design -- see the ticket's decision on this"));
+
+  r = await rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r1, client_id: clientId });
+  const r2 = r.status === 200 ? (tryJson(r.text)?.refresh_token ?? null) : null;
+  report.add(row("3922", "refresh, correct client_id", "-", "200 + rotated token", r.status === 200 ? `HTTP 200${r2 ? "" : " (no rotated token in body)"}` : `HTTP ${r.status} ${short(r.text, 60)}`, r.status === 200 && Boolean(r2)));
+  if (!r2) {
+    report.add(row("3922", "reuse detection", "-", "-", "skipped", true, "no live token to continue with"));
+    return;
+  }
+
+  // --- Reuse detection: replay the token just superseded above (r1), then the token that was
+  // live at that moment (r2). Reuse revokes the WHOLE grant, so r2's own presentation afterward
+  // is an ordinary "unknown token" miss, not a distinctly-worded "revoked grant" response --
+  // RevokeGrantAsync deletes the live token outright rather than tagging it. That asymmetry is
+  // deliberate; see OAuthController.cs's HandleRefreshTokenGrant comments.
+  r = await rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r1, client_id: clientId });
+  j = judgeTokenError(r, 400, "invalid_grant", "Refresh token has already been used; re-authorize");
+  report.add(row("3922", "reuse: replay superseded token", "-", "400 already used", j.observed, j.ok));
+
+  r = await rawRefreshRequest(env, { grant_type: "refresh_token", refresh_token: r2, client_id: clientId });
+  j = judgeTokenError(r, 400, "invalid_grant", GENERIC_INVALID_GRANT);
+  report.add(row("3922", "reuse: next token after grant revoked", "-", "400 invalid_grant (generic)", j.observed, j.ok, "the revoked grant's live token was deleted outright, so this is an ordinary miss, not distinct 'revoked' wording"));
+}
+
 const USAGE = `Usage: node scripts/oauth-scope-probe.mjs --env qa --mode log-only|enforce [options]
 
-Live probe of OAuth scope enforcement (SE4-3895) and revoke-on-refresh (SE4-3896).
+Live probe of OAuth scope enforcement (SE4-3895), revoke-on-refresh (SE4-3896), and
+refresh-token hardening -- client_id binding, reuse detection, concurrent redemption (SE4-3922).
 
   --env <name>           target environment (only qa is configured)          [required]
   --mode <mode>          log-only | enforce: what the server should do on a  [required]
@@ -806,6 +934,8 @@ Live probe of OAuth scope enforcement (SE4-3895) and revoke-on-refresh (SE4-3896
   --space-id <n>         space for the spaces:write probe when it cannot be discovered
   --skip-mcp             do not call the MCP server
   --skip-3896            do not run the revoke-on-refresh check
+  --skip-3922            do not run the refresh-token hardening checks (client_id binding,
+                         reuse detection, concurrent redemption) -- one extra consent click
   --skip-cloudwatch      do not read CloudWatch (no aws CLI needed)
   --keep-client          leave the DCR client Active at the end for inspection
   --no-login-prompt      do not open the login page and wait before the first consent
@@ -829,6 +959,7 @@ function parseCli(argv) {
         "space-id": { type: "string" },
         "skip-mcp": { type: "boolean", default: false },
         "skip-3896": { type: "boolean", default: false },
+        "skip-3922": { type: "boolean", default: false },
         "skip-cloudwatch": { type: "boolean", default: false },
         "keep-client": { type: "boolean", default: false },
         "no-login-prompt": { type: "boolean", default: false },
@@ -866,6 +997,7 @@ function parseCli(argv) {
     spaceId: int("space-id"),
     skipMcp: v["skip-mcp"],
     skip3896: v["skip-3896"],
+    skip3922: v["skip-3922"],
     skipCloudwatch: v["skip-cloudwatch"],
     keepClient: v["keep-client"],
     noLoginPrompt: v["no-login-prompt"],
@@ -951,6 +1083,11 @@ async function main() {
       const t = await runProfile(profile, opts, env, oauth, listener, cw, disc, report);
       if (t && profile === "all") allToken = t;
     }
+    // Runs before SE4-3896: that check ends by revoking the CLIENT (terminal), and this one
+    // needs the client still Active to mint its own dedicated grant. It does not touch allToken
+    // or the client's status, so SE4-3896 below is unaffected either way.
+    if (!opts.skip3922) await check3922(oauth, env, listener, report);
+
     if (!opts.skip3896) {
       if (allToken) await check3896(oauth, allToken, report, admin);
       else report.add(row("3896", "refresh/revoke", "-", "-", "skipped", true, "needs the 'all' profile token"));
@@ -1001,4 +1138,4 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 }
 
 // Exported for tests/oauth-scope-probe.test.ts: pure functions, no I/O, no process access.
-export { judgeMcp, judgeV1, expectedLogLine };
+export { judgeMcp, judgeV1, expectedLogLine, judgeTokenError, GENERIC_INVALID_GRANT };
