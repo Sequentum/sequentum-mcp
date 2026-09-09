@@ -100,6 +100,8 @@ describe("POST /mcp through the real Express app", () => {
     expect(res.status).toBe(200);
     const body = JSON.parse((await res.text()).replace(/^event: message\ndata: /, ""));
     expect(body.result.protocolVersion).toBe("2025-06-18");
+    expect(body.result.instructions).toMatch(/^Sequentum MCP server: /);
+    expect(body.result.instructions).toContain("Agent Builder");
     expect(body.result.instructions).toContain("SUFFICIENCY POLICY");
   });
 
