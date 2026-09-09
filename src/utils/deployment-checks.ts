@@ -40,15 +40,17 @@ export interface CheckResult {
 
 /**
  * Minimum scopes a deployment must advertise; the live list is the Control Center's
- * plus offline_access (see resource-scopes.ts).
+ * with offline_access filtered out (see resource-scopes.ts).
  */
-export const EXPECTED_SCOPES = [
-  "agents:read",
-  "runs:read",
-  "spaces:read",
-  "agents:write",
-  "offline_access",
-] as const;
+export const EXPECTED_SCOPES = ["agents:read", "runs:read", "spaces:read", "agents:write"] as const;
+
+/**
+ * Scopes a deployment must NOT advertise. MCP 2026-07-28 "Refresh Tokens" says a
+ * resource server SHOULD NOT list offline_access: clients obtain refresh tokens
+ * without requesting it, so advertising it here only invites clients to ask for
+ * an OpenID Connect scope the resource does not enforce.
+ */
+export const FORBIDDEN_SCOPES = ["offline_access"] as const;
 
 function parseJson(body: string): Record<string, unknown> | null {
   try {
@@ -109,6 +111,7 @@ export function checkDeployment(
       ? (body.scopes_supported as unknown[])
       : [];
     const missingScopes = EXPECTED_SCOPES.filter((s) => !scopes.includes(s));
+    const forbiddenScopes = FORBIDDEN_SCOPES.filter((s) => scopes.includes(s));
     const problems: string[] = [];
 
     if (probes.protectedResource.status !== 200) {
@@ -123,13 +126,16 @@ export function checkDeployment(
     if (missingScopes.length > 0) {
       problems.push(`missing scopes: ${missingScopes.join(", ")}`);
     }
+    if (forbiddenScopes.length > 0) {
+      problems.push(`advertises forbidden scopes: ${forbiddenScopes.join(", ")}`);
+    }
 
     results.push({
       name: "protected-resource",
       ok: problems.length === 0,
       detail:
         problems.length === 0
-          ? `authorization_servers=${servers.join(", ")}, all ${EXPECTED_SCOPES.length} scopes present`
+          ? `authorization_servers=${servers.join(", ")}, all ${EXPECTED_SCOPES.length} scopes present, ${FORBIDDEN_SCOPES.join(", ")} absent`
           : problems.join("; "),
     });
   }

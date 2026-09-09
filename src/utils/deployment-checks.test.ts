@@ -112,6 +112,23 @@ describe("checkDeployment (protected resource metadata)", () => {
     expect(byName(checkDeployment(BASE, probes), "protected-resource").ok).toBe(false);
   });
 
+  it("fails when offline_access is advertised", () => {
+    // MCP 2026-07-28 "Refresh Tokens": a resource server SHOULD NOT advertise
+    // offline_access; clients obtain refresh tokens without requesting it.
+    const probes = goodProbes();
+    probes.protectedResource = res({
+      body: JSON.stringify({
+        resource: BASE,
+        authorization_servers: ["https://dashboard-qa.sequentum.com"],
+        scopes_supported: [...EXPECTED_SCOPES, "offline_access"],
+        bearer_methods_supported: ["header"],
+      }),
+    });
+    const result = byName(checkDeployment(BASE, probes), "protected-resource");
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("offline_access");
+  });
+
   it("fails when authorization_servers is empty", () => {
     const probes = goodProbes();
     probes.protectedResource = res({
