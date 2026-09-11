@@ -122,6 +122,14 @@
 
 ### Fixed
 
+- **SE4-3980: the Docker image now reports the release version it was built as.** The
+  `Dockerfile` accepts the `VERSION` build argument the CI/CD pipelines were already passing
+  and stamps it into `package.json` before installing dependencies, so `GET /health` and the
+  MCP `serverInfo.version` match the image tag. Previously the argument was ignored and the
+  container reported whatever `package.json` said in the source tree, which on production
+  was always the *previous* release (the image is built before the version bump commit) and
+  on QA was the same `2.0.0` for every release branch. A plain `docker build` without the
+  argument behaves as before.
 - **SE4-3929: `scopes_supported` in the protected-resource metadata document is now derived
   from the Control Center's own resource-metadata document** instead of a hardcoded array,
   so it can no longer drift out of sync with what the Control Center actually enforces (it
