@@ -10,11 +10,12 @@
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import express, { NextFunction, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
-import { buildAuthChallenge, SUPPORTED_SCOPES } from "../utils/oauth-metadata.js";
+import { buildAuthChallenge } from "../utils/oauth-metadata.js";
 import { buildAllowedOrigins, isAllowedOrigin } from "./cors.js";
 import { renderLandingPage } from "./landing-page.js";
 import { MCP_RATE_LIMIT_MAX, MCP_RATE_LIMIT_WINDOW_MS, RATE_LIMIT_ERROR_CODE } from "./constants.js";
 import { createJwksCache, type JwksKeySource } from "../utils/jwks-cache.js";
+import { createResourceScopesSource, type ResourceScopesSource } from "../utils/resource-scopes.js";
 import { validateToken } from "../utils/token-validator.js";
 import { createSequentumMcpHandler, loggable } from "./mcp-handler.js";
 
@@ -380,15 +381,28 @@ export function handleOpenAIChallenge(_req: Request, res: Response): void {
  *   same value as apiBaseUrl, but kept separate because they are different things:
  *   one is where requests go, the other is this server's OAuth identity. Must match
  *   se4-main's resolved issuer byte-for-byte or clients reject the metadata document.
+ * @param options - Optional dependency overrides; every field defaults to real wiring.
+ * @param options.resourceScopes - Source for the protected-resource `scopes_supported` list
+ *   (SE4-3929). Defaults to `createResourceScopesSource(apiBaseUrl)`, which fetches the
+ *   Control Center's own resource-metadata document and falls back to `SUPPORTED_SCOPES`.
+ *   Tests inject a stub to avoid network I/O and control timing.
  */
 export async function startHttpServer(
   apiBaseUrl: string,
   issuer: string,
   version: string,
   httpPort: number,
-  httpHost: string
+  httpHost: string,
+  options: { resourceScopes?: ResourceScopesSource } = {}
 ): Promise<import("node:http").Server> {
   const app = express();
+  const resourceScopes = options.resourceScopes ?? createResourceScopesSource(apiBaseUrl);
+  // Kick off the first fetch immediately rather than waiting for the first request to a
+  // discovery endpoint: by the time a real client's first request lands, the derived list
+  // has almost always already arrived. Fire-and-forget: refresh() never rejects, and
+  // getScopes() falls back to SUPPORTED_SCOPES until this (or a later background refresh)
+  // succeeds.
+  void resourceScopes.refresh();
 
   // Trust X-Forwarded-Proto from reverse proxies (cloudflared, ngrok, etc.)
   // This ensures req.protocol returns 'https' when behind a TLS-terminating proxy.
@@ -553,8 +567,11 @@ export async function startHttpServer(
       // fetch metadata from this value and compare its `issuer` field against it, so
       // it must match se4-main's configured issuer exactly, trailing slash included.
       authorization_servers: [issuer],
-      // Scopes supported by this resource
-      scopes_supported: [...SUPPORTED_SCOPES],
+      // Scopes supported by this resource. Derived from the Control Center's own
+      // resource-metadata document (SE4-3929) via `resourceScopes`, so this list cannot
+      // drift from what SE4-3895 actually enforces; served as SUPPORTED_SCOPES until the
+      // first successful fetch.
+      scopes_supported: [...resourceScopes.getScopes()],
       // Bearer token is required
       bearer_methods_supported: ["header"],
     };
