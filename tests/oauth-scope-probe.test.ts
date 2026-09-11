@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { judgeMcp, judgeV1, expectedLogLine } from "../scripts/oauth-scope-probe.mjs";
+import { judgeMcp, judgeV1, expectedLogLine, judgeTokenError, GENERIC_INVALID_GRANT } from "../scripts/oauth-scope-probe.mjs";
 
 // judgeMcp: enforce mode, granted scopes missing the one this call requires (a mismatch).
 describe("judgeMcp — enforce mode, scope mismatch (SE4-3929)", () => {
@@ -86,6 +86,35 @@ describe("judgeV1 smoke (unchanged by this ticket)", () => {
       headers,
     };
     expect(judgeV1(call, granted, "enforce").ok).toBe(true);
+  });
+});
+
+describe("judgeTokenError (SE4-3922)", () => {
+  const r = (status: number, body: unknown) => ({ status, text: JSON.stringify(body) });
+
+  it("passes when status, error and error_description all match", () => {
+    const result = judgeTokenError(r(400, { error: "invalid_request", error_description: "client_id is required" }), 400, "invalid_request", "client_id is required");
+    expect(result.ok).toBe(true);
+  });
+
+  it("fails on a status mismatch even if the body matches", () => {
+    const result = judgeTokenError(r(200, { error: "invalid_request", error_description: "client_id is required" }), 400, "invalid_request", "client_id is required");
+    expect(result.ok).toBe(false);
+  });
+
+  it("fails when the wrong error code is returned", () => {
+    const result = judgeTokenError(r(400, { error: "invalid_grant", error_description: "client_id is required" }), 400, "invalid_request", "client_id is required");
+    expect(result.ok).toBe(false);
+  });
+
+  it("fails when the wording differs, even for the same error code (wrong-client_id must read exactly like an unknown token)", () => {
+    const result = judgeTokenError(r(400, { error: "invalid_grant", error_description: "client_id does not match" }), 400, "invalid_grant", GENERIC_INVALID_GRANT);
+    expect(result.ok).toBe(false);
+  });
+
+  it("passes for the generic invalid_grant body shared by an unknown token and a client_id mismatch", () => {
+    const result = judgeTokenError(r(400, { error: "invalid_grant", error_description: GENERIC_INVALID_GRANT }), 400, "invalid_grant", GENERIC_INVALID_GRANT);
+    expect(result.ok).toBe(true);
   });
 });
 

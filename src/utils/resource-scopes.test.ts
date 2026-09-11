@@ -31,7 +31,7 @@ describe("createResourceScopesSource", () => {
     expect(fetchFn).toHaveBeenCalledWith(`${API}/api/oauth/resource-metadata`, expect.anything());
   });
 
-  it("adopts the upstream list, appending offline_access, after a successful refresh", async () => {
+  it("adopts the upstream list verbatim after a successful refresh", async () => {
     const fetchFn = vi.fn().mockResolvedValue(
       metaResponse({ scopes_supported: ["agents:read", "agents:write", "runs:read", "spaces:read", "spaces:write", "billing:read"] })
     );
@@ -46,19 +46,38 @@ describe("createResourceScopesSource", () => {
       "spaces:read",
       "spaces:write",
       "billing:read",
-      "offline_access",
     ]);
   });
 
-  it("de-duplicates if the upstream document ever includes offline_access itself", async () => {
+  it("strips offline_access if the upstream document ever includes it (MCP 2026-07-28 SHOULD NOT)", async () => {
     const fetchFn = vi.fn().mockResolvedValue(
-      metaResponse({ scopes_supported: ["agents:read", "offline_access"] })
+      metaResponse({ scopes_supported: ["agents:read", "offline_access", "runs:read"] })
     );
     const source = createResourceScopesSource(API, { fetchFn: fetchFn as unknown as typeof fetch });
 
     await source.refresh();
 
-    expect(source.getScopes()).toEqual(["agents:read", "offline_access"]);
+    expect(source.getScopes()).toEqual(["agents:read", "runs:read"]);
+  });
+
+  it("ignores an upstream list that is only offline_access and keeps the fallback", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(metaResponse({ scopes_supported: ["offline_access"] }));
+    const source = createResourceScopesSource(API, { fetchFn: fetchFn as unknown as typeof fetch });
+
+    await source.refresh();
+
+    expect(source.getScopes()).toEqual([...SUPPORTED_SCOPES]);
+  });
+
+  it("de-duplicates repeated upstream entries", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      metaResponse({ scopes_supported: ["agents:read", "agents:read", "runs:read"] })
+    );
+    const source = createResourceScopesSource(API, { fetchFn: fetchFn as unknown as typeof fetch });
+
+    await source.refresh();
+
+    expect(source.getScopes()).toEqual(["agents:read", "runs:read"]);
   });
 
   it("ignores a non-2xx response and keeps the fallback", async () => {
@@ -120,12 +139,12 @@ describe("createResourceScopesSource", () => {
     });
 
     await source.refresh();
-    expect(source.getScopes()).toEqual(["agents:read", "offline_access"]);
+    expect(source.getScopes()).toEqual(["agents:read"]);
 
     clock += RESOURCE_SCOPES_TTL_MS + 1;
     await source.refresh();
 
-    expect(source.getScopes()).toEqual(["agents:read", "offline_access"]);
+    expect(source.getScopes()).toEqual(["agents:read"]);
   });
 
   it("swallows a rejected/aborted fetch without throwing", async () => {

@@ -62,7 +62,7 @@ describe("POST /mcp through the real Express app", () => {
     const body = JSON.parse((await res.text()).replace(/^event: message\ndata: /, ""));
     // A global express.json() consumes the stream and yields -32700 here.
     expect(body.error).toBeUndefined();
-    expect(body.result.tools.length).toBe(39);
+    expect(body.result.tools.length).toBe(43);
   });
 
   it("ignores a stale Mcp-Session-Id instead of failing", async () => {
@@ -100,6 +100,8 @@ describe("POST /mcp through the real Express app", () => {
     expect(res.status).toBe(200);
     const body = JSON.parse((await res.text()).replace(/^event: message\ndata: /, ""));
     expect(body.result.protocolVersion).toBe("2025-06-18");
+    expect(body.result.instructions).toMatch(/^Sequentum MCP server: /);
+    expect(body.result.instructions).toContain("Agent Builder");
     expect(body.result.instructions).toContain("SUFFICIENCY POLICY");
   });
 
@@ -360,7 +362,7 @@ describe("/.well-known/oauth-protected-resource", () => {
 
   it("serves scopes_supported from an injected ResourceScopesSource (SE4-3929)", async () => {
     const stub: ResourceScopesSource = {
-      getScopes: () => ["agents:read", "billing:read", "offline_access"],
+      getScopes: () => ["agents:read", "billing:read"],
       refresh: async () => {},
     };
     const injected = await startHttpServer(
@@ -376,10 +378,16 @@ describe("/.well-known/oauth-protected-resource", () => {
       if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
       const res = await fetch(`http://127.0.0.1:${addr.port}/.well-known/oauth-protected-resource`);
       const body = (await res.json()) as { scopes_supported: string[] };
-      expect(body.scopes_supported).toEqual(["agents:read", "billing:read", "offline_access"]);
+      expect(body.scopes_supported).toEqual(["agents:read", "billing:read"]);
     } finally {
       await new Promise<void>((resolve) => injected.close(() => resolve()));
     }
+  });
+
+  it("never lists offline_access in the protected resource document (default wiring)", async () => {
+    const res = await fetch(`${base}/.well-known/oauth-protected-resource`);
+    const body = (await res.json()) as { scopes_supported: string[] };
+    expect(body.scopes_supported).not.toContain("offline_access");
   });
 
   it("primes the scope source once at startup rather than only on first request", async () => {

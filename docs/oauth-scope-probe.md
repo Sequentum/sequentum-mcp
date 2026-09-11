@@ -1,7 +1,9 @@
 # oauth-scope-probe
 
-Live probe of OAuth scope enforcement on the Sequentum external V1 API (**SE4-3895**) and of
-revoke-on-refresh (**SE4-3896**), run against a deployed environment. QA only.
+Live probe of OAuth scope enforcement on the Sequentum external V1 API (**SE4-3895**),
+revoke-on-refresh (**SE4-3896**), and refresh-token hardening (**SE4-3922**: mandatory
+`client_id` binding, reuse detection, concurrent-redemption locking), run against a deployed
+environment. QA only.
 
 ```bash
 npm run probe -- --env qa --mode log-only
@@ -21,7 +23,8 @@ those log lines unless someone deliberately drives an MCP client against it. Thi
 that, repeatably, and reads the resulting CloudWatch lines back so the run is self-checking.
 
 The same run with `--mode enforce` is the flip-day regression test. It also verifies that
-revoking a client through the admin UI ends its refresh sessions.
+revoking a client through the admin UI ends its refresh sessions, and that the refresh-token
+endpoint itself enforces `client_id`, detects reuse, and serializes concurrent redemptions.
 
 ## Prerequisites
 
@@ -52,6 +55,7 @@ npm run probe -- --env qa --mode enforce                              # after th
 | `--profile all\|read\|none` | Run one scope profile instead of all three. |
 | `--skip-mcp` | Don't call the MCP server. |
 | `--skip-3896` | Skip refresh → revoke → refresh. |
+| `--skip-3922` | Skip the refresh-token hardening checks (client_id binding, reuse detection, concurrent redemption) — saves one consent click. |
 | `--skip-cloudwatch` | Don't read CloudWatch (no `aws` CLI needed). |
 | `--port N` | Fixed loopback port. Default is ephemeral. |
 | `--reuse-client ID` | Skip DCR and reuse a client from an earlier `--keep-client` run. Requires the same `--port` it was registered with and `--skip-3896` (that step revokes the client, and revoked is terminal); implies `--keep-client`. Saves the 10-per-IP-hour registration budget while iterating. A `--keep-client` run prints the exact command to use. |
@@ -78,13 +82,30 @@ npm run probe -- --env qa --mode enforce                              # after th
    - polls CloudWatch for up to two minutes until every expected `Scope check` line for this
      client_id has appeared; when none is expected (the `all` profile), waits 45 seconds for
      ingestion before asserting that none appeared.
-4. **SE4-3896:** refreshes once (expects a rotated token), then opens Admin › MCP Integrations
+4. **SE4-3922:** requests one more, separate consent (scope `offline_access` only — a dedicated,
+   throwaway grant under the same client, so the `all` profile's chain used by SE4-3896 below is
+   left untouched) and exercises the token endpoint directly:
+   - fires two refreshes of the same token at once — exactly one must return 200, the rotation
+     lock must reject the other with the generic body;
+   - refreshes the winner's token with `client_id` omitted (expects `invalid_request`), with a
+     wrong `client_id` (expects the *same* generic `invalid_grant` body an unknown token gets —
+     that is by design, not a bug), then with the correct `client_id` (expects 200 and a rotated
+     token);
+   - replays the now-superseded token (expects `invalid_grant`, "already been used"), then
+     presents the token that was live at that moment (expects the *generic* body again, not a
+     distinctly-worded "revoked grant" response — reuse detection deletes the grant's live token
+     outright rather than tagging it).
+   Every check here is HTTP-level (status + exact error body); no CloudWatch is read for this
+   step. The 90-day absolute lifetime is **not** exercised live (unreachable without changing
+   the server's clock) — see `SeControlCenter.Tests.OAuth.TestRefreshTokenStore` and
+   `TestOAuthControllerRefreshTokenLifecycle` in the Control Center repo for that coverage.
+5. **SE4-3896:** refreshes once (expects a rotated token), then opens Admin › MCP Integrations
    and asks you to revoke the probe client. It confirms the revoke without admin credentials:
    the public authorize endpoint answers 302 for an Active client and 400 for a revoked one.
    Then it refreshes again with the newest token (expects `invalid_grant`). If the `all`
    profile came back without a refresh token despite requesting `offline_access`, this is a
    failed row, not a skip.
-5. **Cleanup:** if the client is still Active and `--keep-client` was not given, opens the admin
+6. **Cleanup:** if the client is still Active and `--keep-client` was not given, opens the admin
    page again and asks you to revoke it, then verifies the same way. A client left Active, or
    an agent run that could not be deleted, is a failed row so the run exits non-zero. The
    summary table is printed even if the run aborts on an unexpected error.
@@ -106,6 +127,10 @@ of which build the MCP server is on.
 is what a build without the revoke-on-refresh fix produces. It is reported as a failed row so
 the run exits non-zero, but it is a statement about the build, not the tool.
 
+A failed `3922` row means the build predates SE4-3922 or has a regression in it: a client_id
+check that lets a mismatch through, missing reuse detection, or a rotation race that let both
+concurrent requests through (or neither).
+
 ## Side effects and residue
 
 - **One DCR client per run**, revoked at the end. Revoked is terminal (there is no delete
@@ -121,7 +146,10 @@ the run exits non-zero, but it is a statement about the build, not the tool.
   profile, overwriting itself. There is no V1 endpoint to delete space input files; remove it
   from the Space UI if it bothers anyone.
 - Registrations count against the DCR limit of **10 per IP per hour**; token requests against
-  20 per minute per client. A full run uses one registration and at most six token requests.
+  20 per minute per client. A full run uses one registration and up to a dozen token requests
+  (six for the three profiles, plus the SE4-3922 and SE4-3896 checks).
+- **SE4-3922's dedicated grant** leaves no separate row anywhere: it is revoked (by its own
+  reuse-detection check) under the same client the rest of the run already registered.
 
 ## What it does not do
 

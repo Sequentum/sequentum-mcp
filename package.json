@@ -24,6 +24,8 @@
     "test:coverage": "vitest run --coverage",
     "smoke": "vitest run src/smoke.test.ts",
     "probe": "node scripts/oauth-scope-probe.mjs",
+    "conformance": "node scripts/conformance.mjs",
+    "smoke:deployment": "node scripts/qa-smoke.mjs",
     "validate:registry": "node scripts/validate-registry.mjs",
     "check:versions": "node scripts/check-versions.mjs",
     "prepublishOnly": "npm run validate:registry && npm run check:versions"
@@ -54,6 +56,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/conformance": "0.2.0-alpha.11",
     "@types/express": "^5.0.0",
     "@types/node": "^20.10.0",
     "@vitest/coverage-v8": "^3.0.0",

@@ -45,6 +45,12 @@
   which a copy served here can never satisfy. Clients that follow redirects are
   unaffected; a client that read the body without following the redirect must now follow
   it, or read `authorization_servers` from `/.well-known/oauth-protected-resource`.
+- **`get_agent_runs` and `search_agents` now return an object instead of a bare array.**
+  `get_agent_runs` returns `{ runs, returned, limit, truncated }` and `search_agents`
+  returns `{ agents, returned, limit, truncated }`, each with an extra `note` when the
+  page came back full. The list itself is unchanged, but a client that read the result
+  as an array must now read `runs` or `agents` from it. The wrapper is what makes a
+  capped page distinguishable from a complete one. (SE4-3921)
 
 ### Added
 
@@ -77,6 +83,22 @@
   and configurable list-cache freshness via `LIST_CACHE_TTL_MS` — all three parsed
   strictly, failing fast at startup on a malformed value instead of silently truncating
   it.
+- **`get_space_agent_count` tool.** Returns the number of agents in a space as a single
+  `{ totalCount }` value, backed by a server-side `COUNT(*)`. Previously the only way to answer
+  "how many agents are in space X" was to call `get_space_agents` and count the returned array,
+  which produced wrong answers on large spaces. `get_space_agents`'s description now points
+  counting questions at the new tool. (SE4-3921)
+- **`get_personal_agent_count` tool.** Returns the number of agents in the caller's personal
+  space (agents with no `spaceId`) as a single `{ totalCount }` value. "Personal" is not a space,
+  so `get_space_agent_count` cannot serve it. (SE4-3921)
+- **`get_agent_run_summary` tool.** Returns exact run totals for an agent — an overall count plus
+  a per-status breakdown — computed server-side across all run history, never capped.
+  `get_agent_runs` now also reports `returned`/`limit`/`truncated` so a capped list of the most
+  recent 50 runs can no longer be mistaken for the full set. (SE4-3921)
+- **`get_agent_search_count` tool.** Returns the exact number of agents matching a search term
+  as a single `{ totalCount }` value, matched the same way as `search_agents` but never capped.
+  `search_agents` now also reports `returned`/`limit`/`truncated` so a capped result can no
+  longer be mistaken for the full set of matches. (SE4-3921)
 - `TRUST_PROXY` widened to accept a hop count or a comma-separated CIDR/IP allowlist,
   in addition to `true`/`false`.
 - A JSON-RPC error middleware on `/mcp` that returns a sanitized JSON-RPC error object
