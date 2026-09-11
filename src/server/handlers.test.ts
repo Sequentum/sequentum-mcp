@@ -282,7 +282,7 @@ describe("tool annotations", () => {
 
   it("every read-only tool has idempotentHint: true", () => {
     const readOnlyTools = tools.filter((t) => t.annotations?.readOnlyHint === true);
-    expect(readOnlyTools.length).toBe(26);
+    expect(readOnlyTools.length).toBe(30);
     for (const tool of readOnlyTools) {
       expect(
         tool.annotations?.idempotentHint,
