@@ -45,6 +45,12 @@
   which a copy served here can never satisfy. Clients that follow redirects are
   unaffected; a client that read the body without following the redirect must now follow
   it, or read `authorization_servers` from `/.well-known/oauth-protected-resource`.
+- **`get_agent_runs` and `search_agents` now return an object instead of a bare array.**
+  `get_agent_runs` returns `{ runs, returned, limit, truncated }` and `search_agents`
+  returns `{ agents, returned, limit, truncated }`, each with an extra `note` when the
+  page came back full. The list itself is unchanged, but a client that read the result
+  as an array must now read `runs` or `agents` from it. The wrapper is what makes a
+  capped page distinguishable from a complete one. (SE4-3921)
 
 ### Added
 

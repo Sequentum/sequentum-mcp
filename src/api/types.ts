@@ -559,7 +559,8 @@ export interface SpaceAgentCountApiModel {
 }
 
 /**
- * Number of an agent's runs that ended in one particular status
+ * Number of an agent's runs that are in one particular status. Non-terminal statuses
+ * such as Running can appear, since the summary spans current runs as well as history.
  */
 export interface AgentRunStatusCountApiModel {
   /** The numeric RunStatus value */

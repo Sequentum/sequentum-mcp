@@ -101,7 +101,7 @@ export const tools: Tool[] = [
       "FASTER than list_agents when user mentions a specific agent name. " +
       "Answers: 'Find the Amazon scraper', 'Which agent handles product data?', 'Search for pricing agents'. " +
       "Returns: An object with agents (matching agents with id, name, status, configType), plus returned, limit and truncated. " +
-      "TRUNCATION: At most 50 matches are returned unless you raise maxRecords. When truncated is true, more agents match than are listed. " +
+      "TRUNCATION: At most 50 matches are returned unless you raise maxRecords. When truncated is true, the page came back full, so more agents may match than are listed. " +
       "NEVER count this array to answer 'how many agents match' — use get_agent_search_count for the exact number. " +
       "TIP: Prefer this over list_agents when user mentions an agent by name.",
     inputSchema: {
@@ -128,11 +128,11 @@ export const tools: Tool[] = [
       "Answers: 'How many agents have checkout in the name?', 'How many scrapers match X?'. " +
       "Returns: An object with totalCount, the number of matching agents. " +
       "Matched the same way as search_agents — names and descriptions, case-insensitive — and never capped, " +
-      "so this equals what search_agents would return if its limit were high enough.",
+      "so with includeArchived left false this equals what search_agents would return if its limit were high enough.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        query: { type: "string", description: "Search term to match against agent names and descriptions. Case-insensitive. At least 2 characters." },
+        query: { type: "string", description: "Search term to match against agent names and descriptions. Case-insensitive." },
         includeArchived: { type: "boolean", description: "Include archived agents in the count. Default: false." },
       },
       required: ["query"],
@@ -154,7 +154,7 @@ export const tools: Tool[] = [
       "Answers: 'How many agents do I have in Personal?', 'What is my personal agent count?'. " +
       "Returns: An object with totalCount, the number of personal agents. " +
       "IMPORTANT: 'Personal' is NOT a space and has no spaceId, so get_space_agent_count and " +
-      "search_space_by_name cannot be used for it, and list_agents with spaceId=0 returns 0. " +
+      "search_space_by_name cannot be used for it, and list_agents rejects spaceId=0 as invalid. " +
       "The total excludes archived agents and counts only agents.",
     inputSchema: { type: "object" as const, properties: {}, required: [] },
     annotations: {
@@ -172,7 +172,7 @@ export const tools: Tool[] = [
       "Get execution history for an agent showing past runs with status, timing, and records extracted. " +
       "Answers: 'When did agent X last run?', 'Show run history', 'How many records were extracted?', 'Did the agent fail?'. " +
       "Returns: An object with runs (array of runs with id, status, startTime, endTime, recordsExtracted, recordsExported, errorMessage), plus returned, limit and truncated. " +
-      "TRUNCATION: Only the most recent runs are returned — 50 unless you raise maxRecords. When truncated is true, more runs exist than were returned. " +
+      "TRUNCATION: Only the most recent runs are returned — 50 unless you raise maxRecords. When truncated is true, the page came back full, so more runs may exist than were returned. " +
       "NEVER count this array to answer 'how many runs', 'how many failed' or 'how many succeeded' — use get_agent_run_summary, which returns exact server-computed totals. " +
       "TIP: Check the most recent run's status to see if agent is currently running or recently completed. " +
       "NEXT STEP: Use get_run_files to see output files from a completed run.",

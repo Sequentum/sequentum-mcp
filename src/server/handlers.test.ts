@@ -798,6 +798,18 @@ describe("toolDispatch", () => {
     expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({ totalCount: 214 });
   });
 
+  it("get_personal_agent_count returns the server-provided total", async () => {
+    const getPersonalAgentCount = vi.fn().mockResolvedValue({ totalCount: 238 });
+    const apiClient = { getPersonalAgentCount } as unknown as SequentumApiClient;
+    const result = await toolDispatch.get_personal_agent_count(
+      {},
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+    );
+
+    expect(getPersonalAgentCount).toHaveBeenCalledWith();
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({ totalCount: 238 });
+  });
+
   it("get_agent_run_summary returns the server-provided totals", async () => {
     const summary = {
       totalCount: 395,
