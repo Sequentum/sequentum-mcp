@@ -11,14 +11,44 @@
  *   3. DCR  - Dynamic Client Registration (fallback)
  */
 
-/** Scopes shared by Authorization Server Metadata and Protected Resource Metadata. */
-export const SUPPORTED_SCOPES = [
+/**
+ * The six scopes with API meaning that the Control Center enforces (SE4-3895), i.e. its
+ * `OAuthScopes.ResourceScopes`. Exported so `SUPPORTED_SCOPES` below and the tests that
+ * pin the list share one definition of "the six" instead of retyping it.
+ */
+export const API_SCOPES = [
   "agents:read",
+  "agents:write",
   "runs:read",
   "spaces:read",
-  "agents:write",
-  "offline_access",
+  "spaces:write",
+  "billing:read",
 ] as const;
+
+/**
+ * The authorization server's refresh-token grant scope. It is a *client* concern, not a
+ * resource requirement: MCP 2026-07-28 (Authorization, "Refresh Tokens") says an MCP server
+ * SHOULD NOT list it in `scopes_supported` or in the `WWW-Authenticate` scope parameter.
+ * Clients that want a refresh token request it themselves when the authorization server's
+ * RFC 8414 metadata advertises it, which the Control Center's does.
+ *
+ * Exported so `resource-scopes.ts` can strip it from whatever the Control Center's own
+ * resource document returns, and so tests name the scope once.
+ */
+export const OFFLINE_ACCESS_SCOPE = "offline_access";
+
+/**
+ * Fallback `scopes_supported` list, served only until `resource-scopes.ts` has successfully
+ * fetched the Control Center's own `/api/oauth/resource-metadata` document (SE4-3929); a
+ * later failed refresh keeps the last list fetched rather than reverting to this one.
+ *
+ * Equal to {@link API_SCOPES} by construction: the resource document describes access to the
+ * resource, and `offline_access` is not that (see {@link OFFLINE_ACCESS_SCOPE}). Note what
+ * this does and does not buy: it guarantees the fallback covers every scope listed *here*,
+ * not every scope the Control Center enforces. `API_SCOPES` is still a hand-maintained
+ * mirror and will lag a scope newly added upstream; closing that gap is the live fetch's job.
+ */
+export const SUPPORTED_SCOPES: readonly string[] = API_SCOPES;
 
 /**
  * RFC 9728 §5.1 — WWW-Authenticate challenge for unauthenticated MCP requests.

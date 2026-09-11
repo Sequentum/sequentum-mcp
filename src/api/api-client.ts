@@ -176,6 +176,9 @@ export class SequentumApiClient {
    */
   private async buildErrorFromResponse(response: Response, endpoint: string): Promise<ApiRequestError> {
     let errorMessage = `API Error ${response.status}: ${response.statusText}`;
+    // SE4-3929: preserved alongside the message so ScopeEnforcementFilter's insufficient_scope
+    // 403s can be told apart from any other 403 and the required scope named to the caller.
+    let errorCode: string | null = null;
 
     try {
       const errorText = await response.text();
@@ -186,6 +189,9 @@ export class SequentumApiClient {
           if (parsed) {
             errorMessage = parsed;
           }
+          if (typeof errorJson.errorCode === "string") {
+            errorCode = errorJson.errorCode;
+          }
         } catch {
           // Not JSON — use raw text (but cap length to avoid huge HTML error pages)
           errorMessage = errorText.length > 500 ? errorText.substring(0, 500) + "..." : errorText;
@@ -195,13 +201,20 @@ export class SequentumApiClient {
       // Could not read body at all — use default message
     }
 
+    // Not all mocked/legacy Response-likes in tests set a `headers` object; guard rather than
+    // assume one is always present.
+    const wwwAuthenticate = response.headers?.get("www-authenticate") ?? null;
+
     // Return specialised subclass for 429
     if (response.status === 429) {
       const retryAfter = this.parseRetryAfter(response);
       return new RateLimitError(errorMessage, endpoint, retryAfter);
     }
 
-    return new ApiRequestError(response.status, response.statusText, errorMessage, endpoint);
+    return new ApiRequestError(response.status, response.statusText, errorMessage, endpoint, {
+      errorCode,
+      wwwAuthenticate,
+    });
   }
 
   // ==========================================
