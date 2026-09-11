@@ -836,6 +836,7 @@ describe("MCP Prompts", () => {
       expect(messages[0].role).toBe("user");
       expect((messages[0].content as { text: string }).text).toContain("Production");
       expect((messages[0].content as { text: string }).text).toContain("search_space_by_name");
+      expect((messages[0].content as { text: string }).text).toContain("get_space_agent_count");
       expect((messages[0].content as { text: string }).text).toContain("get_space_agents");
       expect((messages[0].content as { text: string }).text).toContain("get_latest_failure");
     });

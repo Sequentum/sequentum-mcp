@@ -62,7 +62,7 @@ describe("POST /mcp through the real Express app", () => {
     const body = JSON.parse((await res.text()).replace(/^event: message\ndata: /, ""));
     // A global express.json() consumes the stream and yields -32700 here.
     expect(body.error).toBeUndefined();
-    expect(body.result.tools.length).toBe(39);
+    expect(body.result.tools.length).toBe(43);
   });
 
   it("ignores a stale Mcp-Session-Id instead of failing", async () => {
