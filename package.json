@@ -1,6 +1,6 @@
 {
   "name": "sequentum-mcp",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "mcpName": "com.sequentum/mcp",
   "description": "Turn the web into structured, reliable, actionable enterprise data for AI Agents",
   "main": "dist/index.js",
