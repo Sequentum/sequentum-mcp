@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.0.0] - TBD
+## [2.0.0] - 2026-09-14
 
 ### BREAKING CHANGES
 
@@ -58,6 +58,29 @@
 - **`SEQUENTUM_OAUTH_ISSUER`** — optional HTTP-mode variable naming this deployment's
   OAuth issuer identifier, defaulting to `SEQUENTUM_API_URL`. Set it when the API base
   URL and the public OAuth issuer differ. A malformed value refuses to start.
+- **`MCP_CANONICAL_ORIGIN`** — optional HTTP-mode variable naming this server's resource
+  identifier, used to check the `aud` claim of incoming OAuth tokens. Only the origin is
+  compared, so a trailing slash or a path in the value is harmless and an `aud` naming any
+  path on this origin is accepted. Unset or unparseable, the server warns once at startup
+  and falls back to the caller-supplied `Host` header. (SE4-3856)
+- **Expired and invalid OAuth tokens now answer `401` with a `WWW-Authenticate`
+  challenge** before the request reaches a tool, from JWKS-backed signature, expiry and
+  audience validation. The challenge is what prompts a client to redeem its refresh
+  token, so an expired session renews itself on the next request instead of surfacing as
+  a failed tool call. The rejection reason — `expired`, `bad-signature`, `malformed` or
+  `bad-alg` — is logged with the key id and the token's age. Validation fails open on an
+  unreachable JWKS endpoint, and an `aud` on a different origin is logged rather than
+  rejected, so neither can take the server down. (SE4-3856)
+- **`idempotentHint` on all 43 tools.** Every tool already declared `readOnlyHint`,
+  `destructiveHint` and `openWorldHint` but never `idempotentHint`, leaving clients to
+  treat every write as unsafe to retry after a timeout. It is now `true` on the 30 read
+  tools and on the seven writes that converge on one end state (`stop_agent`,
+  `delete_run`, `delete_agent_schedule`, `update_agent_schedule`,
+  `enable_agent_schedule`, `disable_agent_schedule`, `stop_agent_build`), and `false` on
+  the six that create something new or escalate (`start_agent`, `kill_agent`,
+  `restore_agent_version`, `create_agent_schedule`, `run_space_agents`,
+  `start_agent_build`). `kill_agent` is `false` because its own contract escalates from a
+  graceful stop to forced termination on a second call. (SE4-3959)
 - Cache hints (`ttlMs` / `cacheScope`) on all four list-shaped results (`tools/list`,
   `prompts/list`, `resources/list`, `resources/templates/list`) and on
   `server/discover`, so conformant clients can cache them; `resources/read` is
@@ -69,10 +92,11 @@
   reads) rather than only in the server's `instructions` (which clients MAY skip under
   `2026-07-28`, since there is no `initialize` handshake).
 - Per-request logging of the negotiated protocol era, requested method/name, client
-  identity, and auth presence, with OpenTelemetry trace-context (`traceparent` /
-  `tracestate`) read from the request headers and recorded in the log line, so a
-  request can be correlated across pods. These values are logged only — not
-  propagated to the outbound Sequentum API calls.
+  identity, and auth presence, with W3C trace context (`traceparent`, `tracestate` and
+  `baggage`) recorded in the log line, so a request can be correlated across pods. Per
+  SEP-414 the values are read from `params._meta` first and fall back to the equivalent
+  HTTP header, so spec-following and header-only clients both correlate. These values are
+  logged only — not propagated to the outbound Sequentum API calls. (SE4-3957)
 - Configurable rate limiting via `MCP_RATE_LIMIT_WINDOW_MS` and `MCP_RATE_LIMIT_MAX`,
   and configurable list-cache freshness via `LIST_CACHE_TTL_MS` — all three parsed
   strictly, failing fast at startup on a malformed value instead of silently truncating
@@ -81,9 +105,23 @@
   in addition to `true`/`false`.
 - A JSON-RPC error middleware on `/mcp` that returns a sanitized JSON-RPC error object
   instead of falling through to Express's default HTML error page.
+- MCP conformance and QA deployment checks in CI, and `oauth-scope-probe` — a live check
+  that scope enforcement and refresh-token handling behave through this server as the
+  metadata advertises. Development tooling; nothing in the published package changed.
+  (SE4-3843, SE4-3895, SE4-3922)
 
 ### Changed
 
+- **The server `instructions` now open with a capability summary.** Clients that defer
+  MCP tools and discover them through tool search read `instructions` to decide whether
+  this server is worth searching, and it previously held only the sufficiency policy —
+  which says how to behave, not what the server covers. It now names the domains first
+  (agents, runs, files and diagnostics, schedules, spaces, credits and spending, Agent
+  Builder), followed by the unchanged sufficiency policy as its own block. (SE4-3960)
+- **`offline_access` is no longer advertised** in `scopes_supported` or in the
+  `WWW-Authenticate` `scope` parameter. MCP `2026-07-28` directs an MCP server not to
+  list it. Refresh tokens are unaffected: the Control Center's own RFC 8414 metadata
+  lists `offline_access`, and clients request it from there. (SE4-3956)
 - Tool handlers split out of a single monolithic switch statement into six per-domain
   modules (`agents`, `billing`, `builds`, `runs`, `schedules`, `spaces`) under
   `src/server/tools/`, dispatched via a lookup map.
