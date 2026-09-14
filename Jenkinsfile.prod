@@ -371,6 +371,67 @@ JSONEOF
             }
         }
 
+        stage('Create GitHub Release') {
+            agent {
+                label 'jenkins-agent'
+            }
+            steps {
+                script { mergeChanges() }
+                dir('sequentum-mcp') {
+                    withCredentials([usernamePassword(credentialsId: 'jenkins-se4-main',
+                                                      usernameVariable: 'GH_USER',
+                                                      passwordVariable: 'GH_TOKEN')]) {
+                        sh '''#!/bin/bash
+                            set -eo pipefail
+                            REPO=Sequentum/sequentum-mcp
+                            TAG="v${VERSION}"
+                            API="https://api.github.com/repos/${REPO}/releases"
+
+                            # Bound the generated notes to the previous tag. Without this,
+                            # GitHub walks back to the first commit, because no earlier
+                            # release exists for it to measure from.
+                            PREV_TAG="$(git tag -l 'v*' --sort=-v:refname | grep -v "^${TAG}$" | head -1)"
+                            echo "Release ${TAG}, notes since ${PREV_TAG:-<none>}"
+
+                            # No ECR host in the body. The registry URL carries the AWS
+                            # account id, and this release page is public.
+                            # npm and the MCP Registry publish later in this build, so these
+                            # are links to what the build will publish, not a claim that
+                            # they are already live.
+cat > /tmp/gh-release-body.md <<BODYEOF
+## sequentum-mcp ${TAG}
+
+Published by Jenkins build ${BUILD_NUMBER}.
+
+- Container image tag: ${TAG}
+- npm: https://www.npmjs.com/package/sequentum-mcp/v/${VERSION}
+- MCP Registry: com.sequentum/mcp@${VERSION}
+BODYEOF
+
+                            # jq builds the JSON so the body escapes correctly.
+                            payload="$(jq -n --arg tag "$TAG" --arg body "$(cat /tmp/gh-release-body.md)" --arg prev "$PREV_TAG" '{tag_name: $tag, name: $tag, body: $body, generate_release_notes: true, draft: false, prerelease: false} + (if $prev == "" then {} else {previous_tag_name: $prev} end)')"
+
+                            code="$(curl -sS -o /tmp/gh-release.json -w '%{http_code}' -X POST "$API" -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" -d "$payload")"
+
+                            if [ "$code" = "201" ]; then
+                                echo "Created release: $(jq -r .html_url /tmp/gh-release.json)"
+                            elif [ "$code" = "422" ]; then
+                                # A re-run of a version whose release already exists.
+                                echo "Release ${TAG} already exists; updating it"
+                                id="$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" "${API}/tags/${TAG}" | jq -r .id)"
+                                curl -sS -X PATCH "${API}/${id}" -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -d "$payload" | jq -r .html_url
+                            else
+                                echo "GitHub API returned ${code}:"
+                                cat /tmp/gh-release.json
+                                exit 1
+                            fi
+                            rm -f /tmp/gh-release-body.md /tmp/gh-release.json
+                        '''
+                    }
+                }
+            }
+        }
+
         stage('Deploy to Production') {
             agent {
                 label 'jenkins-agent'
@@ -476,7 +537,7 @@ JSONEOF
     post {
         success {
             echo "Production Build completed successfully - ${SOURCE_BRANCH} merged into ${TARGET_BRANCH}"
-            echo "Version v${env.VERSION} tagged, deployed, published to npm, and listed on the MCP Registry"
+            echo "Version v${env.VERSION} tagged, released on GitHub, deployed, published to npm, and listed on the MCP Registry"
         }
         failure {
             echo "Production Build failed"
