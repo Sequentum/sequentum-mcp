@@ -4,7 +4,7 @@ pipeline {
     }
 
     parameters {
-        string(name: 'SourceBranch', defaultValue: 'release/1.1', description: 'Source branch to merge from')
+        string(name: 'SourceBranch', defaultValue: 'release/2.0', description: 'Source branch to merge from')
         string(name: 'TargetBranch', defaultValue: 'main', description: 'Target branch to merge into')
     }
 
