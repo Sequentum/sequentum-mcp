@@ -6,7 +6,7 @@
  * or client and reference the server's existing tools.
  */
 
-import { Prompt, PromptMessage } from "@modelcontextprotocol/sdk/types.js";
+import type { Prompt, PromptMessage } from "@modelcontextprotocol/server";
 import { PROMPT_HANDLING_POLICY } from "./policies.js";
 import { AGENT_BUILD_MAX_WAIT_LABEL } from "./constants.js";
 

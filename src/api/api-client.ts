@@ -47,6 +47,12 @@ const RETRYABLE_STATUS_CODES = new Set([429, 502, 503, 504]);
 
 export class SequentumApiClient {
   private baseUrl: string;
+  /**
+   * @deprecated Only the stdio transport supplies an API key (`src/index.ts` passes
+   * `SEQUENTUM_API_KEY`); the HTTP transport constructs the client with `null` and
+   * authenticates via {@link SequentumApiClient.setAccessToken}. Deprecated with the stdio
+   * path and due for removal with it, leaving the Bearer branch as the only credential.
+   */
   private apiKey: string | null;
   private accessToken: string | null = null;
   private requestTimeoutMs: number;
@@ -57,7 +63,9 @@ export class SequentumApiClient {
   /**
    * Create a new Sequentum API client
    * @param baseUrl - The base URL of the Sequentum API (e.g., https://dashboard.sequentum.com)
-   * @param apiKey - The API key (sk-...) for authentication (optional if using OAuth2)
+   * @param apiKey - The API key (sk-...) for authentication (optional if using OAuth2).
+   *   Deprecated: supplied only by the deprecated stdio path. TypeScript has no
+   *   per-parameter `@deprecated`, so the tag sits on the `apiKey` field instead.
    * @param requestTimeoutMs - Request timeout in milliseconds (default: 30000)
    * @param maxRetries - Maximum number of retries for transient failures (default: 3)
    */
@@ -98,6 +106,7 @@ export class SequentumApiClient {
       return `Bearer ${this.accessToken}`;
     }
     if (this.apiKey) {
+      // Deprecated stdio path -- see the `apiKey` field. Removed with stdio, leaving Bearer.
       return `ApiKey ${this.apiKey}`;
     }
     throw new AuthenticationError("No authentication configured. Set either an API key or OAuth2 access token.");
@@ -167,6 +176,9 @@ export class SequentumApiClient {
    */
   private async buildErrorFromResponse(response: Response, endpoint: string): Promise<ApiRequestError> {
     let errorMessage = `API Error ${response.status}: ${response.statusText}`;
+    // SE4-3929: preserved alongside the message so ScopeEnforcementFilter's insufficient_scope
+    // 403s can be told apart from any other 403 and the required scope named to the caller.
+    let errorCode: string | null = null;
 
     try {
       const errorText = await response.text();
@@ -177,6 +189,9 @@ export class SequentumApiClient {
           if (parsed) {
             errorMessage = parsed;
           }
+          if (typeof errorJson.errorCode === "string") {
+            errorCode = errorJson.errorCode;
+          }
         } catch {
           // Not JSON — use raw text (but cap length to avoid huge HTML error pages)
           errorMessage = errorText.length > 500 ? errorText.substring(0, 500) + "..." : errorText;
@@ -186,13 +201,20 @@ export class SequentumApiClient {
       // Could not read body at all — use default message
     }
 
+    // Not all mocked/legacy Response-likes in tests set a `headers` object; guard rather than
+    // assume one is always present.
+    const wwwAuthenticate = response.headers?.get("www-authenticate") ?? null;
+
     // Return specialised subclass for 429
     if (response.status === 429) {
       const retryAfter = this.parseRetryAfter(response);
       return new RateLimitError(errorMessage, endpoint, retryAfter);
     }
 
-    return new ApiRequestError(response.status, response.statusText, errorMessage, endpoint);
+    return new ApiRequestError(response.status, response.statusText, errorMessage, endpoint, {
+      errorCode,
+      wwwAuthenticate,
+    });
   }
 
   // ==========================================

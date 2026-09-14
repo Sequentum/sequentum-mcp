@@ -5,8 +5,8 @@
  * Each tool describes its name, description, inputSchema, and annotations.
  */
 
-import { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { PROMPT_HANDLING_POLICY } from "./policies.js";
+import type { Tool } from "@modelcontextprotocol/server";
+import { PRE_CALL_CHECK, PROMPT_HANDLING_POLICY } from "./policies.js";
 import { AGENT_BUILD_MAX_WAIT_LABEL } from "./constants.js";
 
 export const tools: Tool[] = [
@@ -174,7 +174,8 @@ export const tools: Tool[] = [
       "Answers: 'Run agent X', 'Start the scraper', 'Execute the Amazon agent', 'Scrape this website'. " +
       "Returns: In async mode: {runId, status}. In sync mode: Scraped data directly as JSON/text. " +
       "REQUIRED: Get agentId first using list_agents, search_agents, or get_agent_build_status (when building a new agent). " +
-      "TIP: Use get_agent first to check what inputParameters the agent accepts before running.",
+      "TIP: Use get_agent first to check what inputParameters the agent accepts before running. " +
+      PRE_CALL_CHECK,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -880,7 +881,8 @@ export const tools: Tool[] = [
       "Start ALL agents in a space at once (batch operation). Useful for running a group of related agents together. " +
       "Answers: 'Run all agents in space X', 'Execute the Production folder', 'Start all scrapers in Bot Blocking'. " +
       "Returns: Summary with totalAgents, agentsStarted, agentsFailed, and individual results. " +
-      "WARNING: This starts multiple agents. Use get_space_agents first to see what will run.",
+      "WARNING: This starts multiple agents. Use get_space_agents first to see what will run. " +
+      PRE_CALL_CHECK,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1006,7 +1008,7 @@ export const tools: Tool[] = [
       "Note: clients should set a tool-call timeout > 5 min or enable resetTimeoutOnProgress, as the default MCP SDK timeout (60s) may expire before the build completes on slow sites. " +
       "Optionally call stop_agent_build to abort early while still in 'processing'. " +
       "If spaceName is known, resolve it to a spaceId via search_space_by_name first. " +
-      "PRE-CALL CHECK: Before calling, verify the request unambiguously specifies (1) the target URL or domain, (2) the data to extract, and (3) any scope qualifiers (section, filters, language). If any of these are missing, ask one consolidated clarifying question covering all gaps instead of inventing values. " +
+      PRE_CALL_CHECK + " " +
       PROMPT_HANDLING_POLICY,
     inputSchema: {
       type: "object" as const,

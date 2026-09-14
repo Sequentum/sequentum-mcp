@@ -19,14 +19,19 @@ describe("native Node ESM smoke", () => {
 
   // The production entrypoint (dist/index.js) calls main() at module top level,
   // so it can't be imported without starting the server. Instead we import the
-  // two server roots index.ts pulls in — handlers.js (stdio path) and
-  // http-server.js (HTTP path, the deployed connector path) — which together
-  // evaluate the entire production module graph (tools, prompts, resources,
-  // api-client, cors, oauth-metadata) under the real loader. Neither has
-  // top-level side effects: app.listen() runs only inside startHttpServer().
+  // server roots index.ts pulls in — handlers.js (stdio path), http-server.js
+  // (HTTP path, the deployed connector path), mcp-handler.js (the protocol
+  // seam both HTTP requests and tests go through), and tools/index.js (the
+  // root of the six domain handler modules, live risk given Task 2's helper
+  // moves) — which together evaluate the entire production module graph
+  // (tools, prompts, resources, api-client, cors, oauth-metadata) under the
+  // real loader. None has top-level side effects: app.listen() runs only
+  // inside startHttpServer().
   const targets = [
     join(repoRoot, "dist", "server", "handlers.js"),
     join(repoRoot, "dist", "server", "http-server.js"),
+    join(repoRoot, "dist", "server", "mcp-handler.js"),
+    join(repoRoot, "dist", "server", "tools", "index.js"),
   ];
 
   for (const target of targets) {

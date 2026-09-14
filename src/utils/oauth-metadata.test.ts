@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildAuthChallenge } from "./oauth-metadata.js";
+import { buildAuthChallenge, SUPPORTED_SCOPES, API_SCOPES } from "./oauth-metadata.js";
 
 describe("buildAuthChallenge", () => {
   it("uses RFC 9728 resource_metadata parameter (not the wrong `resource=` form)", () => {
@@ -16,6 +16,12 @@ describe("buildAuthChallenge", () => {
     const { wwwAuthenticate } = buildAuthChallenge("https://mcp.sequentum.com");
     expect(wwwAuthenticate).toContain('realm="mcp.sequentum.com"');
     expect(wwwAuthenticate).toContain('error="invalid_token"');
+  });
+
+  it("carries no scope parameter and never mentions offline_access (MCP 2026-07-28 SHOULD NOT)", () => {
+    const { wwwAuthenticate } = buildAuthChallenge("https://mcp.sequentum.com");
+    expect(wwwAuthenticate).not.toMatch(/\bscope=/);
+    expect(wwwAuthenticate).not.toContain("offline_access");
   });
 
   it("returns a JSON-RPC body with protectedResourceMetadata", () => {
@@ -47,5 +53,34 @@ describe("buildAuthChallenge", () => {
     expect(body.error.data.protectedResourceMetadata).toBe(
       "https://example.com/.well-known/oauth-protected-resource"
     );
+  });
+});
+
+describe("SUPPORTED_SCOPES (fallback list)", () => {
+  // Listed literally, not via API_SCOPES, so a future deletion in the source fails this test.
+  const ENFORCED_API_SCOPES = [
+    "agents:read",
+    "agents:write",
+    "runs:read",
+    "spaces:read",
+    "spaces:write",
+    "billing:read",
+  ];
+
+  it("is exactly the six scopes the Control Center enforces", () => {
+    expect([...SUPPORTED_SCOPES].sort()).toEqual([...ENFORCED_API_SCOPES].sort());
+  });
+
+  it("does not include offline_access (MCP 2026-07-28 authorization: SHOULD NOT advertise it)", () => {
+    expect(SUPPORTED_SCOPES).not.toContain("offline_access");
+  });
+
+  it("has no duplicate entries", () => {
+    expect(new Set(SUPPORTED_SCOPES).size).toBe(SUPPORTED_SCOPES.length);
+  });
+
+  it("API_SCOPES is exactly the six API scopes, without offline_access", () => {
+    expect([...API_SCOPES].sort()).toEqual([...ENFORCED_API_SCOPES].sort());
+    expect(API_SCOPES).not.toContain("offline_access");
   });
 });

@@ -1,5 +1,183 @@
 # Changelog
 
+## [2.0.0] - 2026-09-14
+
+### BREAKING CHANGES
+
+- **Node 20 is now the minimum supported runtime** (`engines.node: ">=20"`), required by
+  the MCP TypeScript SDK v2 dependency. The Docker image was already `node:20-alpine`.
+- **Migrated to MCP TypeScript SDK v2.** The server now speaks protocol revision
+  `2026-07-28` and negotiates legacy revisions for clients that request them, so
+  existing MCP clients continue to work unmodified.
+- **HTTP transport is now stateless.** `Mcp-Session-Id` is ignored entirely; there is no
+  per-client session state on the server. `GET /mcp` no longer opens an SSE stream — it
+  returns `405 Method Not Allowed` (or `401` first, with the RFC 9728
+  `WWW-Authenticate` challenge, if the request is unauthenticated). `DELETE /mcp` is a
+  no-op that always answers `200`, since there is no session left to terminate.
+- **`MAX_SESSIONS` is no longer read.** It has no effect in a stateless server; remove
+  it from any deployment configuration.
+- **Rate-limit error code changed from `-32029` to `-32010`.** MCP `2026-07-28`
+  reserves `-32020`..`-32099` for the specification itself; `-32029` fell inside that
+  range and had to move.
+- **Requests carrying the `2026-07-28` `_meta` envelope now require the `Mcp-Method`
+  header, and `Mcp-Name` on name-carrying requests** (`tools/call`, `prompts/get`, and
+  `resources/read` where the value is `params.uri`). This applies only to modern-envelope
+  requests. Clients still on `2025-11-25` or earlier — including every existing connector
+  that has not opted into the envelope — are unaffected and need not send either header.
+- **Unknown or invalid resource URIs now return `-32602` (Invalid params)** instead of
+  `-32603` (Internal error), correctly signaling a caller mistake rather than a server
+  fault.
+- **Unknown tool name now returns a JSON-RPC protocol error instead of a tool result.**
+  Previously an unknown tool name in `tools/call` produced HTTP 200 with a tool result:
+  `{result:{content:[{text:"Error: Unknown tool: X"}],isError:true}}`. It now produces
+  `{error:{code:-32602,message:"Tool X not found"}}`. Confirmed identical in both the
+  modern and legacy eras. Any client that branched on `isError` to detect an unknown tool
+  now needs to handle the JSON-RPC error instead.
+- **Schema-invalid tool arguments now fail before the handler runs, with a different
+  error message.** The SDK validates `tools/call` arguments against the tool's
+  `inputSchema` up front. For example, a missing required parameter previously produced
+  `"Error: Invalid parameter 'agentId': ..."`; it now produces `"Input validation error:
+  Invalid arguments for tool get_agent: data must have required property 'agentId'"`.
+- **`/.well-known/oauth-authorization-server` no longer returns a metadata document.**
+  It now answers `302` with a `Location` pointing at the authorization server's own
+  document. This server is a protected resource, not an authorization server: RFC 8414
+  §3.3 requires the `issuer` in that document to equal the origin it was fetched from,
+  which a copy served here can never satisfy. Clients that follow redirects are
+  unaffected; a client that read the body without following the redirect must now follow
+  it, or read `authorization_servers` from `/.well-known/oauth-protected-resource`.
+
+### Added
+
+- **`GET /` now serves a landing page** instead of `404 Cannot GET /`, linking the docs,
+  the dashboard and the repository. The bare origin is the RFC 9728 `resource` identifier
+  and need not serve a document, so the 404 was never a protocol defect — but the README
+  and the directory listings all point readers at the bare host, and every one of those
+  links landed on an error. The page is static and shows the endpoint for the origin it
+  was reached through, so QA and self-hosted runs advertise themselves rather than
+  production. HTTP mode only; no protocol route or response changed.
+- **`SEQUENTUM_OAUTH_ISSUER`** — optional HTTP-mode variable naming this deployment's
+  OAuth issuer identifier, defaulting to `SEQUENTUM_API_URL`. Set it when the API base
+  URL and the public OAuth issuer differ. A malformed value refuses to start.
+- **`MCP_CANONICAL_ORIGIN`** — optional HTTP-mode variable naming this server's resource
+  identifier, used to check the `aud` claim of incoming OAuth tokens. Only the origin is
+  compared, so a trailing slash or a path in the value is harmless and an `aud` naming any
+  path on this origin is accepted. Unset or unparseable, the server warns once at startup
+  and falls back to the caller-supplied `Host` header. (SE4-3856)
+- **Expired and invalid OAuth tokens now answer `401` with a `WWW-Authenticate`
+  challenge** before the request reaches a tool, from JWKS-backed signature, expiry and
+  audience validation. The challenge is what prompts a client to redeem its refresh
+  token, so an expired session renews itself on the next request instead of surfacing as
+  a failed tool call. The rejection reason — `expired`, `bad-signature`, `malformed` or
+  `bad-alg` — is logged with the key id and the token's age. Validation fails open on an
+  unreachable JWKS endpoint, and an `aud` on a different origin is logged rather than
+  rejected, so neither can take the server down. (SE4-3856)
+- **`idempotentHint` on all 43 tools.** Every tool already declared `readOnlyHint`,
+  `destructiveHint` and `openWorldHint` but never `idempotentHint`, leaving clients to
+  treat every write as unsafe to retry after a timeout. It is now `true` on the 30 read
+  tools and on the seven writes that converge on one end state (`stop_agent`,
+  `delete_run`, `delete_agent_schedule`, `update_agent_schedule`,
+  `enable_agent_schedule`, `disable_agent_schedule`, `stop_agent_build`), and `false` on
+  the six that create something new or escalate (`start_agent`, `kill_agent`,
+  `restore_agent_version`, `create_agent_schedule`, `run_space_agents`,
+  `start_agent_build`). `kill_agent` is `false` because its own contract escalates from a
+  graceful stop to forced termination on a second call. (SE4-3959)
+- Cache hints (`ttlMs` / `cacheScope`) on all four list-shaped results (`tools/list`,
+  `prompts/list`, `resources/list`, `resources/templates/list`) and on
+  `server/discover`, so conformant clients can cache them; `resources/read` is
+  explicitly marked `private` with `ttlMs: 0`, since every resource is scoped to the
+  caller's own OAuth token and must never be cached publicly.
+- Argument-sufficiency requirements added to the `start_agent`, `run_space_agents`, and
+  `start_agent_build` tool descriptions, so the requirement to have an unambiguous
+  target, extracted data, and scope travels in `tools/list` itself (which every client
+  reads) rather than only in the server's `instructions` (which clients MAY skip under
+  `2026-07-28`, since there is no `initialize` handshake).
+- Per-request logging of the negotiated protocol era, requested method/name, client
+  identity, and auth presence, with W3C trace context (`traceparent`, `tracestate` and
+  `baggage`) recorded in the log line, so a request can be correlated across pods. Per
+  SEP-414 the values are read from `params._meta` first and fall back to the equivalent
+  HTTP header, so spec-following and header-only clients both correlate. These values are
+  logged only — not propagated to the outbound Sequentum API calls. (SE4-3957)
+- Configurable rate limiting via `MCP_RATE_LIMIT_WINDOW_MS` and `MCP_RATE_LIMIT_MAX`,
+  and configurable list-cache freshness via `LIST_CACHE_TTL_MS` — all three parsed
+  strictly, failing fast at startup on a malformed value instead of silently truncating
+  it.
+- `TRUST_PROXY` widened to accept a hop count or a comma-separated CIDR/IP allowlist,
+  in addition to `true`/`false`.
+- A JSON-RPC error middleware on `/mcp` that returns a sanitized JSON-RPC error object
+  instead of falling through to Express's default HTML error page.
+- MCP conformance and QA deployment checks in CI, and `oauth-scope-probe` — a live check
+  that scope enforcement and refresh-token handling behave through this server as the
+  metadata advertises. Development tooling; nothing in the published package changed.
+  (SE4-3843, SE4-3895, SE4-3922)
+
+### Changed
+
+- **The server `instructions` now open with a capability summary.** Clients that defer
+  MCP tools and discover them through tool search read `instructions` to decide whether
+  this server is worth searching, and it previously held only the sufficiency policy —
+  which says how to behave, not what the server covers. It now names the domains first
+  (agents, runs, files and diagnostics, schedules, spaces, credits and spending, Agent
+  Builder), followed by the unchanged sufficiency policy as its own block. (SE4-3960)
+- **`offline_access` is no longer advertised** in `scopes_supported` or in the
+  `WWW-Authenticate` `scope` parameter. MCP `2026-07-28` directs an MCP server not to
+  list it. Refresh tokens are unaffected: the Control Center's own RFC 8414 metadata
+  lists `offline_access`, and clients request it from there. (SE4-3956)
+- Tool handlers split out of a single monolithic switch statement into six per-domain
+  modules (`agents`, `billing`, `builds`, `runs`, `schedules`, `spaces`) under
+  `src/server/tools/`, dispatched via a lookup map.
+
+- **Claude.ai and Claude Desktop setup instructions replaced with the connector-directory
+  flow.** Sequentum MCP is now listed in Claude's connector directory, so the
+  Add-custom-connector walkthrough — and the plan-tier caveats that came with it (the
+  custom-connector beta note, the one-connector limit on Free, the separate
+  Free/Pro/Max and Team/Enterprise procedures) — no longer applies. The Team and
+  Enterprise note is kept, since connector availability is still governed at org level.
+  Claude Code now leads with that account-level connection and keeps
+  `claude mcp add` for per-project and scripted setups.
+
+### Deprecated
+
+- **The stdio transport and `SEQUENTUM_API_KEY` authentication are deprecated**, together
+  with the **`sequentum-mcp` npm package**. Connect to `https://mcp.sequentum.com/mcp`
+  over HTTP with OAuth 2.1 instead. Nothing is removed in this release — existing installs
+  keep working — and no removal version or date has been set yet.
+
+  These are one deprecation, not two. The MCP authorization specification directs stdio
+  implementations not to follow it and to take credentials from the environment instead,
+  which is exactly why `SEQUENTUM_API_KEY` existed; moving the server to OAuth 2.1 as its
+  only authentication scheme therefore excludes stdio by construction.
+
+  This is scoped to the MCP server. Sequentum API keys remain fully supported for direct
+  REST integration against the Cloud API.
+
+- **Starting in stdio mode now prints a deprecation warning to stderr**, so the notice
+  reaches operators who never read the docs site.
+
+- **There is no supported self-hosted deployment.** The README's "Custom Sequentum
+  Instance" recipe is gone, and the HTTP-mode variable table no longer implies a
+  published container image — none is published. Callers who cannot route to
+  `mcp.sequentum.com` should contact support.
+
+### Fixed
+
+- **SE4-3980: the Docker image now reports the release version it was built as.** The
+  `Dockerfile` accepts the `VERSION` build argument the CI/CD pipelines were already passing
+  and stamps it into `package.json` before installing dependencies, so `GET /health` and the
+  MCP `serverInfo.version` match the image tag. Previously the argument was ignored and the
+  container reported whatever `package.json` said in the source tree, which on production
+  was always the *previous* release (the image is built before the version bump commit) and
+  on QA was the same `2.0.0` for every release branch. A plain `docker build` without the
+  argument behaves as before.
+- **SE4-3929: `scopes_supported` in the protected-resource metadata document is now derived
+  from the Control Center's own resource-metadata document** instead of a hardcoded array,
+  so it can no longer drift out of sync with what the Control Center actually enforces (it
+  had already drifted, omitting `spaces:write` and `billing:read`). The previous hardcoded
+  list is served until the first successful fetch; after that, a refresh that fails keeps the
+  last list fetched rather than reverting.
+- **SE4-3929: a tool call rejected upstream with `insufficient_scope` now names the missing
+  scope** in the tool error, instead of the generic "Access Denied" text used for every 403.
+  Reconnecting and re-authorizing the MCP connection is suggested directly in the message.
+
 ## [1.3.0] - TBD
 
 ### Added

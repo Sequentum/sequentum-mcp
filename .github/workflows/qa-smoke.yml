@@ -1,0 +1,39 @@
+name: QA Deployment Smoke
+
+# Deliberately NOT triggered by pull_request or push: this checks DEPLOYED code,
+# which a pull request cannot influence. A PR must never go red because QA is
+# down. Requires no secrets — every assertion is satisfiable without a token.
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Base URL to check'
+        required: false
+        default: 'https://mcp-qa.sequentum.com'
+
+jobs:
+  smoke:
+    name: Assert deployed QA surface
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The smoke script imports the built assertion module from dist/.
+      - name: Build
+        run: npm run build
+
+      - name: Check deployed surface
+        run: npm run smoke:deployment -- "${{ inputs.base_url || 'https://mcp-qa.sequentum.com' }}"

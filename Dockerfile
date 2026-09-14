@@ -6,6 +6,16 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
+# Stamp the release version into package.json (and package-lock.json) when the
+# build supplies one. The server reads its version from package.json at runtime,
+# so this is what /health and the MCP serverInfo.version end up reporting.
+# Without the build arg the files are left untouched and a plain `docker build`
+# keeps working. Must run before `npm ci` so the lock file stays consistent.
+ARG VERSION
+RUN if [ -n "$VERSION" ]; then \
+      npm version "$VERSION" --no-git-tag-version --allow-same-version --ignore-scripts; \
+    fi
+
 # Install all dependencies (including dev for build)
 # Skip prepare script - we'll build after copying source
 RUN npm ci --ignore-scripts
@@ -22,8 +32,10 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Copy package files and install production dependencies only
-COPY package*.json ./
+# Copy the (possibly version-stamped) package files from the builder stage rather
+# than from the build context, so both stages agree on the version, and install
+# production dependencies only
+COPY --from=builder /app/package.json /app/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 # Copy built files from builder stage

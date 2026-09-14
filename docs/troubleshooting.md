@@ -1,11 +1,11 @@
 # Troubleshooting Guide
 
-This guide covers common issues and their solutions when using the Sequentum MCP server. The recommended setup is the remote server at `https://mcp.sequentum.com/mcp` using OAuth authentication. A local setup via `npx` is also available as an alternative.
+This guide covers common issues and their solutions when using the Sequentum MCP server. The supported setup is the remote server at `https://mcp.sequentum.com/mcp` using OAuth authentication. The local `npx` setup is deprecated and will be removed in a future release; its issues are still documented below for anyone migrating off it.
 
 ## Table of Contents
 
 - [Remote Connection Issues (OAuth)](#remote-connection-issues-oauth)
-- [Local Connection Issues (API Key)](#local-connection-issues-api-key)
+- [Local Connection Issues (API Key, Deprecated)](#local-connection-issues-api-key-deprecated)
 - [Authentication Errors](#authentication-errors)
 - [API Errors](#api-errors)
 - [Agent Execution Issues](#agent-execution-issues)
@@ -33,18 +33,38 @@ These issues apply when connecting to the hosted Sequentum MCP server at `https:
 
 ### OAuth authentication failed or token expired
 
-**Error:**
-```
-Error: OAuth authentication failed
-```
+Access tokens last one hour. Your client does not refresh on a timer -- the
+server prompts the renewal by returning a 401 on your next request once the
+token expires, and your client redeems its refresh token right then, so you
+should not notice anything beyond a brief pause.
 
-**Cause:** Your OAuth session has expired or the authorization was denied.
+A 401 that persists across retries therefore means something other than expiry:
 
-**Solutions:**
+- the connector was revoked from your Sequentum account, or
+- your user or organisation access changed.
 
-1. **Re-authenticate:** Log out of the MCP integration in your client and log back in
-2. **Check your Sequentum account** is active and has the necessary permissions
-3. **If you've joined a new Sequentum organization**, log out and log back in to refresh access
+Reconnect from **Settings → Connectors** to resolve either case.
+
+**Diagnosing a report as an operator.** The server logs one line per rejected
+token:
+
+    [MCP] auth=rejected reason=expired kid="STXjwgTe" age=417s client="claude-desktop"
+
+`reason` is one of `expired`, `bad-signature`, `malformed` or `bad-alg`.
+
+Lines reading `auth=unverifiable` are **not** rejections — the request was passed
+through and the API decided it. Three reasons appear there:
+
+- `jwks-unreachable` — the signing keys could not be fetched.
+- `unknown-kid` — the token was signed by a key we do not recognise, usually a
+  rotation we have not picked up yet.
+- `wrong-audience` — the token was minted for a different origin. This is
+  recorded rather than rejected on purpose: a refresh reuses the original
+  resource, so rejecting it would put the client in a 401/refresh loop it could
+  never escape.
+
+A sustained run of `jwks-unreachable` means validation has degraded to
+pass-through and needs attention.
 
 ---
 
@@ -66,9 +86,16 @@ Error: ECONNREFUSED or ETIMEDOUT connecting to mcp.sequentum.com
 
 ---
 
-## Local Connection Issues (API Key)
+## Local Connection Issues (API Key, Deprecated)
 
-These issues apply when running the MCP server locally via `npx sequentum-mcp`.
+> **Deprecated:** Running the MCP server locally over the stdio transport, authenticated
+> with `SEQUENTUM_API_KEY`, is deprecated and will be removed in a future release, along
+> with the `sequentum-mcp` npm package. Connect to `https://mcp.sequentum.com/mcp` over
+> HTTP with OAuth 2.1 instead -- see
+> [Deprecated: stdio and API-key auth](../README.md#deprecated-stdio-and-api-key-auth).
+
+These issues apply when running the MCP server locally via `npx sequentum-mcp`. They are
+kept for readers still on that path.
 
 ### SEQUENTUM_API_KEY required
 
@@ -100,7 +127,7 @@ Error: SEQUENTUM_API_KEY environment variable is required
 }
 ```
 
-> **Tip:** If you don't need to run locally, consider using the [remote OAuth setup](../README.md#getting-started) instead -- it doesn't require an API key.
+> **Migrate instead:** The [remote OAuth setup](../README.md#getting-started) requires no API key and no local Node.js install, and is the only setup that will remain supported.
 
 ---
 
@@ -154,15 +181,43 @@ These errors apply to both remote (OAuth) and local (API key) setups.
 Error: API Error 401: Unauthorized
 ```
 
-**Cause:** Your credentials are invalid, expired, or have been revoked.
+**Remote connector (OAuth).**
 
-**Solutions:**
+Access tokens last one hour. Your client does not refresh on a timer -- the
+server prompts the renewal by returning a 401 on your next request once the
+token expires, and your client redeems its refresh token right then, so you
+should not notice anything beyond a brief pause.
 
-**For remote (OAuth) users:**
-1. **Re-authenticate** by logging out of the MCP integration and logging back in
-2. **Check your Sequentum account** is still active
+A 401 that persists across retries therefore means something other than expiry:
 
-**For local (API key) users:**
+- the connector was revoked from your Sequentum account, or
+- your user or organisation access changed.
+
+Reconnect from **Settings → Connectors** to resolve either case.
+
+**Diagnosing a report as an operator.** The server logs one line per rejected
+token:
+
+    [MCP] auth=rejected reason=expired kid="STXjwgTe" age=417s client="claude-desktop"
+
+`reason` is one of `expired`, `bad-signature`, `malformed` or `bad-alg`.
+
+Lines reading `auth=unverifiable` are **not** rejections — the request was passed
+through and the API decided it. Three reasons appear there:
+
+- `jwks-unreachable` — the signing keys could not be fetched.
+- `unknown-kid` — the token was signed by a key we do not recognise, usually a
+  rotation we have not picked up yet.
+- `wrong-audience` — the token was minted for a different origin. This is
+  recorded rather than rejected on purpose: a refresh reuses the original
+  resource, so rejecting it would put the client in a 401/refresh loop it could
+  never escape.
+
+A sustained run of `jwks-unreachable` means validation has degraded to
+pass-through and needs attention.
+
+**Local setup (API key — deprecated).**
+
 1. **Generate a new API key:**
    - Log in to the [Sequentum Control Center](https://dashboard.sequentum.com)
    - Go to **Settings** > **API Keys**
@@ -325,7 +380,7 @@ Run agent 123 synchronously with a 5 minute timeout
 3. **Restart the MCP client** after adding or changing the server configuration
 4. **Check the MCP client logs** for error messages
 
-**Solutions for local (API key) setup:**
+**Solutions for the deprecated local (API key) setup:**
 
 1. **Check the MCP client logs** for error messages
 2. **Verify your JSON configuration** is valid (no trailing commas, proper quotes)
@@ -334,13 +389,13 @@ Run agent 123 synchronously with a 5 minute timeout
 
 ---
 
-### MCP server not starting (local mode)
+### MCP server not starting (local mode, deprecated)
 
-**Cause:** Node.js not installed or version too old. This only applies to the local npx setup.
+**Cause:** Node.js not installed or version too old. This only applies to the deprecated local npx setup.
 
 **Solutions:**
 
-1. **Install Node.js 18+** from [nodejs.org](https://nodejs.org/)
+1. **Install Node.js 20 or later** from [nodejs.org](https://nodejs.org/) -- `package.json` declares `"engines": {"node": ">=20"}`, and Node 18 fails at install
 2. **Verify installation:** `node --version`
 3. **Check npm is working:** `npm --version`
 

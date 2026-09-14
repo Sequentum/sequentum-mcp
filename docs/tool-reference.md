@@ -1,6 +1,6 @@
 # Tool Reference
 
-The Sequentum MCP Server provides 39 tools across 9 categories for managing web scraping agents, runs, schedules, and more. These tools become available once you connect to the server -- either via the [remote OAuth setup](../README.md#getting-started) at `https://mcp.sequentum.com/mcp` or the [local API key setup](../README.md#alternative-local-setup-api-key).
+The Sequentum MCP Server provides 39 tools across 9 categories for managing web scraping agents, runs, schedules, and more. These tools become available once you connect to the server at `https://mcp.sequentum.com/mcp` -- see the [OAuth setup](../README.md#getting-started).
 
 > **Pagination:** Tools that return lists (`list_agents`, `get_agent_runs`, `get_credit_history`, `get_agents_usage`, `get_agent_runs_cost`) support pagination via `pageIndex` (1-based) and `recordsPerPage`. When the result is paginated, the response includes the total count so you know if more pages are available.
 

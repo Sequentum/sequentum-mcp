@@ -10,7 +10,6 @@ import {
   validateStartTimeInFuture,
   validateString,
 } from "./utils/validation.js";
-import { buildOAuthMetadata } from "./utils/oauth-metadata.js";
 import { resources, resourceTemplates, readResource } from "./server/resources.js";
 import { prompts, getPromptMessages } from "./server/prompts.js";
 
@@ -20,51 +19,6 @@ import { prompts, getPromptMessages } from "./server/prompts.js";
  * These tests verify that the MCP handlers apply correct defaults
  * and transform parameters appropriately before calling the API client.
  */
-
-// ==========================================
-// OAuth Authorization Server Metadata Tests
-// ==========================================
-
-describe("OAuth Authorization Server metadata (RFC 8414)", () => {
-  const API_BASE_URL = "https://dashboard.sequentum.com";
-  const metadata = buildOAuthMetadata(API_BASE_URL);
-
-  it("should advertise CIMD support (draft-ietf-oauth-client-id-metadata-document)", () => {
-    // Per MCP spec 2025-11-25, CIMD is the preferred dynamic client identification method.
-    // The authorization server signals support via client_id_metadata_document_supported: true.
-    // MCP clients check this flag to decide whether to use a URL as their client_id.
-    expect(metadata.client_id_metadata_document_supported).toBe(true);
-  });
-
-  it("should include registration_endpoint as DCR fallback (RFC 7591)", () => {
-    // Dynamic Client Registration is kept as a fallback for clients that don't support CIMD.
-    // Per MCP spec priority: 1) Pre-registration 2) CIMD 3) DCR 4) Manual
-    expect(metadata.registration_endpoint).toBe(`${API_BASE_URL}/api/oauth/register`);
-  });
-
-  it("should declare public client auth (PKCE) with token_endpoint_auth_methods_supported: ['none']", () => {
-    // All clients are public (no client_secret), protected by PKCE (S256)
-    expect(metadata.token_endpoint_auth_methods_supported).toEqual(["none"]);
-    expect(metadata.code_challenge_methods_supported).toEqual(["S256"]);
-  });
-
-  it("should not include a static client_id in the metadata", () => {
-    // With CIMD/DCR, there is no pre-assigned client_id in server metadata.
-    // CIMD clients use their own URL; DCR clients register to get one.
-    expect(metadata).not.toHaveProperty("client_id");
-  });
-
-  it("should support authorization_code and refresh_token grant types", () => {
-    expect(metadata.grant_types_supported).toContain("authorization_code");
-    expect(metadata.grant_types_supported).toContain("refresh_token");
-  });
-
-  it("should advertise resource indicator support (RFC 8707)", () => {
-    // Resource indicators allow clients to specify which resource they're requesting a token for.
-    // This is required by the MCP spec for proper token scoping.
-    expect(metadata.resource_indicators_supported).toBe(true);
-  });
-});
 
 // ==========================================
 // validateStartTimeInFuture Tests
