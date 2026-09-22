@@ -395,16 +395,15 @@ JSONEOF
 
                             # No ECR host in the body. The registry URL carries the AWS
                             # account id, and this release page is public.
-                            # npm and the MCP Registry publish later in this build, so these
-                            # are links to what the build will publish, not a claim that
-                            # they are already live.
+                            # The MCP Registry publishes later in this build, so this link
+                            # is to what the build will publish, not a claim that it is
+                            # already live.
 cat > /tmp/gh-release-body.md <<BODYEOF
 ## sequentum-mcp ${TAG}
 
 Published by Jenkins build ${BUILD_NUMBER}.
 
 - Container image tag: ${TAG}
-- npm: https://www.npmjs.com/package/sequentum-mcp/v/${VERSION}
 - MCP Registry: com.sequentum/mcp@${VERSION}
 BODYEOF
 
@@ -443,45 +442,6 @@ BODYEOF
                     # wait 2 minutes for deployment
                     sleep 120
                 """
-            }
-        }
-
-        stage('Publish to npm') {
-            agent { label 'jenkins-agent' }
-            steps {
-                script { mergeChanges() }
-                dir('sequentum-mcp') {
-                    // The Test stage already ran the suite; build the artifact only.
-                    script {
-                        docker.image('node:20-alpine').inside('-e HOME=/tmp -e npm_config_cache=/tmp/.npm') {
-                            sh '''
-                                set -e
-                                node --version
-                                npm --version
-                                npm ci
-                                npm run build
-                            '''
-                        }
-                    }
-                    // Safety net: package.json should already match VERSION from the Commit stage;
-                    // --allow-same-version makes this a no-op when in sync.
-                    sh "npm version '${VERSION}' --no-git-tag-version --allow-same-version"
-                    withCredentials([string(credentialsId: 'npm-token', variable: 'NPM_TOKEN')]) {
-                        script {
-                            // npm publish runs prepublishOnly (validate:registry, check:versions),
-                            // so it needs Node 20 too. The token file lives outside the workspace
-                            // to keep it out of the git tree.
-                            docker.image('node:20-alpine').inside('-e HOME=/tmp -e npm_config_cache=/tmp/.npm') {
-                                sh '''
-                                    set -e
-                                    echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > /tmp/npmrc-publish
-                                    npm publish --access public --userconfig /tmp/npmrc-publish
-                                    rm -f /tmp/npmrc-publish
-                                '''
-                            }
-                        }
-                    }
-                }
             }
         }
 
@@ -537,7 +497,7 @@ BODYEOF
     post {
         success {
             echo "Production Build completed successfully - ${SOURCE_BRANCH} merged into ${TARGET_BRANCH}"
-            echo "Version v${env.VERSION} tagged, released on GitHub, deployed, published to npm, and listed on the MCP Registry"
+            echo "Version v${env.VERSION} tagged, released on GitHub, deployed, and listed on the MCP Registry"
         }
         failure {
             echo "Production Build failed"
