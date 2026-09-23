@@ -9,9 +9,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import http from "http";
 import express, { type NextFunction, type Request, type Response } from "express";
+import glamaClaim from "./well-known/glama.json" with { type: "json" };
 import {
   applyTrustProxy,
   auditCanonicalOrigin,
+  handleGlamaClaim,
   handleOpenAIChallenge,
   jsonRpcErrorMiddleware,
   parseTrustProxy,
@@ -78,6 +80,53 @@ describe("/.well-known/openai-apps-challenge", () => {
     const res = await fetch(`${baseUrl}/.well-known/openai-apps-challenge`);
 
     expect(res.status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /.well-known/glama.json
+// ---------------------------------------------------------------------------
+
+describe("/.well-known/glama.json", () => {
+  // Glama's HTTP challenge fetches this file from the connector's own origin to
+  // verify ownership, and keeps re-fetching it, so the route must serve the
+  // checked-in claim file as-is and the file must stay a valid claim document.
+  let server: http.Server;
+  let baseUrl: string;
+
+  beforeEach(() => {
+    const app = express();
+    app.get("/.well-known/glama.json", handleGlamaClaim);
+    server = http.createServer(app);
+    server.listen(0);
+    baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  });
+
+  afterEach(() => {
+    server?.close();
+  });
+
+  it("serves the checked-in claim file as JSON", async () => {
+    const res = await fetch(`${baseUrl}/.well-known/glama.json`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/^application\/json/);
+    expect(await res.json()).toEqual(glamaClaim);
+  });
+
+  it("answers HEAD with 200 and no body", async () => {
+    const res = await fetch(`${baseUrl}/.well-known/glama.json`, { method: "HEAD" });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("");
+  });
+
+  it("keeps the claim file in the exact shape Glama's connector schema accepts", () => {
+    // Guards a future edit of the file: Glama rejects extra keys, a different
+    // schema URL, or a token outside its pattern, and ownership would lapse.
+    expect(Object.keys(glamaClaim).sort()).toEqual(["$schema", "claim"]);
+    expect(glamaClaim.$schema).toBe("https://glama.ai/mcp/schemas/connector.json");
+    expect(glamaClaim.claim).toMatch(/^glama_claim_[A-Za-z0-9_-]{32}$/);
   });
 });
 

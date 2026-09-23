@@ -35,9 +35,6 @@ coverage/
 *.tmp
 *.temp
 
-# Jenkins pipeline files (not committed to public repo)
-Jenkinsfile*
-
 # Design specs and other Superpowers workflow artifacts (not committed to public repo)
 docs/superpowers/
 .superpowers/
