@@ -18,6 +18,7 @@ import { createJwksCache, type JwksKeySource } from "../utils/jwks-cache.js";
 import { createResourceScopesSource, type ResourceScopesSource } from "../utils/resource-scopes.js";
 import { validateToken } from "../utils/token-validator.js";
 import { createSequentumMcpHandler, loggable } from "./mcp-handler.js";
+import glamaClaim from "./well-known/glama.json" with { type: "json" };
 
 const DEBUG = process.env.DEBUG === '1';
 
@@ -367,6 +368,16 @@ export function handleOpenAIChallenge(_req: Request, res: Response): void {
 }
 
 /**
+ * Handler for GET /.well-known/glama.json (Glama connector ownership claim).
+ * Serves the claim document in well-known/glama.json, copied verbatim from
+ * Glama's "Claim ownership" dialog; to change the claim, edit that file.
+ * Exported so tests can import the real handler.
+ */
+export function handleGlamaClaim(_req: Request, res: Response): void {
+  res.json(glamaClaim);
+}
+
+/**
  * Start the MCP server in HTTP mode (for Claude Connectors).
  *
  * Uses the stateless Streamable HTTP transport: a fresh McpServer and API
@@ -583,6 +594,11 @@ export async function startHttpServer(
   // No auth required — must be publicly reachable by OpenAI's verifier.
   // Set OPENAI_APPS_CHALLENGE_TOKEN before clicking "Verify Domain" on the submission form.
   app.get("/.well-known/openai-apps-challenge", handleOpenAIChallenge);
+
+  // Glama connector ownership claim. No auth required: Glama's HTTP challenge
+  // fetches this from the connector's own origin, and keeps re-checking it, so the
+  // route must stay published to keep ownership verified.
+  app.get("/.well-known/glama.json", handleGlamaClaim);
 
   // Log incoming requests for debugging (only when DEBUG is enabled)
   if (DEBUG) {
