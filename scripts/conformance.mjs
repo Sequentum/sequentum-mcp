@@ -268,7 +268,6 @@ async function main() {
     serverProcess = spawn("node", [join(ROOT, "dist", "index.js")], {
       env: {
         ...process.env,
-        TRANSPORT_MODE: "http",
         // The conformance CLI has no --header/--token option, so it cannot
         // authenticate. Harmless here: this is an ephemeral localhost process.
         REQUIRE_AUTH: "false",
