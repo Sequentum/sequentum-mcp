@@ -10,8 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import http from "http";
 import express, { type NextFunction, type Request, type Response } from "express";
 import {
+  GLAMA_CLAIM_TOKEN_PATTERN,
   applyTrustProxy,
   auditCanonicalOrigin,
+  auditGlamaClaimToken,
+  handleGlamaClaim,
   handleOpenAIChallenge,
   jsonRpcErrorMiddleware,
   parseTrustProxy,
@@ -78,6 +81,83 @@ describe("/.well-known/openai-apps-challenge", () => {
     const res = await fetch(`${baseUrl}/.well-known/openai-apps-challenge`);
 
     expect(res.status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /.well-known/glama.json
+// ---------------------------------------------------------------------------
+
+describe("/.well-known/glama.json", () => {
+  // Glama's HTTP challenge fetches this file from the connector's own origin to
+  // verify ownership, and keeps re-fetching it, so the body must match Glama's
+  // connector schema exactly and a malformed token must never be served.
+  const VALID = "glama_claim_" + "A".repeat(16) + "b-_9".repeat(4);
+  let server: http.Server;
+  let baseUrl: string;
+
+  function startServer(token: string | undefined): void {
+    if (token !== undefined) process.env.GLAMA_CLAIM_TOKEN = token;
+    else delete process.env.GLAMA_CLAIM_TOKEN;
+
+    const app = express();
+    app.get("/.well-known/glama.json", handleGlamaClaim);
+    server = http.createServer(app);
+    server.listen(0);
+    baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  }
+
+  afterEach(() => {
+    server?.close();
+    delete process.env.GLAMA_CLAIM_TOKEN;
+  });
+
+  it("returns 200 with exactly the connector claim document when the token is valid", async () => {
+    startServer(VALID);
+
+    const res = await fetch(`${baseUrl}/.well-known/glama.json`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/^application\/json/);
+    expect(await res.json()).toEqual({
+      $schema: "https://glama.ai/mcp/schemas/connector.json",
+      claim: VALID,
+    });
+  });
+
+  it("answers HEAD with 200 and no body", async () => {
+    startServer(VALID);
+
+    const res = await fetch(`${baseUrl}/.well-known/glama.json`, { method: "HEAD" });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("");
+  });
+
+  it.each([
+    ["unset", undefined],
+    ["empty", ""],
+  ])("returns 404 when GLAMA_CLAIM_TOKEN is %s", async (_label, token) => {
+    startServer(token);
+
+    const res = await fetch(`${baseUrl}/.well-known/glama.json`);
+
+    expect(res.status).toBe(404);
+  });
+
+  it.each([
+    ["the wrong prefix", "glama_token_" + "A".repeat(32)],
+    ["a 31-character suffix", "glama_claim_" + "A".repeat(31)],
+    ["a 33-character suffix", "glama_claim_" + "A".repeat(33)],
+    ["a disallowed character", "glama_claim_" + "A".repeat(31) + "."],
+    ["a trailing newline", VALID + "\n"],
+  ])("returns 404 for a token with %s", async (_label, token) => {
+    startServer(token);
+
+    const res = await fetch(`${baseUrl}/.well-known/glama.json`);
+
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("");
   });
 });
 
@@ -363,6 +443,56 @@ describe("auditCanonicalOrigin", () => {
     const lines = captureWarnings();
 
     auditCanonicalOrigin();
+
+    expect(lines).toEqual([]);
+  });
+});
+
+describe("auditGlamaClaimToken", () => {
+  // A malformed GLAMA_CLAIM_TOKEN makes /.well-known/glama.json 404, and so the
+  // Glama ownership check silently fails. The startup log is the only place an
+  // operator sees why. The value itself must not appear there: a near-miss is
+  // probably the real token with a stray character.
+  const VALID = "glama_claim_" + "A".repeat(32);
+
+  function captureWarnings(): string[] {
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    });
+    return lines;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.GLAMA_CLAIM_TOKEN;
+  });
+
+  it.each([
+    ["a wrong prefix", "glama_token_" + "Z".repeat(32)],
+    ["a trailing newline", VALID + "\n"],
+  ])("warns once, without the value, for a token with %s", (_label, token) => {
+    process.env.GLAMA_CLAIM_TOKEN = token;
+    const lines = captureWarnings();
+
+    auditGlamaClaimToken();
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/GLAMA_CLAIM_TOKEN/);
+    expect(lines[0]).toMatch(/glama\.json/);
+    expect(lines[0]).toContain(GLAMA_CLAIM_TOKEN_PATTERN.source);
+    expect(lines[0]).not.toContain(token.trim());
+  });
+
+  it.each([
+    ["unset", undefined],
+    ["empty", ""],
+    ["valid", VALID],
+  ])("is silent when the token is %s", (_label, token) => {
+    if (token !== undefined) process.env.GLAMA_CLAIM_TOKEN = token;
+    const lines = captureWarnings();
+
+    auditGlamaClaimToken();
 
     expect(lines).toEqual([]);
   });

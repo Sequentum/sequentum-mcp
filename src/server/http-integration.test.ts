@@ -409,6 +409,51 @@ describe("/.well-known/oauth-protected-resource", () => {
   });
 });
 
+describe("/.well-known/glama.json on the real server", () => {
+  // The handler has its own unit tests; these pin that startHttpServer actually
+  // mounts the route and runs the startup audit, since Glama keeps re-fetching
+  // the file and a dropped route would silently lose verified ownership.
+  const VALID = "glama_claim_" + "A".repeat(32);
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.GLAMA_CLAIM_TOKEN;
+  });
+
+  async function start(): Promise<{ server: HttpServer; base: string }> {
+    const server = await startHttpServer("https://api.example.test", "https://api.example.test", "9.9.9", 0, "127.0.0.1");
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    return { server, base: `http://127.0.0.1:${addr.port}` };
+  }
+
+  it("serves the claim document without authentication", async () => {
+    process.env.GLAMA_CLAIM_TOKEN = VALID;
+    const { server, base } = await start();
+    try {
+      const res = await fetch(`${base}/.well-known/glama.json`);
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { claim: string }).claim).toBe(VALID);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("warns at startup when the token is malformed", async () => {
+    process.env.GLAMA_CLAIM_TOKEN = "not-a-glama-token";
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    });
+    const { server } = await start();
+    try {
+      expect(lines.filter((l) => l.includes("GLAMA_CLAIM_TOKEN"))).toHaveLength(1);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
 describe("GET / landing page", () => {
   let server: HttpServer;
   let base: string;
