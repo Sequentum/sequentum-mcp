@@ -1,5 +1,26 @@
 # Changelog
 
+## [3.0.0] - Unreleased
+
+### BREAKING CHANGES
+
+- **The stdio transport and `SEQUENTUM_API_KEY` authentication are removed.** The server
+  now runs only the Streamable HTTP transport with OAuth 2.1; connect to
+  `https://mcp.sequentum.com/mcp`. This completes the deprecation announced in 2.0.0,
+  which had set no removal version. Versions of the `sequentum-mcp` npm package that are
+  already published stay installable and deprecated; no new versions are published.
+- **`TRANSPORT_MODE` is no longer read.** HTTP is the only mode, so the variable has no
+  effect and can be removed from any deployment configuration.
+- **The package is no longer publishable.** `package.json` is marked `private` and no
+  longer declares the `sequentum-mcp` bin.
+- **The `SequentumApiClient` constructor dropped its `apiKey` parameter.** It is now
+  `(baseUrl, requestTimeoutMs, maxRetries)`; authenticate with `setAccessToken()`.
+
+### Changed
+
+- Tool errors for a 401 or 403 from the Sequentum API no longer mention API keys. A 401
+  now says to disconnect and reconnect the Sequentum MCP server to sign in again.
+
 ## [2.0.0] - 2026-09-14
 
 ### BREAKING CHANGES

@@ -116,7 +116,7 @@ describe("resolveIssuer failure modes", () => {
   });
 
   it("warns but does NOT throw when the SEQUENTUM_API_URL fallback is not https", () => {
-    // npm run dev:http against a local http backend must still boot.
+    // npm run dev against a local http backend must still boot.
     const result = resolveIssuer({ SEQUENTUM_API_URL: "http://localhost:5000" }, DEFAULT);
     expect(result.issuer).toBe("http://localhost:5000");
     expect(result.warning).toMatch(/SEQUENTUM_OAUTH_ISSUER/);

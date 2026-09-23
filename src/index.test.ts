@@ -242,7 +242,8 @@ describe("list_agents handler", () => {
 
       // Import and use the API client directly to simulate handler behavior
       const { SequentumApiClient } = await import("./api/api-client.js");
-      const client = new SequentumApiClient("https://test.example.com", "sk-test-key");
+      const client = new SequentumApiClient("https://test.example.com");
+      client.setAccessToken("test-token");
 
       // Call with default pagination (simulating handler behavior)
       await client.getAllAgents({
@@ -270,7 +271,8 @@ describe("list_agents handler", () => {
       } as Response);
 
       const { SequentumApiClient } = await import("./api/api-client.js");
-      const client = new SequentumApiClient("https://test.example.com", "sk-test-key");
+      const client = new SequentumApiClient("https://test.example.com");
+      client.setAccessToken("test-token");
 
       // Simulating handler always passing pagination defaults
       await client.getAllAgents({
@@ -294,7 +296,8 @@ describe("list_agents handler", () => {
       } as Response);
 
       const { SequentumApiClient } = await import("./api/api-client.js");
-      const client = new SequentumApiClient("https://test.example.com", "sk-test-key");
+      const client = new SequentumApiClient("https://test.example.com");
+      client.setAccessToken("test-token");
 
       // User provides explicit page 3
       await client.getAllAgents({
@@ -317,7 +320,8 @@ describe("list_agents handler", () => {
       } as Response);
 
       const { SequentumApiClient } = await import("./api/api-client.js");
-      const client = new SequentumApiClient("https://test.example.com", "sk-test-key");
+      const client = new SequentumApiClient("https://test.example.com");
+      client.setAccessToken("test-token");
 
       // User provides explicit 25 records per page
       await client.getAllAgents({
@@ -340,7 +344,8 @@ describe("list_agents handler", () => {
       } as Response);
 
       const { SequentumApiClient } = await import("./api/api-client.js");
-      const client = new SequentumApiClient("https://test.example.com", "sk-test-key");
+      const client = new SequentumApiClient("https://test.example.com");
+      client.setAccessToken("test-token");
 
       // Simulating handler with defaults + user-provided filters
       await client.getAllAgents({

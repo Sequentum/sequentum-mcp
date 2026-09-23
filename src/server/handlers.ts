@@ -53,7 +53,7 @@ export function formatToolError(error: unknown): {
   } else if (error instanceof ApiRequestError) {
     if (error.isUnauthorized) {
       errorPrefix = "Authentication Failed";
-      errorMessage = "Your API key or OAuth token is invalid or has expired. Please check your credentials.";
+      errorMessage = "Your OAuth token is invalid or has expired. Disconnect and reconnect the Sequentum MCP server to sign in again.";
     } else if (error.isInsufficientScope) {
       // SE4-3929: distinguished from the generic 403 below so the caller learns this is a
       // scope problem, not a permissions problem, and is told what to do about it.
@@ -66,7 +66,7 @@ export function formatToolError(error: unknown): {
       errorMessage = `This action requires ${need}. Disconnect and reconnect the Sequentum MCP server, then approve the requested permissions, to re-authorize.`;
     } else if (error.isForbidden) {
       errorPrefix = "Access Denied";
-      errorMessage = "You don't have permission to perform this action. Check your API key permissions.";
+      errorMessage = "You don't have permission to perform this action. Check your Sequentum account's permissions.";
     } else if (error.isNotFound) {
       errorPrefix = "Not Found";
       errorMessage = error.message;

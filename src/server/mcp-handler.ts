@@ -192,7 +192,7 @@ export function createSequentumMcpHandler(apiBaseUrl: string, version: string): 
     logEraLine(ctx, trace);
 
     // One API client per request — this is what makes the server stateless.
-    const apiClient = new SequentumApiClient(apiBaseUrl, null);
+    const apiClient = new SequentumApiClient(apiBaseUrl);
     const token = bearerFrom(ctx.requestInfo);
     if (token) {
       apiClient.setAccessToken(token);
