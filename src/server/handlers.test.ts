@@ -271,6 +271,26 @@ describe("tool annotations", () => {
     }
   });
 
+  it("every tool has idempotentHint defined (SE4-3959)", () => {
+    for (const tool of tools) {
+      expect(
+        typeof tool.annotations?.idempotentHint,
+        `Tool "${tool.name}" is missing annotations.idempotentHint`
+      ).toBe("boolean");
+    }
+  });
+
+  it("every read-only tool has idempotentHint: true", () => {
+    const readOnlyTools = tools.filter((t) => t.annotations?.readOnlyHint === true);
+    expect(readOnlyTools.length).toBe(30);
+    for (const tool of readOnlyTools) {
+      expect(
+        tool.annotations?.idempotentHint,
+        `Read-only tool "${tool.name}" should be idempotentHint: true`
+      ).toBe(true);
+    }
+  });
+
   it("every read-only tool has destructiveHint: false and openWorldHint: false", () => {
     const readOnlyTools = tools.filter((t) => t.annotations?.readOnlyHint === true);
     for (const tool of readOnlyTools) {
@@ -331,6 +351,28 @@ describe("tool annotations", () => {
     stop_agent_build:       false,
   };
 
+  // idempotentHint: true  → calling again with the same arguments reaches the same end
+  //                         state, so a client may retry a timed-out call without asking
+  // idempotentHint: false → a repeat call has a different effect (creates another run,
+  //                         schedule, build or version; or escalates, as kill_agent does)
+  const expectedIdempotentHint: Record<string, boolean> = {
+    // Converge on one end state.
+    stop_agent:             true,  // second stop on a stopping/stopped run is a no-op
+    delete_run:             true,  // second delete finds nothing
+    delete_agent_schedule:  true,  // second delete finds nothing
+    update_agent_schedule:  true,  // same fields applied twice leave the same state
+    enable_agent_schedule:  true,  // enabling an enabled schedule changes nothing
+    disable_agent_schedule: true,  // disabling a disabled schedule changes nothing
+    stop_agent_build:       true,  // description: no effect once the session is terminal
+    // Each call creates something new, or escalates.
+    start_agent:            false, // creates a new run per call
+    kill_agent:             false, // description: 1st call graceful stop, 2nd forces termination
+    restore_agent_version:  false, // each restore creates a new version record
+    create_agent_schedule:  false, // creates a new schedule per call
+    run_space_agents:       false, // starts a new batch of runs per call
+    start_agent_build:      false, // starts a new build session per call
+  };
+
   function assertPerToolAnnotation(
     annotationName: string,
     expected: Record<string, boolean>,
@@ -378,6 +420,14 @@ describe("tool annotations", () => {
       "DestructiveHint",
       expectedDestructiveHint,
       (t) => t.annotations?.destructiveHint,
+    );
+  });
+
+  it("every write tool has the correct idempotentHint value", () => {
+    assertPerToolAnnotation(
+      "IdempotentHint",
+      expectedIdempotentHint,
+      (t) => t.annotations?.idempotentHint,
     );
   });
 });
@@ -753,7 +803,8 @@ describe("agent builder handler dispatch", () => {
 describe("toolDispatch", () => {
   it("exposes a handler for every agent tool", () => {
     const expected = [
-      "list_agents", "get_agent", "search_agents", "get_agent_runs", "get_run_status",
+      "list_agents", "get_agent", "search_agents", "get_agent_search_count", "get_personal_agent_count",
+      "get_agent_runs", "get_agent_run_summary", "get_run_status",
       "start_agent", "stop_agent", "kill_agent", "delete_run", "get_run_files",
       "get_file_download_url", "get_agent_versions", "restore_agent_version",
     ];
@@ -780,11 +831,113 @@ describe("toolDispatch", () => {
       "get_credits_balance", "get_spending_summary", "get_credit_history",
       "get_agents_usage", "get_agent_cost_breakdown", "get_agent_runs_cost",
       "list_spaces", "get_space", "get_space_agents", "search_space_by_name",
-      "run_space_agents",
+      "run_space_agents", "get_space_agent_count",
     ];
     for (const name of expected) {
       expect(typeof toolDispatch[name]).toBe("function");
     }
+  });
+
+  it("get_space_agent_count returns the server-provided total", async () => {
+    const getSpaceAgentCount = vi.fn().mockResolvedValue({ totalCount: 73 });
+    const apiClient = { getSpaceAgentCount } as unknown as SequentumApiClient;
+    const result = await toolDispatch.get_space_agent_count(
+      { spaceId: 42 },
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+    );
+
+    expect(getSpaceAgentCount).toHaveBeenCalledWith(42);
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({ totalCount: 73 });
+  });
+
+  it("search_agents always sends an explicit limit and flags a capped result", async () => {
+    const searchAgents = vi.fn().mockResolvedValue(
+      Array.from({ length: 50 }, (_, i) => ({ id: i + 1, name: `checkout ${i}` }))
+    );
+    const apiClient = { searchAgents } as unknown as SequentumApiClient;
+    const result = await toolDispatch.search_agents(
+      { query: "checkout" },
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+    );
+
+    expect(searchAgents).toHaveBeenCalledWith("checkout", 50);
+    const parsed = JSON.parse((result.content[0] as { text: string }).text);
+    expect(parsed.returned).toBe(50);
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.note).toContain("get_agent_search_count");
+  });
+
+  it("get_agent_search_count returns the server-provided total", async () => {
+    const getAgentSearchCount = vi.fn().mockResolvedValue({ totalCount: 214 });
+    const apiClient = { getAgentSearchCount } as unknown as SequentumApiClient;
+    const result = await toolDispatch.get_agent_search_count(
+      { query: "checkout" },
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+    );
+
+    expect(getAgentSearchCount).toHaveBeenCalledWith("checkout", undefined);
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({ totalCount: 214 });
+  });
+
+  it("get_personal_agent_count returns the server-provided total", async () => {
+    const getPersonalAgentCount = vi.fn().mockResolvedValue({ totalCount: 238 });
+    const apiClient = { getPersonalAgentCount } as unknown as SequentumApiClient;
+    const result = await toolDispatch.get_personal_agent_count(
+      {},
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+    );
+
+    expect(getPersonalAgentCount).toHaveBeenCalledWith();
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({ totalCount: 238 });
+  });
+
+  it("get_agent_run_summary returns the server-provided totals", async () => {
+    const summary = {
+      totalCount: 395,
+      statusCounts: [{ status: 9, statusName: "Completed", count: 272 }],
+    };
+    const getAgentRunSummary = vi.fn().mockResolvedValue(summary);
+    const apiClient = { getAgentRunSummary } as unknown as SequentumApiClient;
+    const result = await toolDispatch.get_agent_run_summary(
+      { agentId: 289 },
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+    );
+
+    expect(getAgentRunSummary).toHaveBeenCalledWith(289);
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual(summary);
+  });
+
+  it("get_agent_runs always sends an explicit limit and flags a capped result", async () => {
+    const getAgentRuns = vi.fn().mockResolvedValue(
+      Array.from({ length: 50 }, (_, i) => ({ id: i + 1 }))
+    );
+    const apiClient = { getAgentRuns } as unknown as SequentumApiClient;
+    const result = await toolDispatch.get_agent_runs(
+      { agentId: 289 },
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+    );
+
+    expect(getAgentRuns).toHaveBeenCalledWith(289, 50);
+    const parsed = JSON.parse((result.content[0] as { text: string }).text);
+    expect(parsed.returned).toBe(50);
+    expect(parsed.limit).toBe(50);
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.note).toContain("get_agent_run_summary");
+  });
+
+  it("get_agent_runs does not flag a result below the limit", async () => {
+    const getAgentRuns = vi.fn().mockResolvedValue([{ id: 1 }, { id: 2 }]);
+    const apiClient = { getAgentRuns } as unknown as SequentumApiClient;
+    const result = await toolDispatch.get_agent_runs(
+      { agentId: 289, maxRecords: 100 },
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+    );
+
+    expect(getAgentRuns).toHaveBeenCalledWith(289, 100);
+    const parsed = JSON.parse((result.content[0] as { text: string }).text);
+    expect(parsed.returned).toBe(2);
+    expect(parsed.truncated).toBe(false);
+    expect(parsed.note).toBeUndefined();
   });
 });
 
@@ -829,7 +982,7 @@ describe("tool registration invariants", () => {
 // ==========================================
 
 describe("createMcpServer via SDK v2", () => {
-  it("advertises all 39 tools in declaration order, with annotations intact", async () => {
+  it("advertises all 43 tools in declaration order, with annotations intact", async () => {
     const apiClient = {} as unknown as SequentumApiClient;
     const server = createMcpServer(apiClient, "9.9.9");
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -838,7 +991,7 @@ describe("createMcpServer via SDK v2", () => {
 
     try {
       const result = await client.listTools();
-      expect(result.tools).toHaveLength(39);
+      expect(result.tools).toHaveLength(43);
       expect(result.tools.map((t) => t.name)).toEqual(tools.map((t) => t.name));
 
       // Annotations must survive registration — a hard directory review requirement.
@@ -868,7 +1021,7 @@ describe("createMcpServer via SDK v2", () => {
 
     try {
       const result = await client.listTools();
-      expect(result.tools).toHaveLength(39);
+      expect(result.tools).toHaveLength(43);
       for (const listed of result.tools) {
         expect(listed.title, `${listed.name} is missing a top-level title`).toBeTruthy();
         expect(

@@ -104,6 +104,12 @@ const get_agent: ToolHandler = async (args, { apiClient }) => {
   return jsonResult(agent);
 };
 
+/**
+ * The API's own default when maxRecords is omitted on /agent/search. Mirrored here so the
+ * handler always sends an explicit limit and can tell whether the result was capped.
+ */
+const SEARCH_DEFAULT_LIMIT = 50;
+
 const search_agents: ToolHandler = async (args, { apiClient }) => {
   const params = args;
   const query = validateString(params, "query")!;
@@ -111,17 +117,93 @@ const search_agents: ToolHandler = async (args, { apiClient }) => {
     throw new Error("Search query cannot be empty");
   }
   const maxRecords = validateNumber(params, "maxRecords", { required: false, min: 1, max: 1000, integer: true });
-  const agents = await apiClient.searchAgents(query, maxRecords);
-  return jsonResult(summarizeAgents(agents));
+  const limit = maxRecords ?? SEARCH_DEFAULT_LIMIT;
+  const agents = await apiClient.searchAgents(query, limit);
+  const returned = Array.isArray(agents) ? agents.length : 0;
+  const truncated = returned >= limit;
+
+  return jsonResult({
+    agents: summarizeAgents(agents),
+    returned,
+    limit,
+    truncated,
+    ...(truncated
+      ? {
+          note:
+            "This result was capped at the limit, so more agents may match than are listed. " +
+            "Do NOT count these to answer 'how many agents match' - call get_agent_search_count " +
+            "for the exact number, or raise maxRecords (max 1000).",
+        }
+      : {}),
+  });
+};
+
+/**
+ * Returns the exact number of agents matching a search term, computed server-side, so no
+ * counting of a capped list is required. See SE4-3921.
+ */
+const get_agent_search_count: ToolHandler = async (args, { apiClient }) => {
+  const params = args;
+  const query = validateString(params, "query")!;
+  if (!query.trim()) {
+    throw new Error("Search query cannot be empty");
+  }
+  const includeArchived = validateBoolean(params, "includeArchived", false);
+  const count = await apiClient.getAgentSearchCount(query, includeArchived);
+  return jsonResult(count);
+};
+
+/**
+ * Returns the number of agents in the caller's personal space as a single total.
+ * "Personal" is not a space, so get_space_agent_count cannot serve it. See SE4-3921.
+ */
+const get_personal_agent_count: ToolHandler = async (_args, { apiClient }) => {
+  const count = await apiClient.getPersonalAgentCount();
+  return jsonResult(count);
 };
 
 // Run Tools
+/**
+ * The API's own default when maxRecords is omitted. Mirrored here so the handler always
+ * sends an explicit limit and can therefore tell whether the result was capped - a bare
+ * array gives the caller no way to distinguish "50 runs" from "the first 50 of many".
+ */
+const RUNS_DEFAULT_LIMIT = 50;
+
 const get_agent_runs: ToolHandler = async (args, { apiClient }) => {
   const params = args;
   const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
   const maxRecords = validateNumber(params, "maxRecords", { required: false, min: 1, max: 1000, integer: true });
-  const runs = await apiClient.getAgentRuns(agentId, maxRecords);
-  return jsonResult(runs);
+  const limit = maxRecords ?? RUNS_DEFAULT_LIMIT;
+  const runs = await apiClient.getAgentRuns(agentId, limit);
+  const returned = Array.isArray(runs) ? runs.length : 0;
+  const truncated = returned >= limit;
+
+  return jsonResult({
+    runs,
+    returned,
+    limit,
+    truncated,
+    ...(truncated
+      ? {
+          note:
+            "This list was capped at the limit, so more runs may exist and these rows are " +
+            "only the most recent ones. Do NOT count them to answer 'how many runs' - call " +
+            "get_agent_run_summary for exact totals, or raise maxRecords (max 1000).",
+        }
+      : {}),
+  });
+};
+
+/**
+ * Returns exact run totals for an agent - overall and per status - computed by the server
+ * across both run tables, so no counting or paging is required. See SE4-3921.
+ */
+const get_agent_run_summary: ToolHandler = async (args, { apiClient }) => {
+  const params = args;
+  const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
+  const summary = await apiClient.getAgentRunSummary(agentId);
+  return jsonResult(summary);
 };
 
 const get_run_status: ToolHandler = async (args, { apiClient }) => {
@@ -306,7 +388,10 @@ export const agentToolHandlers: Record<string, ToolHandler> = {
   list_agents,
   get_agent,
   search_agents,
+  get_agent_search_count,
+  get_personal_agent_count,
   get_agent_runs,
+  get_agent_run_summary,
   get_run_status,
   start_agent,
   stop_agent,

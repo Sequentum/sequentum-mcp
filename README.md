@@ -176,16 +176,19 @@ How much did I spend on server time vs exports last week?
 
 ## Available Tools
 
-The Sequentum MCP Server provides 39 tools across 9 categories for interacting with the Sequentum platform. See the [Tool Reference](./docs/tool-reference.md) for detailed documentation.
+The Sequentum MCP Server provides 43 tools across 9 categories for interacting with the Sequentum platform. See the [Tool Reference](./docs/tool-reference.md) for detailed documentation.
 
 <!-- BEGIN AUTO GENERATED TOOLS -->
 
-- **Agent Management** (3 tools)
+- **Agent Management** (5 tools)
   - [`list_agents`](docs/tool-reference.md#list_agents)
   - [`get_agent`](docs/tool-reference.md#get_agent)
   - [`search_agents`](docs/tool-reference.md#search_agents)
-- **Run Management** (6 tools)
+  - [`get_agent_search_count`](docs/tool-reference.md#get_agent_search_count)
+  - [`get_personal_agent_count`](docs/tool-reference.md#get_personal_agent_count)
+- **Run Management** (7 tools)
   - [`get_agent_runs`](docs/tool-reference.md#get_agent_runs)
+  - [`get_agent_run_summary`](docs/tool-reference.md#get_agent_run_summary)
   - [`get_run_status`](docs/tool-reference.md#get_run_status)
   - [`start_agent`](docs/tool-reference.md#start_agent)
   - [`stop_agent`](docs/tool-reference.md#stop_agent)
@@ -213,10 +216,11 @@ The Sequentum MCP Server provides 39 tools across 9 categories for interacting w
   - [`get_agents_usage`](docs/tool-reference.md#get_agents_usage)
   - [`get_agent_cost_breakdown`](docs/tool-reference.md#get_agent_cost_breakdown)
   - [`get_agent_runs_cost`](docs/tool-reference.md#get_agent_runs_cost)
-- **Space Management** (5 tools)
+- **Space Management** (6 tools)
   - [`list_spaces`](docs/tool-reference.md#list_spaces)
   - [`get_space`](docs/tool-reference.md#get_space)
   - [`get_space_agents`](docs/tool-reference.md#get_space_agents)
+  - [`get_space_agent_count`](docs/tool-reference.md#get_space_agent_count)
   - [`search_space_by_name`](docs/tool-reference.md#search_space_by_name)
   - [`run_space_agents`](docs/tool-reference.md#run_space_agents)
 - **Analytics & Diagnostics** (4 tools)

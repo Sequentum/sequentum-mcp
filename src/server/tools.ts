@@ -62,13 +62,16 @@ export const tools: Tool[] = [
       },
       required: [],
     },
-    // All three hints are required for ChatGPT App submission.
-    // Read-only tools always get destructiveHint: false, openWorldHint: false.
-    // This is asserted for every read-only tool in handlers.test.ts.
+    // All four hints are set explicitly on every tool (three are required for ChatGPT
+    // App submission; idempotentHint tells clients whether a timed-out call may be
+    // retried without asking). Read-only tools always get destructiveHint: false,
+    // openWorldHint: false, idempotentHint: true. Write tools are classified per tool
+    // in handlers.test.ts (expectedIdempotentHint), which is the regression guard.
     annotations: {
       title: "List Agents",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -91,6 +94,7 @@ export const tools: Tool[] = [
       title: "Get Agent",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -100,13 +104,15 @@ export const tools: Tool[] = [
       "Search for agents by name or description (case-insensitive partial match). " +
       "FASTER than list_agents when user mentions a specific agent name. " +
       "Answers: 'Find the Amazon scraper', 'Which agent handles product data?', 'Search for pricing agents'. " +
-      "Returns: Matching agents with id, name, status, configType. " +
+      "Returns: An object with agents (matching agents with id, name, status, configType), plus returned, limit and truncated. " +
+      "TRUNCATION: At most 50 matches are returned unless you raise maxRecords. When truncated is true, the page came back full, so more agents may match than are listed. " +
+      "NEVER count this array to answer 'how many agents match' — use get_agent_search_count for the exact number. " +
       "TIP: Prefer this over list_agents when user mentions an agent by name.",
     inputSchema: {
       type: "object" as const,
       properties: {
         query: { type: "string", description: "Search term to match against agent names and descriptions. Case-insensitive." },
-        maxRecords: { type: "number", description: "Maximum results to return. Default: 50, Max: 1000." },
+        maxRecords: { type: "number", description: "Maximum results to return. Default: 50, Max: 1000. A smaller value silently returns fewer matches, so never use it when totals matter — use get_agent_search_count instead." },
       },
       required: ["query"],
     },
@@ -114,6 +120,54 @@ export const tools: Tool[] = [
       title: "Search Agents",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "get_agent_search_count",
+    description:
+      "Get the exact number of agents matching a search term, as a single total. " +
+      "USE THIS for any question about how many agents match a name or description — do NOT call " +
+      "search_agents and count the results, which returns at most 50 matches by default. " +
+      "Answers: 'How many agents have checkout in the name?', 'How many scrapers match X?'. " +
+      "Returns: An object with totalCount, the number of matching agents. " +
+      "Matched the same way as search_agents — names and descriptions, case-insensitive — and never capped, " +
+      "so with includeArchived left false this equals what search_agents would return if its limit were high enough.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        query: { type: "string", description: "Search term to match against agent names and descriptions. Case-insensitive." },
+        includeArchived: { type: "boolean", description: "Include archived agents in the count. Default: false." },
+      },
+      required: ["query"],
+    },
+    annotations: {
+      title: "Get Agent Search Count",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "get_personal_agent_count",
+    description:
+      "Get the number of agents in the user's personal space as a single total. " +
+      "The Control Center lists these under 'Personal' — they belong to no space. " +
+      "USE THIS for any question about how many agents are in the personal space — do NOT " +
+      "call list_agents and count the results yourself. " +
+      "Answers: 'How many agents do I have in Personal?', 'What is my personal agent count?'. " +
+      "Returns: An object with totalCount, the number of personal agents. " +
+      "IMPORTANT: 'Personal' is NOT a space and has no spaceId, so get_space_agent_count and " +
+      "search_space_by_name cannot be used for it, and list_agents rejects spaceId=0 as invalid. " +
+      "The total excludes archived agents and counts only agents.",
+    inputSchema: { type: "object" as const, properties: {}, required: [] },
+    annotations: {
+      title: "Get Personal Agent Count",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -124,14 +178,16 @@ export const tools: Tool[] = [
     description:
       "Get execution history for an agent showing past runs with status, timing, and records extracted. " +
       "Answers: 'When did agent X last run?', 'Show run history', 'How many records were extracted?', 'Did the agent fail?'. " +
-      "Returns: Array of runs with id, status (Running/Completed/Failed/etc), startTime, endTime, recordsExtracted, recordsExported, errorMessage. " +
+      "Returns: An object with runs (array of runs with id, status, startTime, endTime, recordsExtracted, recordsExported, errorMessage), plus returned, limit and truncated. " +
+      "TRUNCATION: Only the most recent runs are returned — 50 unless you raise maxRecords. When truncated is true, the page came back full, so more runs may exist than were returned. " +
+      "NEVER count this array to answer 'how many runs', 'how many failed' or 'how many succeeded' — use get_agent_run_summary, which returns exact server-computed totals. " +
       "TIP: Check the most recent run's status to see if agent is currently running or recently completed. " +
       "NEXT STEP: Use get_run_files to see output files from a completed run.",
     inputSchema: {
       type: "object" as const,
       properties: {
         agentId: { type: "number", description: "The unique ID of the agent. Get this from list_agents, search_agents, or get_agent_build_status (when building a new agent)." },
-        maxRecords: { type: "number", description: "Maximum number of runs to return. Default: 50. Use smaller values for faster response." },
+        maxRecords: { type: "number", description: "Maximum number of runs to return. Default: 50, Max: 1000. A smaller value silently returns fewer runs, so never use it when totals matter — use get_agent_run_summary instead." },
       },
       required: ["agentId"],
     },
@@ -139,6 +195,33 @@ export const tools: Tool[] = [
       title: "Get Agent Runs",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "get_agent_run_summary",
+    description:
+      "Get exact run totals for an agent: the overall count plus a breakdown by run status. " +
+      "USE THIS for any question about how many times an agent ran, failed, succeeded or was stopped — " +
+      "do NOT call get_agent_runs and count the results, which returns only the most recent 50 by default. " +
+      "Answers: 'How many times did agent X run?', 'How many runs failed?', 'Total, failed and successful runs for this agent'. " +
+      "Returns: An object with totalCount, and statusCounts — one entry per status with status, statusName and count. " +
+      "Counted across both current runs and run history, and never capped. " +
+      "NOTE: Statuses with no runs are omitted. 'Failure' and 'Failed' are distinct statuses, as are " +
+      "'Completed' and 'Success' — add the pairs together for a single failed or succeeded figure.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agentId: { type: "number", description: "The unique ID of the agent. Get this from list_agents or search_agents." },
+      },
+      required: ["agentId"],
+    },
+    annotations: {
+      title: "Get Agent Run Summary",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -162,6 +245,7 @@ export const tools: Tool[] = [
       title: "Get Run Status",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -191,6 +275,7 @@ export const tools: Tool[] = [
       title: "Start Agent",
       readOnlyHint: false,
       destructiveHint: false,
+      idempotentHint: false,
       // Runs a scraping agent against an arbitrary user-supplied URL — open-world by definition.
       openWorldHint: true,
     },
@@ -213,6 +298,7 @@ export const tools: Tool[] = [
       title: "Stop Agent",
       readOnlyHint: false,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -237,6 +323,7 @@ export const tools: Tool[] = [
       title: "Kill Agent",
       readOnlyHint: false,
       destructiveHint: true,
+      idempotentHint: false,
       openWorldHint: false,
     },
   },
@@ -271,6 +358,7 @@ export const tools: Tool[] = [
       title: "Delete Run",
       readOnlyHint: false,
       destructiveHint: true,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -296,6 +384,7 @@ export const tools: Tool[] = [
       title: "Get Run Files",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -320,6 +409,7 @@ export const tools: Tool[] = [
       title: "Get File Download URL",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -343,6 +433,7 @@ export const tools: Tool[] = [
       title: "Get Agent Versions",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -366,6 +457,7 @@ export const tools: Tool[] = [
       title: "Restore Agent Version",
       readOnlyHint: false,
       destructiveHint: false,
+      idempotentHint: false,
       openWorldHint: false,
     },
   },
@@ -389,6 +481,7 @@ export const tools: Tool[] = [
       title: "List Agent Schedules",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -468,6 +561,7 @@ export const tools: Tool[] = [
       title: "Create Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
+      idempotentHint: false,
       openWorldHint: false,
     },
   },
@@ -489,6 +583,7 @@ export const tools: Tool[] = [
       title: "Delete Agent Schedule",
       readOnlyHint: false,
       destructiveHint: true,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -510,6 +605,7 @@ export const tools: Tool[] = [
       title: "Get Agent Schedule",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -585,6 +681,7 @@ export const tools: Tool[] = [
       title: "Update Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -606,6 +703,7 @@ export const tools: Tool[] = [
       title: "Enable Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -627,6 +725,7 @@ export const tools: Tool[] = [
       title: "Disable Agent Schedule",
       readOnlyHint: false,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -649,6 +748,7 @@ export const tools: Tool[] = [
       title: "Get Scheduled Runs",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -665,6 +765,7 @@ export const tools: Tool[] = [
       title: "Get Credits Balance",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -687,6 +788,7 @@ export const tools: Tool[] = [
       title: "Get Spending Summary",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -708,6 +810,7 @@ export const tools: Tool[] = [
       title: "Get Credit History",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -738,6 +841,7 @@ export const tools: Tool[] = [
       title: "Get Agents Usage",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -764,6 +868,7 @@ export const tools: Tool[] = [
       title: "Get Agent Cost Breakdown",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -793,6 +898,7 @@ export const tools: Tool[] = [
       title: "Get Agent Runs Cost",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -810,6 +916,7 @@ export const tools: Tool[] = [
       title: "List Spaces",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -830,6 +937,7 @@ export const tools: Tool[] = [
       title: "Get Space",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -839,7 +947,9 @@ export const tools: Tool[] = [
       "List all agents that belong to a specific space. " +
       "Answers: 'What agents are in space X?', 'Show agents in the Production folder'. " +
       "Returns: Array of agents in the space with id, name, status, configType, lastActivity. " +
-      "ALTERNATIVE: You can also use list_agents with spaceId filter.",
+      "ALTERNATIVE: You can also use list_agents with spaceId filter. " +
+      "COUNTING: If you only need how many agents are in the space, call get_space_agent_count " +
+      "instead of counting this array — counting a long list by hand is error-prone.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -851,6 +961,34 @@ export const tools: Tool[] = [
       title: "Get Space Agents",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "get_space_agent_count",
+    description:
+      "Get the number of agents in a space as a single total. " +
+      "USE THIS for any question about how many agents a space contains — do NOT call " +
+      "get_space_agents and count the results yourself. " +
+      "Answers: 'How many agents are in space X?', 'What's the total agent count for the " +
+      "Production folder?', 'Does this space have more than 50 agents?'. " +
+      "Returns: An object with totalCount, the number of agents in the space. " +
+      "The total excludes archived agents and counts only agents, matching get_space_agents. " +
+      "NOT FOR PERSONAL: the 'Personal' listing is not a space and has no spaceId — use " +
+      "get_personal_agent_count for it.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        spaceId: { type: "number", description: "The unique ID of the space. Get this from list_spaces or search_space_by_name." },
+      },
+      required: ["spaceId"],
+    },
+    annotations: {
+      title: "Get Space Agent Count",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -872,6 +1010,7 @@ export const tools: Tool[] = [
       title: "Search Space by Name",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -895,6 +1034,7 @@ export const tools: Tool[] = [
       title: "Run Space Agents",
       readOnlyHint: false,
       destructiveHint: false,
+      idempotentHint: false,
       // Batch-runs agents that each scrape external websites — open-world for the same reason as start_agent.
       openWorldHint: true,
     },
@@ -923,6 +1063,7 @@ export const tools: Tool[] = [
       title: "Get Runs Summary",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -946,6 +1087,7 @@ export const tools: Tool[] = [
       title: "Get Records Summary",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -968,6 +1110,7 @@ export const tools: Tool[] = [
       title: "Get Run Diagnostics",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -990,6 +1133,7 @@ export const tools: Tool[] = [
       title: "Get Latest Failure",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -1042,6 +1186,7 @@ export const tools: Tool[] = [
       title: "Build Agent from Prompt",
       readOnlyHint: false,
       destructiveHint: false,
+      idempotentHint: false,
       // Build pipeline fetches the target website to learn its structure — open-world.
       openWorldHint: true,
     },
@@ -1069,6 +1214,7 @@ export const tools: Tool[] = [
       title: "Get Agent Build Status",
       readOnlyHint: true,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },
@@ -1093,6 +1239,7 @@ export const tools: Tool[] = [
       title: "Stop Agent Build",
       readOnlyHint: false,
       destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
   },

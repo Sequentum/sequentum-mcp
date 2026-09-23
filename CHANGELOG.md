@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.0.0] - TBD
+## [2.0.0] - 2026-09-14
 
 ### BREAKING CHANGES
 
@@ -45,6 +45,12 @@
   which a copy served here can never satisfy. Clients that follow redirects are
   unaffected; a client that read the body without following the redirect must now follow
   it, or read `authorization_servers` from `/.well-known/oauth-protected-resource`.
+- **`get_agent_runs` and `search_agents` now return an object instead of a bare array.**
+  `get_agent_runs` returns `{ runs, returned, limit, truncated }` and `search_agents`
+  returns `{ agents, returned, limit, truncated }`, each with an extra `note` when the
+  page came back full. The list itself is unchanged, but a client that read the result
+  as an array must now read `runs` or `agents` from it. The wrapper is what makes a
+  capped page distinguishable from a complete one. (SE4-3921)
 
 ### Added
 
@@ -58,6 +64,29 @@
 - **`SEQUENTUM_OAUTH_ISSUER`** — optional HTTP-mode variable naming this deployment's
   OAuth issuer identifier, defaulting to `SEQUENTUM_API_URL`. Set it when the API base
   URL and the public OAuth issuer differ. A malformed value refuses to start.
+- **`MCP_CANONICAL_ORIGIN`** — optional HTTP-mode variable naming this server's resource
+  identifier, used to check the `aud` claim of incoming OAuth tokens. Only the origin is
+  compared, so a trailing slash or a path in the value is harmless and an `aud` naming any
+  path on this origin is accepted. Unset or unparseable, the server warns once at startup
+  and falls back to the caller-supplied `Host` header. (SE4-3856)
+- **Expired and invalid OAuth tokens now answer `401` with a `WWW-Authenticate`
+  challenge** before the request reaches a tool, from JWKS-backed signature, expiry and
+  audience validation. The challenge is what prompts a client to redeem its refresh
+  token, so an expired session renews itself on the next request instead of surfacing as
+  a failed tool call. The rejection reason — `expired`, `bad-signature`, `malformed` or
+  `bad-alg` — is logged with the key id and the token's age. Validation fails open on an
+  unreachable JWKS endpoint, and an `aud` on a different origin is logged rather than
+  rejected, so neither can take the server down. (SE4-3856)
+- **`idempotentHint` on all 43 tools.** Every tool already declared `readOnlyHint`,
+  `destructiveHint` and `openWorldHint` but never `idempotentHint`, leaving clients to
+  treat every write as unsafe to retry after a timeout. It is now `true` on the 30 read
+  tools and on the seven writes that converge on one end state (`stop_agent`,
+  `delete_run`, `delete_agent_schedule`, `update_agent_schedule`,
+  `enable_agent_schedule`, `disable_agent_schedule`, `stop_agent_build`), and `false` on
+  the six that create something new or escalate (`start_agent`, `kill_agent`,
+  `restore_agent_version`, `create_agent_schedule`, `run_space_agents`,
+  `start_agent_build`). `kill_agent` is `false` because its own contract escalates from a
+  graceful stop to forced termination on a second call. (SE4-3959)
 - Cache hints (`ttlMs` / `cacheScope`) on all four list-shaped results (`tools/list`,
   `prompts/list`, `resources/list`, `resources/templates/list`) and on
   `server/discover`, so conformant clients can cache them; `resources/read` is
@@ -69,21 +98,52 @@
   reads) rather than only in the server's `instructions` (which clients MAY skip under
   `2026-07-28`, since there is no `initialize` handshake).
 - Per-request logging of the negotiated protocol era, requested method/name, client
-  identity, and auth presence, with OpenTelemetry trace-context (`traceparent` /
-  `tracestate`) read from the request headers and recorded in the log line, so a
-  request can be correlated across pods. These values are logged only — not
-  propagated to the outbound Sequentum API calls.
+  identity, and auth presence, with W3C trace context (`traceparent`, `tracestate` and
+  `baggage`) recorded in the log line, so a request can be correlated across pods. Per
+  SEP-414 the values are read from `params._meta` first and fall back to the equivalent
+  HTTP header, so spec-following and header-only clients both correlate. These values are
+  logged only — not propagated to the outbound Sequentum API calls. (SE4-3957)
 - Configurable rate limiting via `MCP_RATE_LIMIT_WINDOW_MS` and `MCP_RATE_LIMIT_MAX`,
   and configurable list-cache freshness via `LIST_CACHE_TTL_MS` — all three parsed
   strictly, failing fast at startup on a malformed value instead of silently truncating
   it.
+- **`get_space_agent_count` tool.** Returns the number of agents in a space as a single
+  `{ totalCount }` value, backed by a server-side `COUNT(*)`. Previously the only way to answer
+  "how many agents are in space X" was to call `get_space_agents` and count the returned array,
+  which produced wrong answers on large spaces. `get_space_agents`'s description now points
+  counting questions at the new tool. (SE4-3921)
+- **`get_personal_agent_count` tool.** Returns the number of agents in the caller's personal
+  space (agents with no `spaceId`) as a single `{ totalCount }` value. "Personal" is not a space,
+  so `get_space_agent_count` cannot serve it. (SE4-3921)
+- **`get_agent_run_summary` tool.** Returns exact run totals for an agent — an overall count plus
+  a per-status breakdown — computed server-side across all run history, never capped.
+  `get_agent_runs` now also reports `returned`/`limit`/`truncated` so a capped list of the most
+  recent 50 runs can no longer be mistaken for the full set. (SE4-3921)
+- **`get_agent_search_count` tool.** Returns the exact number of agents matching a search term
+  as a single `{ totalCount }` value, matched the same way as `search_agents` but never capped.
+  `search_agents` now also reports `returned`/`limit`/`truncated` so a capped result can no
+  longer be mistaken for the full set of matches. (SE4-3921)
 - `TRUST_PROXY` widened to accept a hop count or a comma-separated CIDR/IP allowlist,
   in addition to `true`/`false`.
 - A JSON-RPC error middleware on `/mcp` that returns a sanitized JSON-RPC error object
   instead of falling through to Express's default HTML error page.
+- MCP conformance and QA deployment checks in CI, and `oauth-scope-probe` — a live check
+  that scope enforcement and refresh-token handling behave through this server as the
+  metadata advertises. Development tooling; nothing in the published package changed.
+  (SE4-3843, SE4-3895, SE4-3922)
 
 ### Changed
 
+- **The server `instructions` now open with a capability summary.** Clients that defer
+  MCP tools and discover them through tool search read `instructions` to decide whether
+  this server is worth searching, and it previously held only the sufficiency policy —
+  which says how to behave, not what the server covers. It now names the domains first
+  (agents, runs, files and diagnostics, schedules, spaces, credits and spending, Agent
+  Builder), followed by the unchanged sufficiency policy as its own block. (SE4-3960)
+- **`offline_access` is no longer advertised** in `scopes_supported` or in the
+  `WWW-Authenticate` `scope` parameter. MCP `2026-07-28` directs an MCP server not to
+  list it. Refresh tokens are unaffected: the Control Center's own RFC 8414 metadata
+  lists `offline_access`, and clients request it from there. (SE4-3956)
 - Tool handlers split out of a single monolithic switch statement into six per-domain
   modules (`agents`, `billing`, `builds`, `runs`, `schedules`, `spaces`) under
   `src/server/tools/`, dispatched via a lookup map.
@@ -122,6 +182,14 @@
 
 ### Fixed
 
+- **SE4-3980: the Docker image now reports the release version it was built as.** The
+  `Dockerfile` accepts the `VERSION` build argument the CI/CD pipelines were already passing
+  and stamps it into `package.json` before installing dependencies, so `GET /health` and the
+  MCP `serverInfo.version` match the image tag. Previously the argument was ignored and the
+  container reported whatever `package.json` said in the source tree, which on production
+  was always the *previous* release (the image is built before the version bump commit) and
+  on QA was the same `2.0.0` for every release branch. A plain `docker build` without the
+  argument behaves as before.
 - **SE4-3929: `scopes_supported` in the protected-resource metadata document is now derived
   from the Control Center's own resource-metadata document** instead of a hardcoded array,
   so it can no longer drift out of sync with what the Control Center actually enforces (it

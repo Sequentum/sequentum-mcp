@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server as HttpServer } from "node:http";
 import { startHttpServer } from "./http-server.js";
+import glamaClaim from "./well-known/glama.json" with { type: "json" };
 import { RATE_LIMIT_ERROR_CODE } from "./constants.js";
 import { connect } from "node:net";
 import { SUPPORTED_SCOPES } from "../utils/oauth-metadata.js";
@@ -62,7 +63,7 @@ describe("POST /mcp through the real Express app", () => {
     const body = JSON.parse((await res.text()).replace(/^event: message\ndata: /, ""));
     // A global express.json() consumes the stream and yields -32700 here.
     expect(body.error).toBeUndefined();
-    expect(body.result.tools.length).toBe(39);
+    expect(body.result.tools.length).toBe(43);
   });
 
   it("ignores a stale Mcp-Session-Id instead of failing", async () => {
@@ -405,6 +406,24 @@ describe("/.well-known/oauth-protected-resource", () => {
       expect(refresh).toHaveBeenCalledTimes(1);
     } finally {
       await new Promise<void>((resolve) => primed.close(() => resolve()));
+    }
+  });
+});
+
+describe("/.well-known/glama.json on the real server", () => {
+  // The handler has its own unit tests; this pins that startHttpServer actually
+  // mounts the route, since Glama keeps re-fetching the file and a dropped route
+  // would silently lose verified ownership.
+  it("serves the claim file without authentication", async () => {
+    const server = await startHttpServer("https://api.example.test", "https://api.example.test", "9.9.9", 0, "127.0.0.1");
+    try {
+      const addr = server.address();
+      if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+      const res = await fetch(`http://127.0.0.1:${addr.port}/.well-known/glama.json`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(glamaClaim);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 });
