@@ -18,6 +18,7 @@ import { createJwksCache, type JwksKeySource } from "../utils/jwks-cache.js";
 import { createResourceScopesSource, type ResourceScopesSource } from "../utils/resource-scopes.js";
 import { validateToken } from "../utils/token-validator.js";
 import { createSequentumMcpHandler, loggable } from "./mcp-handler.js";
+import glamaClaim from "./well-known/glama.json" with { type: "json" };
 
 const DEBUG = process.env.DEBUG === '1';
 
@@ -208,24 +209,6 @@ export function auditCanonicalOrigin(): void {
 }
 
 /**
- * Warn once at startup when GLAMA_CLAIM_TOKEN is set but malformed.
- *
- * The claim route then answers 404 and Glama's ownership check fails with no
- * other trace, so the reason is logged here, where an operator watching the
- * deploy can fix it. The value is never logged. Unset or valid: silent.
- * Exported for tests.
- */
-export function auditGlamaClaimToken(): void {
-  const token = process.env.GLAMA_CLAIM_TOKEN;
-  if (!token || GLAMA_CLAIM_TOKEN_PATTERN.test(token)) return;
-
-  console.error(
-    `[MCP] Warning: GLAMA_CLAIM_TOKEN does not match ${GLAMA_CLAIM_TOKEN_PATTERN.source}; ` +
-    "/.well-known/glama.json will return 404"
-  );
-}
-
-/**
  * One line per token rejection, in the `key=value` shape used by mcp-handler's
  * era log. Never emits the token: a truncated `kid` is the only token-derived
  * value here.
@@ -384,22 +367,14 @@ export function handleOpenAIChallenge(_req: Request, res: Response): void {
   res.type("text/plain").send(token);
 }
 
-/** Glama's connector-schema pattern for an ownership claim token. */
-export const GLAMA_CLAIM_TOKEN_PATTERN = /^glama_claim_[A-Za-z0-9_-]{32}$/;
-
 /**
  * Handler for GET /.well-known/glama.json (Glama connector ownership claim).
- * Returns Glama's connector claim document built from GLAMA_CLAIM_TOKEN (200), or
- * 404 if the variable is unset or does not match Glama's token pattern: a
- * malformed value is never served. Exported so tests can import the real handler.
+ * Serves the claim document in well-known/glama.json, copied verbatim from
+ * Glama's "Claim ownership" dialog; to change the claim, edit that file.
+ * Exported so tests can import the real handler.
  */
 export function handleGlamaClaim(_req: Request, res: Response): void {
-  const token = process.env.GLAMA_CLAIM_TOKEN;
-  if (!token || !GLAMA_CLAIM_TOKEN_PATTERN.test(token)) {
-    res.status(404).end();
-    return;
-  }
-  res.json({ $schema: "https://glama.ai/mcp/schemas/connector.json", claim: token });
+  res.json(glamaClaim);
 }
 
 /**
@@ -621,9 +596,8 @@ export async function startHttpServer(
   app.get("/.well-known/openai-apps-challenge", handleOpenAIChallenge);
 
   // Glama connector ownership claim. No auth required: Glama's HTTP challenge
-  // fetches this from the connector's own origin. Unlike the OpenAI token,
-  // GLAMA_CLAIM_TOKEN must stay set permanently, since Glama re-checks the file to
-  // keep ownership verified.
+  // fetches this from the connector's own origin, and keeps re-checking it, so the
+  // route must stay published to keep ownership verified.
   app.get("/.well-known/glama.json", handleGlamaClaim);
 
   // Log incoming requests for debugging (only when DEBUG is enabled)
@@ -658,7 +632,6 @@ export async function startHttpServer(
   const jwksCache = createJwksCache(apiBaseUrl);
 
   auditCanonicalOrigin();
-  auditGlamaClaimToken();
 
   // Handle POST requests for client-to-server messages
   app.post("/mcp", (req: Request, res: Response, next: NextFunction) => {

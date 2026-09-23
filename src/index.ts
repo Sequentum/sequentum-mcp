@@ -37,12 +37,6 @@
  *                     verification. Served at /.well-known/openai-apps-challenge as
  *                     text/plain (200). Returns 404 when unset. Only needed during the
  *                     submission flow; safe to unset afterwards.
- *      GLAMA_CLAIM_TOKEN - Ownership claim token from Glama's "Claim ownership" dialog
- *                     for the hosted connector. Served at /.well-known/glama.json as
- *                     {"$schema": "https://glama.ai/mcp/schemas/connector.json",
- *                     "claim": "<token>"} (200). Returns 404 when unset or when the
- *                     value does not match ^glama_claim_[A-Za-z0-9_-]{32}$ (warned
- *                     once at startup). Must stay set: Glama re-checks the file.
  *      LIST_CACHE_TTL_MS - Cache-hint freshness (ms) advertised on list-shaped results
  *                     (tools/list, prompts/list, resources/list,
  *                     resources/templates/list) and server/discover.
