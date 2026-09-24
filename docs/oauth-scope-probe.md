@@ -74,14 +74,17 @@ npm run probe -- --env qa --mode enforce                              # after th
 2. **Registers** one throwaway DCR client named `oauth-scope-probe <timestamp>` whose only
    redirect URI is the loopback listener the script has already bound.
 3. **For each profile** — `all` (six API scopes + `offline_access`), `read`
-   (`agents:read` only), `none` (no `scope` parameter at all):
+   (`agents:read` only), `none` (no `scope` parameter at all; the server grants the six API
+   scopes by default, SE4-3895):
    - opens the browser to `/api/oauth/authorize`; you click Authorize;
-   - exchanges the code with PKCE and `resource=<this server's origin>`;
+   - exchanges the code with PKCE and `resource=<this server's origin>`, and checks the granted
+     scope: exactly what `all` and `read` asked for, and the six API scopes (no
+     `offline_access`) for `none`;
    - calls six V1 endpoints, one per scope, and four read-only MCP tools;
    - judges every response against the mode;
    - polls CloudWatch for up to two minutes until every expected `Scope check` line for this
-     client_id has appeared; when none is expected (the `all` profile), waits 45 seconds for
-     ingestion before asserting that none appeared.
+     client_id has appeared; when none is expected (the `all` and `none` profiles), waits 45
+     seconds for ingestion before asserting that none appeared.
 4. **SE4-3922:** requests one more, separate consent (scope `offline_access` only — a dedicated,
    throwaway grant under the same client, so the `all` profile's chain used by SE4-3896 below is
    left untouched) and exercises the token endpoint directly:
@@ -139,8 +142,9 @@ concurrent requests through (or neither).
   Integrations with Source = Dynamic until then.
 - **One agent run per profile** in `log-only` mode (three per full run) — started, stopped,
   and deleted once its status is terminal (the Control Center refuses to delete a run in
-  progress; the tool waits up to 45 s after stop, then kills). In `enforce` mode only the `all`
-  profile starts one. If the delete still fails, the summary names the run so it can be removed
+  progress; the tool waits up to 45 s after stop, then kills). In `enforce` mode the `all` and
+  `none` profiles start one each (`none` gets the default scope, which includes
+  `agents:write`). If the delete still fails, the summary names the run so it can be removed
   by hand.
 - **One 1-byte input file** `oauth-scope-probe.txt` in the first space of the org, per
   profile, overwriting itself. There is no V1 endpoint to delete space input files; remove it

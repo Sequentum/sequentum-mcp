@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { judgeMcp, judgeV1, expectedLogLine, judgeTokenError, GENERIC_INVALID_GRANT } from "../scripts/oauth-scope-probe.mjs";
+import { judgeGrant, judgeMcp, judgeV1, expectedLogLine, judgeTokenError, tokenExchangeRow, GENERIC_INVALID_GRANT } from "../scripts/oauth-scope-probe.mjs";
 
 // judgeMcp: enforce mode, granted scopes missing the one this call requires (a mismatch).
 describe("judgeMcp — enforce mode, scope mismatch (SE4-3929)", () => {
@@ -129,5 +129,68 @@ describe("expectedLogLine smoke (unchanged by this ticket)", () => {
     expect(expectedLogLine("log-only", "GET", "/api/v1/spaces", "spaces:read", "", "mcp-abc")).toBe(
       "Scope check would deny (log-only) for GET /api/v1/spaces: required=spaces:read granted= clientId=mcp-abc"
     );
+  });
+});
+
+// SE4-3895: a client that sends no scope now gets the six API scopes (the server default). The
+// token-exchange row must check what was granted, or the `none` profile passes with or without it.
+describe("judgeGrant (SE4-3895 default scope)", () => {
+  const SIX = "agents:read agents:write runs:read spaces:read spaces:write billing:read";
+
+  it("fails the none profile on an empty grant, and says the default was not applied", () => {
+    const result = judgeGrant("none", "");
+    expect(result.ok).toBe(false);
+    expect(result.note).toContain("default scope");
+  });
+
+  it("passes the none profile on the six API scopes, in any order", () => {
+    expect(judgeGrant("none", SIX).ok).toBe(true);
+    expect(judgeGrant("none", "billing:read spaces:write spaces:read runs:read agents:write agents:read").ok).toBe(true);
+  });
+
+  it("fails the none profile when the default adds offline_access", () => {
+    expect(judgeGrant("none", `${SIX} offline_access`).ok).toBe(false);
+  });
+
+  it("passes the read profile on exactly agents:read", () => {
+    expect(judgeGrant("read", "agents:read").ok).toBe(true);
+  });
+
+  it("fails the read profile when the server widens it", () => {
+    const result = judgeGrant("read", SIX);
+    expect(result.ok).toBe(false);
+    expect(result.note).toContain("billing:read");
+  });
+
+  it("passes the all profile on the six API scopes plus offline_access, ignoring identity scopes", () => {
+    expect(judgeGrant("all", `openid ${SIX} offline_access`).ok).toBe(true);
+  });
+
+  it("fails the all profile when an API scope is missing, and names it", () => {
+    const result = judgeGrant("all", "agents:read agents:write runs:read spaces:read spaces:write offline_access");
+    expect(result.ok).toBe(false);
+    expect(result.note).toContain("billing:read");
+  });
+});
+
+describe("tokenExchangeRow (SE4-3895)", () => {
+  const SIX = "agents:read agents:write runs:read spaces:read spaces:write billing:read";
+
+  it("fails the none profile when the server granted no scope", () => {
+    const r = tokenExchangeRow("none", { scope: "", refreshToken: null });
+    expect(r.ok).toBe(false);
+  });
+
+  it("passes the none profile on the default, shows the scope, and keeps the refresh-token note", () => {
+    const r = tokenExchangeRow("none", { scope: SIX, refreshToken: null });
+    expect(r.ok).toBe(true);
+    expect(r.observed).toContain(SIX);
+    expect(r.note).toContain("no refresh_token");
+  });
+
+  it("keeps the refresh_token issued note on a passing all profile", () => {
+    const r = tokenExchangeRow("all", { scope: `${SIX} offline_access`, refreshToken: "rt" });
+    expect(r.ok).toBe(true);
+    expect(r.note).toContain("refresh_token issued");
   });
 });
