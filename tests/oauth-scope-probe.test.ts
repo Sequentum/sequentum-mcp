@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { judgeGrant, judgeMcp, judgeV1, expectedLogLine, judgeTokenError, tokenExchangeRow, GENERIC_INVALID_GRANT } from "../scripts/oauth-scope-probe.mjs";
+import { judgeGrant, judgeMcp, judgeV1, expectedLogLine, linesForToken, judgeTokenError, tokenExchangeRow, GENERIC_INVALID_GRANT } from "../scripts/oauth-scope-probe.mjs";
 
 // judgeMcp: enforce mode, granted scopes missing the one this call requires (a mismatch).
 describe("judgeMcp — enforce mode, scope mismatch (SE4-3929)", () => {
@@ -192,5 +192,44 @@ describe("tokenExchangeRow (SE4-3895)", () => {
     const r = tokenExchangeRow("all", { scope: `${SIX} offline_access`, refreshToken: "rt" });
     expect(r.ok).toBe(true);
     expect(r.note).toContain("refresh_token issued");
+  });
+});
+
+// linesForToken: the "none" profile's no-lines check counted the "read" profile's denied lines,
+// logged seconds earlier for the same client (QA run, 29 Sep 2026).
+describe("linesForToken — only this profile's lines", () => {
+  const SIX = "agents:read agents:write runs:read spaces:read spaces:write billing:read";
+  const ALL = SIX + " offline_access";
+  const line = (granted: string, clientId = "mcp-abc") =>
+    `2026-09-29 19:46:12.607 [WRN] Scope check denied for GET /api/v1/spaces: required=spaces:read granted=${granted} clientId=${clientId}`;
+
+  it("drops the previous profile's lines for the same client", () => {
+    expect(linesForToken([line("agents:read"), line("agents:read")], SIX, "mcp-abc")).toEqual([]);
+  });
+
+  it("keeps a line logged for this token's scope", () => {
+    expect(linesForToken([line("agents:read"), line(SIX)], SIX, "mcp-abc")).toEqual([line(SIX)]);
+  });
+
+  it("does not mistake the six-scope default for the six scopes plus offline_access", () => {
+    expect(linesForToken([line(ALL)], SIX, "mcp-abc")).toEqual([]);
+    expect(linesForToken([line(SIX)], ALL, "mcp-abc")).toEqual([]);
+  });
+
+  it("keeps an empty-scope line for an empty-scope token", () => {
+    expect(linesForToken([line(""), line("agents:read")], "", "mcp-abc")).toEqual([line("")]);
+  });
+
+  it("treats a missing scope as empty, never as the text 'undefined'", () => {
+    expect(linesForToken([line("")], undefined as unknown as string, "mcp-abc")).toEqual([line("")]);
+  });
+
+  it("ignores another client's line", () => {
+    expect(linesForToken([line(SIX, "mcp-other")], SIX, "mcp-abc")).toEqual([]);
+  });
+
+  it("matches a line whose values the logger quoted", () => {
+    const quoted = `Scope check denied for GET /api/v1/spaces: required="spaces:read" granted="${SIX}" clientId="mcp-abc"`;
+    expect(linesForToken([quoted], SIX, "mcp-abc")).toEqual([quoted]);
   });
 });

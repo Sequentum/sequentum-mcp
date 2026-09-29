@@ -84,7 +84,9 @@ npm run probe -- --env qa --mode enforce                              # after th
    - judges every response against the mode;
    - polls CloudWatch for up to two minutes until every expected `Scope check` line for this
      client_id has appeared; when none is expected (the `all` and `none` profiles), waits 45
-     seconds for ingestion before asserting that none appeared.
+     seconds for ingestion before asserting that none appeared. That check counts only lines
+     whose `granted=` is this profile's token scope, because the profiles share one client and
+     the previous profile's lines fall inside the query's clock-skew margin.
 4. **SE4-3922:** requests one more, separate consent (scope `offline_access` only — a dedicated,
    throwaway grant under the same client, so the `all` profile's chain used by SE4-3896 below is
    left untouched) and exercises the token endpoint directly:

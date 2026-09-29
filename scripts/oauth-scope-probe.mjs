@@ -451,10 +451,10 @@ class CloudWatch {
 
   // Poll for the settle window and return any lines that appeared. Ingestion lags by tens of
   // seconds, so a single immediate fetch would pass trivially.
-  async waitForNone(clientId, startMs, waitMs) {
+  async waitForNone(clientId, grantedScope, startMs, waitMs) {
     const deadline = Date.now() + waitMs;
     for (;;) {
-      const lines = await this.fetchLines(clientId, startMs);
+      const lines = linesForToken(await this.fetchLines(clientId, startMs), grantedScope, clientId);
       if (lines.length || Date.now() >= deadline) return lines;
       await sleep(CLOUDWATCH_POLL_MS);
     }
@@ -603,6 +603,15 @@ function tokenExchangeRow(profile, token) {
 function expectedLogLine(mode, method, path, required, grantedScope, clientId) {
   const decision = mode === "enforce" ? "denied" : "would deny (log-only)";
   return `Scope check ${decision} for ${method} ${path}: required=${required} granted=${grantedScope} clientId=${clientId}`;
+}
+
+// The profiles share one client and run seconds apart, while fetchLines reaches
+// CLOUDWATCH_SKEW_MS back, so its result can hold the previous profile's lines. Keep only the
+// lines logged for this token: the filter writes the token's scope verbatim after granted=,
+// and every profile requests a different scope.
+function linesForToken(lines, grantedScope, clientId) {
+  const mark = `granted=${grantedScope ?? ""} clientId=${clientId}`;
+  return lines.filter((l) => l.replace(/"/g, "").includes(mark));
 }
 
 // Both GET /api/v1/agent/all (unpaged) and GET /api/v1/spaces return a bare JSON array of
@@ -781,7 +790,7 @@ async function runProfile(profile, opts, env, oauth, listener, cw, disc, report)
     const uniq = [...new Set(expectedLines)];
     if (!uniq.length) {
       log(`  waiting ${CLOUDWATCH_SETTLE_MS / 1000}s to confirm no scope line appears in ${env.logGroup} ...`);
-      const lines = await cw.waitForNone(oauth.clientId, startedMs, CLOUDWATCH_SETTLE_MS);
+      const lines = await cw.waitForNone(oauth.clientId, token.scope, startedMs, CLOUDWATCH_SETTLE_MS);
       report.add(row(profile, "cloudwatch", "-", "no scope lines", `${lines.length} line(s)`, lines.length === 0, lines.length ? "unexpected lines: " + lines.slice(0, 3).map((l) => short(l, 100)).join(" | ") : ""));
     } else {
       log(`  waiting up to ${CLOUDWATCH_WAIT_MS / 1000}s for ${uniq.length} expected log line(s) in ${env.logGroup} ...`);
@@ -1174,4 +1183,4 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 }
 
 // Exported for tests/oauth-scope-probe.test.ts: pure functions, no I/O, no process access.
-export { judgeGrant, judgeMcp, judgeV1, expectedLogLine, judgeTokenError, tokenExchangeRow, GENERIC_INVALID_GRANT };
+export { judgeGrant, judgeMcp, judgeV1, expectedLogLine, linesForToken, judgeTokenError, tokenExchangeRow, GENERIC_INVALID_GRANT };
