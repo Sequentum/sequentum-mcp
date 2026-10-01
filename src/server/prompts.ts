@@ -341,7 +341,7 @@ export function getPromptMessages(
               `Provide a comprehensive overview of the space "${spaceName}". Follow these steps:\n\n` +
               `1. Use search_space_by_name to find the space "${spaceName}".\n` +
               `2. Use get_space to retrieve its details.\n` +
-              `3. Use get_space_agents to list all agents in the space.\n` +
+              `3. Use get_space_agent_count to get the total number of agents, and get_space_agents to list them.\n` +
               `4. For each agent, note its current status and last activity.\n` +
               `5. For any agents with failed status, use get_latest_failure to retrieve failure details.\n` +
               `6. Provide a summary including: total agents, agents by status (running, completed, failed, never run), recent failures with causes, and overall space health.`,

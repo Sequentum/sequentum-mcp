@@ -47,7 +47,8 @@ const ENVS = {
 const API_SCOPES = ["agents:read", "agents:write", "runs:read", "spaces:read", "spaces:write", "billing:read"];
 
 // Profile -> scopes requested at /authorize. "all" runs first so the ids it discovers (agent,
-// space) can be reused by profiles whose scope cannot list them.
+// space) can be reused by profiles whose scope cannot list them. "none" sends no scope parameter;
+// since SE4-3895 the server grants it the six API scopes by default (see judgeGrant).
 const PROFILES = {
   all: [...API_SCOPES, "offline_access"],
   read: ["agents:read"],
@@ -450,10 +451,10 @@ class CloudWatch {
 
   // Poll for the settle window and return any lines that appeared. Ingestion lags by tens of
   // seconds, so a single immediate fetch would pass trivially.
-  async waitForNone(clientId, startMs, waitMs) {
+  async waitForNone(clientId, grantedScope, startMs, waitMs) {
     const deadline = Date.now() + waitMs;
     for (;;) {
-      const lines = await this.fetchLines(clientId, startMs);
+      const lines = linesForToken(await this.fetchLines(clientId, startMs), grantedScope, clientId);
       if (lines.length || Date.now() >= deadline) return lines;
       await sleep(CLOUDWATCH_POLL_MS);
     }
@@ -568,9 +569,49 @@ function judgeMcp(call, granted, mode) {
   return { expected: "tool error (Insufficient Scope)", observed, ok: false, note: call.text };
 }
 
+// The scopes judgeGrant compares. Identity scopes (openid, profile, email) carry no API meaning.
+const GRANT_SCOPES = [...API_SCOPES, "offline_access"];
+
+// SE4-3895: returns { expected, ok, note } for the scope a token exchange granted. A profile that
+// sends no scope must get the server default -- the six API scopes, never offline_access. Every
+// other profile must get exactly what it asked for: an explicit scope is never widened. Compares
+// as sets and ignores scopes outside GRANT_SCOPES.
+function judgeGrant(profile, tokenScope) {
+  const usesDefault = PROFILES[profile].length === 0;
+  const want = new Set(usesDefault ? API_SCOPES : PROFILES[profile]);
+  const got = new Set((tokenScope ?? "").split(/\s+/).filter((s) => GRANT_SCOPES.includes(s)));
+  const missing = [...want].filter((s) => !got.has(s));
+  const extra = [...got].filter((s) => !want.has(s));
+  const expected = usesDefault ? "default scope" : "requested scope";
+  if (!missing.length && !extra.length) return { expected, ok: true, note: "" };
+  if (usesDefault && !got.size) {
+    return { expected, ok: false, note: "server did not apply the default scope; is the SE4-3895 default-scope build deployed here?" };
+  }
+  const parts = [];
+  if (missing.length) parts.push(`missing: ${missing.join(" ")}`);
+  if (extra.length) parts.push(`extra: ${extra.join(" ")}`);
+  return { expected, ok: false, note: parts.join("; ") };
+}
+
+// The report row for a token exchange: passes only when the grant matches the profile.
+function tokenExchangeRow(profile, token) {
+  const j = judgeGrant(profile, token.scope);
+  const refresh = token.refreshToken ? "refresh_token issued" : "no refresh_token";
+  return row(profile, "token exchange", "-", j.expected, `scope='${token.scope ?? ""}'`, j.ok, j.note ? `${j.note}; ${refresh}` : refresh);
+}
+
 function expectedLogLine(mode, method, path, required, grantedScope, clientId) {
   const decision = mode === "enforce" ? "denied" : "would deny (log-only)";
   return `Scope check ${decision} for ${method} ${path}: required=${required} granted=${grantedScope} clientId=${clientId}`;
+}
+
+// The profiles share one client and run seconds apart, while fetchLines reaches
+// CLOUDWATCH_SKEW_MS back, so its result can hold the previous profile's lines. Keep only the
+// lines logged for this token: the filter writes the token's scope verbatim after granted=,
+// and every profile requests a different scope.
+function linesForToken(lines, grantedScope, clientId) {
+  const mark = `granted=${grantedScope ?? ""} clientId=${clientId}`;
+  return lines.filter((l) => l.replace(/"/g, "").includes(mark));
 }
 
 // Both GET /api/v1/agent/all (unpaged) and GET /api/v1/spaces return a bare JSON array of
@@ -669,7 +710,7 @@ async function runProfile(profile, opts, env, oauth, listener, cw, disc, report)
     return null;
   }
   const granted = grantedApiScopes(token.scope);
-  report.add(row(profile, "token exchange", "-", "200", `scope='${token.scope}'`, true, token.refreshToken ? "refresh_token issued" : "no refresh_token"));
+  report.add(tokenExchangeRow(profile, token));
 
   const startedMs = Date.now();
   const v1 = new V1(env, token.accessToken);
@@ -749,7 +790,7 @@ async function runProfile(profile, opts, env, oauth, listener, cw, disc, report)
     const uniq = [...new Set(expectedLines)];
     if (!uniq.length) {
       log(`  waiting ${CLOUDWATCH_SETTLE_MS / 1000}s to confirm no scope line appears in ${env.logGroup} ...`);
-      const lines = await cw.waitForNone(oauth.clientId, startedMs, CLOUDWATCH_SETTLE_MS);
+      const lines = await cw.waitForNone(oauth.clientId, token.scope, startedMs, CLOUDWATCH_SETTLE_MS);
       report.add(row(profile, "cloudwatch", "-", "no scope lines", `${lines.length} line(s)`, lines.length === 0, lines.length ? "unexpected lines: " + lines.slice(0, 3).map((l) => short(l, 100)).join(" | ") : ""));
     } else {
       log(`  waiting up to ${CLOUDWATCH_WAIT_MS / 1000}s for ${uniq.length} expected log line(s) in ${env.logGroup} ...`);
@@ -1142,4 +1183,4 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 }
 
 // Exported for tests/oauth-scope-probe.test.ts: pure functions, no I/O, no process access.
-export { judgeMcp, judgeV1, expectedLogLine, judgeTokenError, GENERIC_INVALID_GRANT };
+export { judgeGrant, judgeMcp, judgeV1, expectedLogLine, linesForToken, judgeTokenError, tokenExchangeRow, GENERIC_INVALID_GRANT };

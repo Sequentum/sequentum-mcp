@@ -28,6 +28,17 @@ const get_space_agents: ToolHandler = async (args, { apiClient }) => {
   return jsonResult(agents);
 };
 
+/**
+ * Returns the number of agents in a space as a single total, so callers never
+ * have to count a list. See SE4-3921.
+ */
+const get_space_agent_count: ToolHandler = async (args, { apiClient }) => {
+  const params = args;
+  const spaceId = validateNumber(params, "spaceId", { min: 1, integer: true })!;
+  const count = await apiClient.getSpaceAgentCount(spaceId);
+  return jsonResult(count);
+};
+
 const search_space_by_name: ToolHandler = async (args, { apiClient }) => {
   const params = args;
   const name = validateString(params, "name")!;
@@ -54,6 +65,7 @@ export const spaceToolHandlers: Record<string, ToolHandler> = {
   list_spaces,
   get_space,
   get_space_agents,
+  get_space_agent_count,
   search_space_by_name,
   run_space_agents,
 };

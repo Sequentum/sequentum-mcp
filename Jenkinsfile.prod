@@ -1,0 +1,547 @@
+pipeline {
+    agent {
+        label 'jenkins-agent'
+    }
+
+    parameters {
+        string(name: 'SourceBranch', defaultValue: 'release/2.0', description: 'Source branch to merge from')
+        string(name: 'TargetBranch', defaultValue: 'main', description: 'Target branch to merge into')
+    }
+
+    environment {
+        CREDENTIALS = credentials('jira-jenkins-bot')
+        AWS_REGION = 'us-east-1'
+    }
+
+    // Manual trigger only - no automatic triggers
+
+    stages {
+        stage('Get Selected Branches') {
+            steps {
+                script {
+                    SOURCE_BRANCH = params.SourceBranch
+                    TARGET_BRANCH = params.TargetBranch
+                    echo "Source branch: ${SOURCE_BRANCH}"
+                    echo "Target branch: ${TARGET_BRANCH}"
+                }
+            }
+        }
+
+        stage('Setup Variables') {
+            steps {
+                script {
+                    echo "Production Build - Merging ${SOURCE_BRANCH} into ${TARGET_BRANCH}"
+
+                    // Sanitize branch name for Docker tags (replace / with -)
+                    env.DOCKER_BRANCH = TARGET_BRANCH.replace('/', '-')
+                    echo "Docker branch tag: ${env.DOCKER_BRANCH}"
+
+                    // Resolve the ECR registry from the agent's own AWS identity so no
+                    // account id is hardcoded here. env.* set in this stage reaches every
+                    // later stage, including the ones that run on other agents.
+                    env.AWS_ACCOUNT_ID = sh(
+                        script: "aws sts get-caller-identity --query Account --output text",
+                        returnStdout: true
+                    ).trim()
+                    env.ECR_REGISTRY = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com"
+                    echo "ECR registry: ${env.ECR_REGISTRY}"
+
+                    ecrLogin();
+                    mergeChanges();
+
+                    dir('sequentum-mcp') {
+                        def versionFile = "version_state.json"
+
+                        echo "=== Version Management ==="
+                        echo "Version file: ${versionFile}"
+
+                        // Extract release number from branch name (e.g., "release/1.1" -> "1.1")
+                        def releaseNumber = SOURCE_BRANCH.replaceAll(/^release\//, '')
+                        echo "Release number: ${releaseNumber}"
+
+                        // Load existing version state or create default
+                        def versionState = [:]
+                        def fileFound = fileExists(versionFile)
+                        echo "Version file exists: ${fileFound}"
+
+                        if (fileFound) {
+                            def stateJson = readFile(versionFile)
+                            echo "Raw JSON content: ${stateJson}"
+                            // Parse JSON manually in a CPS-compliant way
+                            versionState = parseVersionState(stateJson)
+                            echo "Loaded existing version state: ${versionState}"
+                        } else {
+                            // Check existing tags to determine current patch number
+                            echo "Version file not found, checking existing tags..."
+                            def existingTags = sh(script: "git tag -l 'v${releaseNumber}.*' | sort -V", returnStdout: true).trim()
+                            def patchCount = 0
+
+                            if (existingTags) {
+                                echo "Found existing tags for this release: ${existingTags}"
+                                def tagList = existingTags.split('\n')
+                                def lastTag = tagList[-1]  // Get last (highest) tag
+                                echo "Latest tag: ${lastTag}"
+                                def tagVersion = lastTag.replace('v', '')
+                                def versionParts = tagVersion.split('\\.')
+                                if (versionParts.length == 3) {
+                                    patchCount = versionParts[2] as Integer
+                                    echo "Determined patch count from tags: ${patchCount}"
+                                }
+                            } else {
+                                echo "No existing tags found for this release"
+                            }
+
+                            versionState = [
+                                release: releaseNumber,
+                                patch_count: patchCount,
+                                last_version: "${releaseNumber}.${patchCount}"
+                            ]
+                            echo "Created new version state with patch count: ${patchCount}"
+                        }
+
+                        // Check if release branch changed - reset patch counter
+                        if (versionState.release != releaseNumber) {
+                            echo "Release changed from ${versionState.release} to ${releaseNumber} - resetting patch counter"
+                            versionState.release = releaseNumber
+                            versionState.patch_count = 1
+                        } else {
+                            versionState.patch_count += 1
+                        }
+
+                        // Generate new version (e.g., 1.1.1, 1.1.2)
+                        def newVersion = "${releaseNumber}.${versionState.patch_count}"
+                        versionState.last_version = newVersion
+                        env.VERSION = newVersion
+
+                        echo "=== Version Set ==="
+                        echo "New version: ${newVersion}"
+                        echo "Patch count for release ${releaseNumber}: ${versionState.patch_count}"
+
+                        // Store version state in environment variables for later use
+                        env.VERSION_RELEASE = versionState.release as String
+                        env.VERSION_BUILD = versionState.patch_count as String
+
+                        echo "Version ${newVersion} prepared - will be committed and tagged after successful build"
+                    }
+                }
+            }
+        }
+
+        stage('Test') {
+            agent {
+                label 'jenkins-agent'
+            }
+            steps {
+                script {
+                    mergeChanges()
+                    dir('sequentum-mcp') {
+                        // Pin Node 20 to match the runtime image (Dockerfile). The agent's
+                        // own Node is 18, which has no global crypto and fails the suite.
+                        docker.image('node:20-alpine').inside('-e HOME=/tmp -e npm_config_cache=/tmp/.npm') {
+                            sh '''
+                                set -e
+                                node --version
+                                npm --version
+                                npm ci
+                                npm test
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Parallel Builds') {
+            parallel {
+                stage('Build x64') {
+                    agent {
+                        label 'jenkins-agent'
+                    }
+                    steps {
+                        script {
+                            def startTime = new Date()
+                            echo "x64 Build starting at: ${startTime.format('yyyy-MM-dd HH:mm:ss')}"
+                            ecrLogin();
+                            mergeChanges();
+                            echo "Using version: ${env.VERSION}"
+                        }
+                        dir('sequentum-mcp') {
+                            sh '''
+                                # Install coreutils if missing (fixes nohup issue)
+                                if ! command -v nohup >/dev/null 2>&1; then
+                                    echo "Installing coreutils for nohup"
+                                    apt-get update && apt-get install -y coreutils || apk add --no-cache coreutils || yum install -y coreutils || true
+                                fi
+
+                                # Create buildx builder for native x64 builds
+                                if ! docker buildx ls | grep -q "native-x64"; then
+                                    docker buildx create --use --name native-x64 --driver docker-container --bootstrap
+                                else
+                                    docker buildx use native-x64
+                                fi
+                            '''
+                            sh """
+                                # Build x64 architecture image natively and push to ECR
+                                docker buildx build \\
+                                    --platform linux/amd64 \\
+                                    --build-arg VERSION=${VERSION} \\
+                                    -t ${ECR_REGISTRY}/sequentum-mcp:${DOCKER_BRANCH}-amd64 \\
+                                    -t ${ECR_REGISTRY}/sequentum-mcp:prod-amd64 \\
+                                    -t ${ECR_REGISTRY}/sequentum-mcp:v${VERSION}-amd64 \\
+                                    -t ${ECR_REGISTRY}/sequentum-mcp:latest-amd64 \\
+                                    -f Dockerfile \\
+                                    --provenance=false \\
+                                    --output type=image,push=true \\
+                                    ./
+                            """
+                        }
+                    }
+                }
+                stage('Build ARM64') {
+                    agent {
+                        label 'jenkins-agent-arm64'
+                    }
+                    steps {
+                        script {
+                            def startTime = new Date()
+                            echo "ARM64 Build starting at: ${startTime.format('yyyy-MM-dd HH:mm:ss')}"
+                            ecrLogin();
+                            mergeChanges();
+                            echo "Using version: ${env.VERSION}"
+                        }
+                        dir('sequentum-mcp') {
+                            sh '''
+                                # Install coreutils if missing (fixes nohup issue)
+                                if ! command -v nohup >/dev/null 2>&1; then
+                                    echo "Installing coreutils for nohup"
+                                    apt-get update && apt-get install -y coreutils || apk add --no-cache coreutils || yum install -y coreutils || true
+                                fi
+
+                                # Create buildx builder for native ARM64 builds
+                                if ! docker buildx ls | grep -q "native-arm64"; then
+                                    docker buildx create --use --name native-arm64 --driver docker-container --bootstrap
+                                else
+                                    docker buildx use native-arm64
+                                fi
+                            '''
+                            sh """
+                                # Build ARM64 architecture image natively and push to ECR
+                                docker buildx build \\
+                                    --platform linux/arm64 \\
+                                    --build-arg VERSION=${VERSION} \\
+                                    -t ${ECR_REGISTRY}/sequentum-mcp:${DOCKER_BRANCH}-arm64 \\
+                                    -t ${ECR_REGISTRY}/sequentum-mcp:prod-arm64 \\
+                                    -t ${ECR_REGISTRY}/sequentum-mcp:v${VERSION}-arm64 \\
+                                    -t ${ECR_REGISTRY}/sequentum-mcp:latest-arm64 \\
+                                    -f Dockerfile \\
+                                    --provenance=false \\
+                                    --output type=image,push=true \\
+                                    ./
+                            """
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Create Multi-Arch Manifest') {
+            agent {
+                label 'jenkins-agent'
+            }
+            steps {
+                script {
+                    ecrLogin();
+                }
+                sh """
+                    # Remove any existing manifests to avoid conflicts
+                    docker manifest rm ${ECR_REGISTRY}/sequentum-mcp:${DOCKER_BRANCH} || true
+                    docker manifest rm ${ECR_REGISTRY}/sequentum-mcp:prod || true
+                    docker manifest rm ${ECR_REGISTRY}/sequentum-mcp:v${VERSION} || true
+                    docker manifest rm ${ECR_REGISTRY}/sequentum-mcp:latest || true
+
+                    # Create and push multi-architecture manifests
+                    docker manifest create \\
+                        ${ECR_REGISTRY}/sequentum-mcp:${DOCKER_BRANCH} \\
+                        ${ECR_REGISTRY}/sequentum-mcp:${DOCKER_BRANCH}-amd64 \\
+                        ${ECR_REGISTRY}/sequentum-mcp:${DOCKER_BRANCH}-arm64
+
+                    docker manifest create \\
+                        ${ECR_REGISTRY}/sequentum-mcp:prod \\
+                        ${ECR_REGISTRY}/sequentum-mcp:prod-amd64 \\
+                        ${ECR_REGISTRY}/sequentum-mcp:prod-arm64
+
+                    docker manifest create \\
+                        ${ECR_REGISTRY}/sequentum-mcp:v${VERSION} \\
+                        ${ECR_REGISTRY}/sequentum-mcp:v${VERSION}-amd64 \\
+                        ${ECR_REGISTRY}/sequentum-mcp:v${VERSION}-arm64
+
+                    docker manifest create \\
+                        ${ECR_REGISTRY}/sequentum-mcp:latest \\
+                        ${ECR_REGISTRY}/sequentum-mcp:latest-amd64 \\
+                        ${ECR_REGISTRY}/sequentum-mcp:latest-arm64
+
+                    # Push manifests to create universal ImageIndex
+                    docker manifest push ${ECR_REGISTRY}/sequentum-mcp:${DOCKER_BRANCH}
+                    docker manifest push ${ECR_REGISTRY}/sequentum-mcp:prod
+                    docker manifest push ${ECR_REGISTRY}/sequentum-mcp:v${VERSION}
+                    docker manifest push ${ECR_REGISTRY}/sequentum-mcp:latest
+                """
+            }
+        }
+
+        stage('Commit Version and Create Tag') {
+            agent {
+                label 'jenkins-agent'
+            }
+            steps {
+                script {
+                    echo "Build successful - committing version changes and creating tags"
+
+                    // Merge changes and prepare repository
+                    mergeChanges()
+
+                    dir('sequentum-mcp') {
+                        // Write the updated version state file
+                        sh """
+                            echo "=== Writing Version State File ==="
+                            echo "Release: ${env.VERSION_RELEASE}, Patch: ${env.VERSION_BUILD}, Version: ${env.VERSION}"
+
+                            cat > version_state.json << 'JSONEOF'
+{
+  "release": "${env.VERSION_RELEASE}",
+  "patch_count": ${env.VERSION_BUILD},
+  "last_version": "${env.VERSION}"
+}
+JSONEOF
+
+                            echo "Version state file written"
+                            echo "Verifying file contents:"
+                            cat version_state.json
+                        """
+
+                        // Sync package.json and server.json to the new version before committing/tagging
+                        sh "npm version '${VERSION}' --no-git-tag-version --allow-same-version --ignore-scripts"
+                        sh "jq --arg v '${VERSION}' '.version = \$v' server.json > server.tmp && mv server.tmp server.json"
+
+                        // Commit the version state file
+                        sh """
+                            echo "=== Committing Version Changes ==="
+                            git config user.email "jenkins@sequentum.com"
+                            git config user.name "jenkins"
+
+                            echo "Adding version files to git..."
+                            git add version_state.json package.json server.json
+                            # package-lock.json may not exist in older trees; don't fail the stage if absent
+                            git add package-lock.json 2>/dev/null || true
+
+                            echo "Checking for changes to commit..."
+                            if git diff --cached --quiet; then
+                                echo "No changes to commit"
+                            else
+                                echo "Committing version increment..."
+                                git commit -m "Increment version to ${VERSION} - Generated by Jenkins build automation"
+                                echo "Committed version increment: ${VERSION}"
+                            fi
+
+                            echo "Pushing commits to remote..."
+                            git push
+                            echo "Pushed commits successfully"
+                        """
+
+                        // Create and push git tag for the new version
+                        sh """
+                            echo "=== Creating and Pushing Git Tag ==="
+                            echo "Checking for existing tag v${VERSION}..."
+                            if git tag -l | grep -q "^v${VERSION}\$"; then
+                                echo "Tag v${VERSION} already exists, skipping tag creation"
+                            else
+                                echo "Creating new git tag v${VERSION}..."
+                                git tag -a v${VERSION} -m "Release version ${VERSION}"
+                                echo "Created git tag: v${VERSION}"
+
+                                echo "Pushing tags to remote..."
+                                git push origin --tags
+                                echo "Pushed tags to remote"
+                            fi
+
+                            echo "Version management completed successfully!"
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Create GitHub Release') {
+            agent {
+                label 'jenkins-agent'
+            }
+            steps {
+                script { mergeChanges() }
+                dir('sequentum-mcp') {
+                    withCredentials([usernamePassword(credentialsId: 'jenkins-se4-main',
+                                                      usernameVariable: 'GH_USER',
+                                                      passwordVariable: 'GH_TOKEN')]) {
+                        sh '''#!/bin/bash
+                            set -eo pipefail
+                            REPO=Sequentum/sequentum-mcp
+                            TAG="v${VERSION}"
+                            API="https://api.github.com/repos/${REPO}/releases"
+
+                            # Bound the generated notes to the previous tag. Without this,
+                            # GitHub walks back to the first commit, because no earlier
+                            # release exists for it to measure from.
+                            PREV_TAG="$(git tag -l 'v*' --sort=-v:refname | grep -v "^${TAG}$" | head -1)"
+                            echo "Release ${TAG}, notes since ${PREV_TAG:-<none>}"
+
+                            # No ECR host in the body. The registry URL carries the AWS
+                            # account id, and this release page is public.
+                            # The MCP Registry publishes later in this build, so this link
+                            # is to what the build will publish, not a claim that it is
+                            # already live.
+cat > /tmp/gh-release-body.md <<BODYEOF
+## sequentum-mcp ${TAG}
+
+Published by Jenkins build ${BUILD_NUMBER}.
+
+- Container image tag: ${TAG}
+- MCP Registry: com.sequentum/mcp@${VERSION}
+BODYEOF
+
+                            # jq builds the JSON so the body escapes correctly.
+                            payload="$(jq -n --arg tag "$TAG" --arg body "$(cat /tmp/gh-release-body.md)" --arg prev "$PREV_TAG" '{tag_name: $tag, name: $tag, body: $body, generate_release_notes: true, draft: false, prerelease: false} + (if $prev == "" then {} else {previous_tag_name: $prev} end)')"
+
+                            code="$(curl -sS -o /tmp/gh-release.json -w '%{http_code}' -X POST "$API" -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" -d "$payload")"
+
+                            if [ "$code" = "201" ]; then
+                                echo "Created release: $(jq -r .html_url /tmp/gh-release.json)"
+                            elif [ "$code" = "422" ]; then
+                                # A re-run of a version whose release already exists.
+                                echo "Release ${TAG} already exists; updating it"
+                                id="$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" "${API}/tags/${TAG}" | jq -r .id)"
+                                curl -sS -X PATCH "${API}/${id}" -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -d "$payload" | jq -r .html_url
+                            else
+                                echo "GitHub API returned ${code}:"
+                                cat /tmp/gh-release.json
+                                exit 1
+                            fi
+                            rm -f /tmp/gh-release-body.md /tmp/gh-release.json
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Production') {
+            agent {
+                label 'jenkins-agent'
+            }
+            steps {
+                sh """
+                    echo 'Deploying to Production ECS'
+                    aws ecs update-service --cluster sequentum-mcp-prod-cluster --service sequentum-mcp-prod-ecs-service --force-new-deployment --region us-east-1
+                    # wait 2 minutes for deployment
+                    sleep 120
+                """
+            }
+        }
+
+        stage('Publish to MCP Registry') {
+            agent { label 'jenkins-agent' }
+            steps {
+                script { mergeChanges() }
+                dir('sequentum-mcp') {
+                    withCredentials([string(credentialsId: 'MCP_PRIVATE_KEY',
+                                            variable: 'MCP_PRIVATE_KEY')]) {
+                        sh '''#!/bin/bash
+                            set -eo pipefail
+                            REGISTRY=https://registry.modelcontextprotocol.io
+
+                            echo "=== Publishing to PRODUCTION MCP Registry ==="
+                            echo "Registry: ${REGISTRY}"
+
+                            # package.json.version is the actual released version by this stage
+                            # (synced earlier in Commit Version and Create Tag).
+                            PKG_VERSION="$(node -p "require('./package.json').version")"
+                            echo "Package version: ${PKG_VERSION}"
+
+                            # Sync server.json's version to match the released version.
+                            jq --arg v "$PKG_VERSION" '.version = $v' \
+                                server.json > server.tmp
+                            mv server.tmp server.json
+                            echo "=== server.json after version sync ==="
+                            cat server.json
+
+                            # Download the mcp-publisher CLI (static Go binary).
+                            curl -sSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
+                                | tar -xz mcp-publisher
+                            chmod +x mcp-publisher
+                            ./mcp-publisher --version || true
+
+                            # Authenticate via DNS against PRODUCTION.
+                            ./mcp-publisher login dns \
+                                --registry "$REGISTRY" \
+                                --domain sequentum.com \
+                                --private-key "${MCP_PRIVATE_KEY}"
+
+                            # Publish.
+                            ./mcp-publisher publish --registry "$REGISTRY"
+
+                            echo "=== Published com.sequentum/mcp@${PKG_VERSION} to PRODUCTION ==="
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Production Build completed successfully - ${SOURCE_BRANCH} merged into ${TARGET_BRANCH}"
+            echo "Version v${env.VERSION} tagged, released on GitHub, deployed, and listed on the MCP Registry"
+        }
+        failure {
+            echo "Production Build failed"
+        }
+    }
+}
+
+// Parse version state JSON in a CPS-compliant way
+@NonCPS
+def parseVersionState(String jsonText) {
+    def slurper = new groovy.json.JsonSlurper()
+    def lazyMap = slurper.parseText(jsonText)
+    // Convert LazyMap to a regular HashMap to avoid serialization issues
+    return [
+        release: lazyMap.release as String,
+        patch_count: lazyMap.patch_count as Integer,
+        last_version: lazyMap.last_version as String
+    ]
+}
+
+// Download the native docker container to the executor
+def ecrLogin() {
+    sh '''
+        # Log into AWS
+        aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+    '''
+}
+
+// merge the latest code from sequentum-mcp
+def mergeChanges() {
+    sh "rm -rf sequentum-mcp"
+    sh "git clone git@github.com-sequentum-mcp:Sequentum/sequentum-mcp.git && cd sequentum-mcp && git checkout ${SOURCE_BRANCH} && git pull"
+    sh """
+        cd sequentum-mcp
+        git config user.email "jenkins@sequentum.com"
+        git config user.name "jenkins"
+
+        # merge to target branch
+        git checkout ${TARGET_BRANCH}
+        git pull
+        git merge -Xtheirs ${SOURCE_BRANCH}
+
+        # Push merged changes
+        git push
+    """
+}
