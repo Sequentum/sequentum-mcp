@@ -6,7 +6,7 @@
     "url": "https://github.com/Sequentum/sequentum-mcp",
     "source": "github"
   },
-  "version": "2.1.1",
+  "version": "2.1.2",
   "remotes": [
     {
       "type": "streamable-http",
