@@ -1,6 +1,6 @@
 # Prompts Reference
 
-The Sequentum MCP Server provides 9 prompts -- reusable instruction templates that guide the AI through common multi-step workflows. Prompts are explicitly invoked by the user or client and orchestrate the server's existing [tools](./tool-reference.md) to complete complex tasks in a single request.
+The Sequentum MCP Server provides 11 prompts -- reusable instruction templates that guide the AI through common multi-step workflows. Prompts are explicitly invoked by the user or client and orchestrate the server's existing [tools](./tool-reference.md) to complete complex tasks in a single request.
 
 > **How prompts work:** Each prompt generates a sequence of step-by-step instructions for the AI. When invoked, the AI follows these instructions, calling the appropriate tools in order and synthesizing the results into a final response.
 
@@ -22,7 +22,7 @@ The Sequentum MCP Server provides 9 prompts -- reusable instruction templates th
 | [`spending-report`](#spending-report) | Spending and credits report | *(none)* |
 | [`cost-analysis`](#cost-analysis) | Analyze costs across agents | *(none)* |
 | **Agent Building** | | |
-| [`build-agent-from-prompt`](#build-agent-from-prompt) | Build a new agent from a natural language description | `prompt` (required), `spaceName` (optional), `pollingPreference` (optional) |
+| [`build-agent-from-prompt`](#build-agent-from-prompt) | Build a new agent from a natural language description | `prompt` (required), `spaceName` (optional) |
 | [`inspect-agent-draft`](#inspect-agent-draft) | Check the status of a build session and show the resulting agent | `sessionId` (required), `pollingPreference` (optional) |
 
 ---
@@ -300,7 +300,7 @@ Give me a cost breakdown
 
 ### build-agent-from-prompt
 
-Build a new web scraping agent from a natural language description using the AI agent builder. Starts a build session and polls until the agent is ready or an error occurs. The agent is saved to the workspace automatically once the AI completes the build.
+Build a new web scraping agent from a natural language description using the AI agent builder. Calls `start_agent_build`, which waits on the server for the build to finish and returns the `agentId` directly, so the prompt does not poll. The agent is saved to the workspace automatically once the AI completes the build.
 
 #### Arguments
 
@@ -308,20 +308,17 @@ Build a new web scraping agent from a natural language description using the AI 
 |------|------|----------|-------------|
 | `prompt` | string | Yes | What you want to scrape or automate, in your own words. The agent builder infers technical details (pagination, lazy-load, output format, etc.) server-side. Must be 10–5000 characters. |
 | `spaceName` | string | No | Name of the space to save the agent to. Resolved to a `spaceId` via `search_space_by_name`. Uses the default space if omitted. |
-| `pollingPreference` | string | No | Hint for how aggressively to poll `get_agent_build_status`. Examples: `"fast"` (every 2–3s), `"normal"` (start ~5s, back off to ~15s), `"slow"` (every 30s), or free-form (`"poll every 5 seconds"`, `"be patient, this is a big site"`). If omitted, a moderate cadence with backoff is used. |
 
 #### Workflow
 
 1. *(If `spaceName` provided)* Uses `search_space_by_name` to resolve the name to a `spaceId`.
-2. Uses `start_agent_build` with the given `prompt` (and `spaceId` if resolved). Returns a `sessionId` immediately.
-3. Polls `get_agent_build_status` until status reaches a terminal value (cadence follows `pollingPreference` if provided, otherwise defaults to a moderate backoff):
-   - `processing` → keep polling.
+2. Uses `start_agent_build` with the given `prompt` (and `spaceId` if resolved). The tool waits for the build to complete, up to about 5 minutes, and returns the `agentId`. If it times out, the response includes a `sessionId` to check with `get_agent_build_status`. The final status is handled as follows:
    - `completed` → agent was saved successfully. Reports `agentId` and `agentName` to the user. Done.
-   - `ready` → agent exists and is accessible. Reports `agentId` and `agentName`. Done.
+   - `ready` → agent exists but may not be fully saved yet. Reports `agentId` and `agentName`. No further action required.
    - `error` → reports the error to the user. If an agent was partially created, advises the user to delete it via the standard agents API.
    - `cancelled` → reports the build was aborted early.
-4. If the build succeeded (`completed` or `ready`), uses `get_agent` with the `agentId` to show the full agent details.
-5. Reminds the user the agent is accessible via `list_agents` and all other agent tools.
+3. If the build succeeded (`completed` or `ready`), uses `get_agent` with the `agentId` to show the full agent details.
+4. Reminds the user the agent is accessible via `list_agents` and all other agent tools.
 
 #### Example Invocations
 
@@ -329,8 +326,6 @@ Build a new web scraping agent from a natural language description using the AI 
 Build an agent to get laptop prices from amazon.com
 Scrape job listings from linkedin.com/jobs
 Get news articles from techcrunch.com (spaceName: Research)
-Get products from amazon.com (pollingPreference: fast)
-Scrape data from a slow legacy site (pollingPreference: be patient, expect a few minutes)
 ```
 
 > **See also:** [`inspect-agent-draft`](#inspect-agent-draft) to check on an existing session. [`start_agent_build`](tool-reference.md#start_agent_build) for the raw tool.
@@ -346,7 +341,7 @@ Check the current status of an agent build session and present the resulting age
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `sessionId` | string | Yes | The session ID returned by `start_agent_build`. |
-| `pollingPreference` | string | No | Hint for how aggressively to poll if the session is still in progress. Same format as the argument on [`build-agent-from-prompt`](#build-agent-from-prompt). If omitted, a moderate cadence with backoff is used. |
+| `pollingPreference` | string | No | Hint for how aggressively to poll `get_agent_build_status` if the session is still in progress. Examples: `"fast"` (every 2–3s), `"normal"` (start ~5s, back off to ~15s), `"slow"` (every 30s), or free-form (`"poll every 5 seconds"`). If omitted, a moderate cadence with backoff is used. |
 
 #### Workflow
 
