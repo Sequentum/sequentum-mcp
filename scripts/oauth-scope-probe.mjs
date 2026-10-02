@@ -9,9 +9,13 @@
 // the V1 API directly and through this MCP server with tokens of three scope profiles, and
 // checks the server's behaviour against the rollout mode you pass:
 //
-//   --mode log-only   every call succeeds; a "Scope check would deny (log-only)" line is
+//   --mode log-only   every V1 call succeeds; a "Scope check would deny (log-only)" line is
 //                     written to CloudWatch for every scope mismatch
 //   --mode enforce    scope mismatches return 403 insufficient_scope
+//
+// The mode describes the Control Center. The MCP server checks scopes itself in both modes
+// too: a mismatched tools/call gets 403 insufficient_scope before reaching V1, so it
+// writes no CloudWatch line.
 //
 // Everything that needs a session happens in the browser: login, each consent click, and the
 // admin Revoke click. No credentials are ever typed into the terminal. The user never sees or
@@ -386,7 +390,10 @@ class Mcp {
     const payload = { jsonrpc: "2.0", id: this.id, method: "tools/call", params: { name: tool, arguments: args } };
     const r = await fetchTimed(`${this.env.mcpOrigin}/mcp`, { method: "POST", headers: this.headers, body: JSON.stringify(payload) });
     const msg = Mcp.parse(r);
-    if (r.status !== 200 || msg === undefined) return { tool, required, httpStatus: r.status, isError: null, text: short(r.text), reachedUpstream: false };
+    if (r.status !== 200 || msg === undefined) {
+      const wwwAuthenticate = r.headers.get("www-authenticate") ?? "";
+      return { tool, required, httpStatus: r.status, isError: null, text: short(r.text), wwwAuthenticate, reachedUpstream: false };
+    }
     if (msg.error) return { tool, required, httpStatus: r.status, isError: true, text: short(JSON.stringify(msg.error)), reachedUpstream: false };
     const result = msg.result ?? {};
     const text = (result.content ?? []).map((c) => c?.text ?? "").join(" ");
@@ -551,22 +558,41 @@ function judgeV1(call, granted, mode) {
   return { expected: "403 insufficient_scope", observed, ok, note: ok ? "" : `errorCode=${JSON.stringify(code)} WWW-Authenticate=${JSON.stringify(www)}` };
 }
 
-// SE4-3929 made insufficient_scope 403s surface the required scope by name in the tool error
-// ("Insufficient Scope: ... the \"<scope>\" scope ..."); the fixed "Access Denied" text is the
-// pre-SE4-3929 behaviour and is still accepted so this probe keeps working against a build that
-// has not picked up that fix yet -- but flagged, since the scope name is unavailable there.
+// The MCP server checks each tool's scope itself, before dispatch and in either
+// --mode, so a mismatch is answered with HTTP 403 and an insufficient_scope challenge naming the
+// required scope, and V1 is never called. An older build without that check still dispatches; its
+// behaviour is accepted below so this probe keeps working against it, but flagged.
 function judgeMcp(call, granted, mode) {
   const mismatch = !granted.has(call.required);
-  if (call.httpStatus !== 200 || call.isError === null) return { expected: "tool result", observed: `HTTP ${call.httpStatus}`, ok: false, note: call.text };
+  if (mismatch && call.httpStatus === 403) {
+    const www = call.wwwAuthenticate ?? "";
+    const ok = www.includes('error="insufficient_scope"') && www.includes(call.required);
+    return { expected: "403 scope challenge", observed: "HTTP 403", ok, note: ok ? "" : `WWW-Authenticate=${JSON.stringify(www)}` };
+  }
+  if (call.httpStatus !== 200 || call.isError === null) {
+    return { expected: mismatch ? "403 scope challenge" : "tool result", observed: `HTTP ${call.httpStatus}`, ok: false, note: call.text };
+  }
   const observed = call.isError ? "tool error" : "tool ok";
-  if (mode === "log-only" || !mismatch) return { expected: "tool ok", observed, ok: !call.isError, note: call.isError ? call.text : "" };
+  if (!mismatch) return { expected: "tool ok", observed, ok: !call.isError, note: call.isError ? call.text : "" };
+  return judgeMcpWithoutScopeChallenge(call, mode, observed);
+}
+
+const NO_SCOPE_CHALLENGE = "old build: no pre-dispatch scope challenge";
+
+// The behaviour before the pre-dispatch check: the call reached V1, and the Control Center's
+// own enforcement decided.
+// SE4-3929 made insufficient_scope 403s surface the required scope by name in the tool error
+// ("Insufficient Scope: ... the \"<scope>\" scope ..."); the fixed "Access Denied" text is the
+// pre-SE4-3929 behaviour and is still accepted, flagged, since the scope name is unavailable there.
+function judgeMcpWithoutScopeChallenge(call, mode, observed) {
+  if (mode === "log-only") return { expected: "403 scope challenge", observed, ok: !call.isError, note: call.isError ? call.text : NO_SCOPE_CHALLENGE };
   if (call.isError && call.text.startsWith("Insufficient Scope") && call.text.includes(`"${call.required}"`)) {
-    return { expected: "tool error (Insufficient Scope)", observed, ok: true, note: "" };
+    return { expected: "403 scope challenge", observed, ok: true, note: NO_SCOPE_CHALLENGE };
   }
   if (call.isError && call.text.startsWith("Access Denied")) {
-    return { expected: "tool error (Insufficient Scope)", observed, ok: true, note: "old build: scope name not surfaced (SE4-3929 not deployed here)" };
+    return { expected: "403 scope challenge", observed, ok: true, note: `${NO_SCOPE_CHALLENGE}; scope name not surfaced (SE4-3929 not deployed here)` };
   }
-  return { expected: "tool error (Insufficient Scope)", observed, ok: false, note: call.text };
+  return { expected: "403 scope challenge", observed, ok: false, note: call.text };
 }
 
 // The scopes judgeGrant compares. Identity scopes (openid, profile, email) carry no API meaning.
