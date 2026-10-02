@@ -1333,7 +1333,7 @@ Poll the current status of an agent building session. Call this repeatedly until
 
 > **Note:** Stop polling on any of: `completed`, `ready`, `error`, `cancelled`. The session tears down automatically after reaching a terminal status.
 
-> **Polling cadence:** Build duration is highly variable (seconds to several minutes). If the user has expressed a polling preference (e.g., *"poll quickly"*, *"be patient"*, *"every N seconds"*), honor it. Otherwise default to a moderate cadence with backoff (e.g., start ~5s, back off to ~15–30s) and avoid waiting longer than ~30s between polls so the user gets timely feedback when the build completes. The [`build-agent-from-prompt`](prompts-reference.md#build-agent-from-prompt) and [`inspect-agent-draft`](prompts-reference.md#inspect-agent-draft) prompts accept a `pollingPreference` argument that gets forwarded into the model's instructions.
+> **Polling cadence:** Build duration is highly variable (seconds to several minutes). If the user has expressed a polling preference (e.g., *"poll quickly"*, *"be patient"*, *"every N seconds"*), honor it. Otherwise default to a moderate cadence with backoff (e.g., start ~5s, back off to ~15–30s) and avoid waiting longer than ~30s between polls so the user gets timely feedback when the build completes. The [`inspect-agent-draft`](prompts-reference.md#inspect-agent-draft) prompt accepts a `pollingPreference` argument that gets forwarded into the model's instructions.
 
 #### Parameters
 
