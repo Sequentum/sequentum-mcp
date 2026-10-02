@@ -68,7 +68,7 @@ describe("formatToolError", () => {
       new ApiRequestError(401, "Unauthorized", "API said no", "/agents")
     );
     expect(result.content[0].text).toBe(
-      "Authentication Failed: Your API key or OAuth token is invalid or has expired. Please check your credentials."
+      "Authentication Failed: Your OAuth token is invalid or has expired. Disconnect and reconnect the Sequentum MCP server to sign in again."
     );
   });
 
@@ -77,7 +77,7 @@ describe("formatToolError", () => {
       new ApiRequestError(403, "Forbidden", "Not allowed", "/agents")
     );
     expect(result.content[0].text).toBe(
-      "Access Denied: You don't have permission to perform this action. Check your API key permissions."
+      "Access Denied: You don't have permission to perform this action. Check your Sequentum account's permissions."
     );
   });
 

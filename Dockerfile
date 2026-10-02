@@ -17,7 +17,7 @@ RUN if [ -n "$VERSION" ]; then \
     fi
 
 # Install all dependencies (including dev for build)
-# Skip prepare script - we'll build after copying source
+# Skip lifecycle scripts - we build explicitly after copying source
 RUN npm ci --ignore-scripts
 
 # Copy source code
@@ -25,7 +25,7 @@ COPY tsconfig.json ./
 COPY src/ ./src/
 
 # Build TypeScript
-RUN npx tsc && chmod +x dist/index.js
+RUN npx tsc
 
 # Production stage
 FROM node:20-alpine
@@ -43,7 +43,6 @@ COPY --from=builder /app/dist ./dist
 
 # Set environment variables
 ENV NODE_ENV=production
-ENV TRANSPORT_MODE=http
 ENV PORT=3000
 ENV HOST=0.0.0.0
 

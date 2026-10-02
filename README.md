@@ -114,45 +114,10 @@ Use the server URL `https://mcp.sequentum.com/mcp` in your client's MCP configur
 
 The server supports [Client ID Metadata Documents (CIMD)](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document-00) as the preferred client identification method, with [Dynamic Client Registration (RFC 7591)](https://datatracker.ietf.org/doc/html/rfc7591) as a fallback. MCP clients that support CIMD (such as Cursor) can use their own URL as a `client_id` without any prior registration.
 
-## Deprecated: stdio and API-key auth
+## Local stdio mode (removed)
 
-> **Deprecated:** Running the MCP server locally over the **stdio** transport,
-> authenticated with `SEQUENTUM_API_KEY`, is deprecated and will be removed in a future
-> release. The `sequentum-mcp` npm package is deprecated along with it. Connect to
-> `https://mcp.sequentum.com/mcp` over HTTP with OAuth 2.1 instead — see
-> [Set Up Your Client](#set-up-your-client).
->
-> This does not affect Sequentum API keys themselves, which remain fully supported for
-> the [REST API](https://docs.sequentum.com/api-reference/authentication).
-
-The MCP [authorization specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
-directs stdio implementations not to use OAuth, and to take credentials from the
-environment instead. Moving the server to OAuth 2.1 therefore retires the stdio path
-along with it — the two deprecations are one decision, not two.
-
-If you are running this configuration today, it keeps working — on Node 20 or later:
-
-```json
-{
-  "mcpServers": {
-    "sequentum": {
-      "command": "npx",
-      "args": ["-y", "sequentum-mcp"],
-      "env": {
-        "SEQUENTUM_API_KEY": "sk-your-api-key-here"
-      }
-    }
-  }
-}
-```
-
-The API key is created in the [Sequentum Control Center](https://dashboard.sequentum.com)
-under **Settings** > **API Keys**, and `SEQUENTUM_API_URL` overrides the Sequentum
-instance it connects to (default `https://dashboard.sequentum.com`).
-
-To migrate, delete that block and follow the setup instructions for your client above.
-If you need Sequentum MCP somewhere that cannot reach `mcp.sequentum.com`, contact
-support — there is no supported self-hosted deployment.
+Running the server locally over stdio with `SEQUENTUM_API_KEY` (`npx sequentum-mcp`) was removed in 3.0.0.
+Connect to `https://mcp.sequentum.com/mcp` instead — see [Set Up Your Client](#set-up-your-client). Sequentum API keys still work for the [REST API](https://docs.sequentum.com/api-reference/authentication).
 
 ## Example Usage
 
@@ -303,8 +268,7 @@ lines. See [docs/oauth-scope-probe.md](./docs/oauth-scope-probe.md).
 |-------|----------|
 | OAuth login not opening | Ensure your client supports OAuth and Streamable HTTP. Try restarting the client. For Claude.ai and Claude Desktop, connect from the [connector directory](#claudeai-and-claude-desktop) rather than a config file. |
 | Connection refused | Verify the URL is `https://mcp.sequentum.com/mcp` and check your network connection. |
-| `SEQUENTUM_API_KEY required` | [Deprecated](#deprecated-stdio-and-api-key-auth) local stdio mode only. Add your API key to the `env` section of the MCP config, or migrate to the hosted server. |
-| `API Error 401: Unauthorized` | Your API key or OAuth token is invalid or expired. Re-authenticate or generate a new key. |
+| `API Error 401: Unauthorized` | Your OAuth session is invalid or was revoked. Disconnect and reconnect the Sequentum MCP server to sign in again. |
 | `Insufficient Scope: This action requires the "…" scope` | Disconnect and reconnect the Sequentum MCP server, then approve the requested permissions, to re-authorize with the scope named in the message. If it recurs right after reconnecting, the client may have cached a stale scope list — check the connector's OAuth settings. |
 | `API Error 404: Not Found` | The agent, run, or file doesn't exist, or you don't have access to it. |
 | `API Error 429: Too Many Requests` | Rate limit exceeded. Wait a moment and try again. |
@@ -313,12 +277,11 @@ For more troubleshooting help, see the [Troubleshooting Guide](./docs/troublesho
 
 ## HTTP Mode Configuration
 
-The hosted server at `mcp.sequentum.com` runs the Streamable HTTP transport
-(`TRANSPORT_MODE=http`) behind its own deployment configuration. The following
-environment variables tune caching, rate limiting, and proxy trust for that transport;
-they have no effect in the deprecated stdio mode. They are documented for readers of
-this source — there is no supported self-hosted deployment, and no container image is
-published.
+The hosted server at `mcp.sequentum.com` runs the Streamable HTTP transport, the only
+transport as of 3.0.0, behind its own deployment configuration. The following
+environment variables tune caching, rate limiting, and proxy trust for that transport.
+They are documented for readers of this source — there is no supported self-hosted
+deployment, and no container image is published.
 
 **HTTP mode is stateless as of 2.0.0.** There is no `Mcp-Session-Id` header and no
 per-client session state on the server: every request is handled independently by a
@@ -329,7 +292,6 @@ down. `MAX_SESSIONS` is no longer read.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TRANSPORT_MODE` | `stdio` | Set to `http` to run the Streamable HTTP transport. The `stdio` default is [deprecated](#deprecated-stdio-and-api-key-auth) and will be removed in a future release; the hosted server sets `http`. |
 | `PORT` | `3000` | HTTP server port. |
 | `SEQUENTUM_API_URL` | `https://dashboard.sequentum.com` | Base URL of the Sequentum API this server proxies to. |
 | `SEQUENTUM_OAUTH_ISSUER` | Value of `SEQUENTUM_API_URL` | This deployment's OAuth issuer identifier, advertised in `/.well-known/oauth-protected-resource`. Must be an absolute `https` URL with no query, fragment or userinfo, and must match the authorization server's `issuer` exactly. Set it only when the API base URL and the public OAuth issuer differ; a malformed value refuses to start. |

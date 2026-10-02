@@ -49,13 +49,6 @@ const RETRYABLE_STATUS_CODES = new Set([429, 502, 503, 504]);
 
 export class SequentumApiClient {
   private baseUrl: string;
-  /**
-   * @deprecated Only the stdio transport supplies an API key (`src/index.ts` passes
-   * `SEQUENTUM_API_KEY`); the HTTP transport constructs the client with `null` and
-   * authenticates via {@link SequentumApiClient.setAccessToken}. Deprecated with the stdio
-   * path and due for removal with it, leaving the Bearer branch as the only credential.
-   */
-  private apiKey: string | null;
   private accessToken: string | null = null;
   private requestTimeoutMs: number;
   private maxRetries: number;
@@ -63,22 +56,18 @@ export class SequentumApiClient {
   private maxDelayMs: number;
 
   /**
-   * Create a new Sequentum API client
+   * Create a new Sequentum API client. Requests authenticate with the OAuth2 access token
+   * set via {@link SequentumApiClient.setAccessToken}.
    * @param baseUrl - The base URL of the Sequentum API (e.g., https://dashboard.sequentum.com)
-   * @param apiKey - The API key (sk-...) for authentication (optional if using OAuth2).
-   *   Deprecated: supplied only by the deprecated stdio path. TypeScript has no
-   *   per-parameter `@deprecated`, so the tag sits on the `apiKey` field instead.
    * @param requestTimeoutMs - Request timeout in milliseconds (default: 30000)
    * @param maxRetries - Maximum number of retries for transient failures (default: 3)
    */
   constructor(
     baseUrl: string,
-    apiKey: string | null = null,
     requestTimeoutMs: number = 30000,
     maxRetries: number = DEFAULT_MAX_RETRIES
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
-    this.apiKey = apiKey;
     this.requestTimeoutMs = requestTimeoutMs;
     this.maxRetries = maxRetries;
     this.baseDelayMs = DEFAULT_BASE_DELAY_MS;
@@ -101,17 +90,13 @@ export class SequentumApiClient {
   }
 
   /**
-   * Build the Authorization header based on available credentials
+   * Build the Authorization header from the OAuth2 access token
    */
   private getAuthorizationHeader(): string {
     if (this.accessToken) {
       return `Bearer ${this.accessToken}`;
     }
-    if (this.apiKey) {
-      // Deprecated stdio path -- see the `apiKey` field. Removed with stdio, leaving Bearer.
-      return `ApiKey ${this.apiKey}`;
-    }
-    throw new AuthenticationError("No authentication configured. Set either an API key or OAuth2 access token.");
+    throw new AuthenticationError("No OAuth2 access token set.");
   }
 
   // ==========================================

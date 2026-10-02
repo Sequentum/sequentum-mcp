@@ -1,11 +1,10 @@
 # Troubleshooting Guide
 
-This guide covers common issues and their solutions when using the Sequentum MCP server. The supported setup is the remote server at `https://mcp.sequentum.com/mcp` using OAuth authentication. The local `npx` setup is deprecated and will be removed in a future release; its issues are still documented below for anyone migrating off it.
+This guide covers common issues and their solutions when using the Sequentum MCP server. The supported setup is the remote server at `https://mcp.sequentum.com/mcp` using OAuth authentication. The local `npx` setup (stdio with `SEQUENTUM_API_KEY`) was removed in 3.0.0; see [Local stdio mode (removed)](../README.md#local-stdio-mode-removed).
 
 ## Table of Contents
 
 - [Remote Connection Issues (OAuth)](#remote-connection-issues-oauth)
-- [Local Connection Issues (API Key, Deprecated)](#local-connection-issues-api-key-deprecated)
 - [Authentication Errors](#authentication-errors)
 - [API Errors](#api-errors)
 - [Agent Execution Issues](#agent-execution-issues)
@@ -86,93 +85,7 @@ Error: ECONNREFUSED or ETIMEDOUT connecting to mcp.sequentum.com
 
 ---
 
-## Local Connection Issues (API Key, Deprecated)
-
-> **Deprecated:** Running the MCP server locally over the stdio transport, authenticated
-> with `SEQUENTUM_API_KEY`, is deprecated and will be removed in a future release, along
-> with the `sequentum-mcp` npm package. Connect to `https://mcp.sequentum.com/mcp` over
-> HTTP with OAuth 2.1 instead -- see
-> [Deprecated: stdio and API-key auth](../README.md#deprecated-stdio-and-api-key-auth).
-
-These issues apply when running the MCP server locally via `npx sequentum-mcp`. They are
-kept for readers still on that path.
-
-### SEQUENTUM_API_KEY required
-
-**Error:**
-```
-Error: SEQUENTUM_API_KEY environment variable is required
-```
-
-**Cause:** The API key is not configured in your MCP client settings. This error only occurs in local mode (npx).
-
-**Solution:**
-
-1. Log in to the [Sequentum Control Center](https://dashboard.sequentum.com)
-2. Go to **Settings** > **API Keys**
-3. Click **Create API Key** and copy the generated key
-4. Add it to your MCP client configuration in the `env` section:
-
-```json
-{
-  "mcpServers": {
-    "sequentum": {
-      "command": "npx",
-      "args": ["-y", "sequentum-mcp"],
-      "env": {
-        "SEQUENTUM_API_KEY": "sk-your-api-key"
-      }
-    }
-  }
-}
-```
-
-> **Migrate instead:** The [remote OAuth setup](../README.md#getting-started) requires no API key and no local Node.js install, and is the only setup that will remain supported.
-
----
-
-### Using a custom Sequentum instance
-
-By default, the local MCP server connects to `https://dashboard.sequentum.com`. If you're using a custom Sequentum deployment, set the `SEQUENTUM_API_URL` environment variable:
-
-```json
-{
-  "mcpServers": {
-    "sequentum": {
-      "command": "npx",
-      "args": ["-y", "sequentum-mcp"],
-      "env": {
-        "SEQUENTUM_API_KEY": "sk-your-api-key",
-        "SEQUENTUM_API_URL": "https://your-custom-instance.sequentum.com"
-      }
-    }
-  }
-}
-```
-
----
-
-### Connection timeout or network errors
-
-**Error:**
-```
-Error: ECONNREFUSED or ETIMEDOUT
-```
-
-**Cause:** Unable to reach the Sequentum API server.
-
-**Solutions:**
-
-1. **Check your internet connection**
-2. **Verify the API URL** is correct (default: `https://dashboard.sequentum.com`)
-3. **Check if Sequentum is down** by visiting the dashboard directly
-4. **Check firewall/proxy settings** that might be blocking the connection
-
----
-
 ## Authentication Errors
-
-These errors apply to both remote (OAuth) and local (API key) setups.
 
 ### API Error 401: Unauthorized
 
@@ -215,15 +128,6 @@ through and the API decided it. Three reasons appear there:
 
 A sustained run of `jwks-unreachable` means validation has degraded to
 pass-through and needs attention.
-
-**Local setup (API key — deprecated).**
-
-1. **Generate a new API key:**
-   - Log in to the [Sequentum Control Center](https://dashboard.sequentum.com)
-   - Go to **Settings** > **API Keys**
-   - Create a new API key and update your configuration
-2. **Check for typos** in your API key (it should start with `sk-`)
-3. **Verify the key has not been revoked** in the Control Center
 
 ---
 
@@ -373,33 +277,12 @@ Run agent 123 synchronously with a 5 minute timeout
 
 **Cause:** Server failed to connect or configuration is incorrect.
 
-**Solutions for remote (OAuth) setup:**
+**Solutions:**
 
 1. **Verify the server URL** is `https://mcp.sequentum.com/mcp`
 2. **Check that OAuth authentication completed** -- you should have been prompted to log in
 3. **Restart the MCP client** after adding or changing the server configuration
 4. **Check the MCP client logs** for error messages
-
-**Solutions for the deprecated local (API key) setup:**
-
-1. **Check the MCP client logs** for error messages
-2. **Verify your JSON configuration** is valid (no trailing commas, proper quotes)
-3. **Restart the MCP client** after changing configuration
-4. **Test manually:** Run `npx sequentum-mcp` in terminal to see if it starts
-
----
-
-### MCP server not starting (local mode, deprecated)
-
-**Cause:** Node.js not installed or version too old. This only applies to the deprecated local npx setup.
-
-**Solutions:**
-
-1. **Install Node.js 20 or later** from [nodejs.org](https://nodejs.org/) -- `package.json` declares `"engines": {"node": ">=20"}`, and Node 18 fails at install
-2. **Verify installation:** `node --version`
-3. **Check npm is working:** `npm --version`
-
-> **Tip:** The remote OAuth setup at `https://mcp.sequentum.com/mcp` does not require Node.js.
 
 ---
 
@@ -421,7 +304,7 @@ Error: Unknown tool: tool_name
 If you're still experiencing issues:
 
 1. **Test the health endpoint** -- visit `https://mcp.sequentum.com/health` to verify the remote server is up
-2. **Check the logs** -- for local mode, the MCP server outputs debug information to stderr; for remote mode, check your MCP client's logs
+2. **Check the logs** -- check your MCP client's logs for the failing request
 3. **Review the documentation:**
    - [Tool Reference](./tool-reference.md)
    - [Sequentum API Documentation](https://dashboard.sequentum.com/api-docs/index.html)
@@ -434,8 +317,7 @@ If you're still experiencing issues:
 When reporting issues, please include:
 
 1. **Error message** (full text)
-2. **Connection method** -- remote (OAuth) or local (API key)
+2. **Server URL** you connected to (normally `https://mcp.sequentum.com/mcp`)
 3. **MCP client** you're using (Cursor, Claude Desktop, VS Code, etc.)
 4. **Operating system** and version
-5. **Node.js version** (`node --version`) -- if using local mode
-6. **Steps to reproduce** the issue
+5. **Steps to reproduce** the issue

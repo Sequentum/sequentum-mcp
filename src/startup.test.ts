@@ -16,7 +16,6 @@ describe("startup configuration guards", () => {
     const result = spawnSync(process.execPath, [distEntry], {
       env: {
         ...process.env,
-        TRANSPORT_MODE: "http",
         SEQUENTUM_OAUTH_ISSUER: "http://issuer.example.test",
         PORT: "0",
       },
@@ -32,7 +31,6 @@ describe("startup configuration guards", () => {
     const result = spawnSync(process.execPath, [distEntry], {
       env: {
         ...process.env,
-        TRANSPORT_MODE: "http",
         SEQUENTUM_OAUTH_ISSUER: "https://issuer.example.test/#frag",
         PORT: "0",
       },
@@ -61,7 +59,6 @@ describe("issuer normalisation reaches the served document", () => {
     const child = spawn(process.execPath, [distEntry], {
       env: {
         ...process.env,
-        TRANSPORT_MODE: "http",
         SEQUENTUM_OAUTH_ISSUER: "https://issuer.example.test///",
         REQUIRE_AUTH: "false",
         PORT: "0",
@@ -104,45 +101,70 @@ describe("issuer normalisation reaches the served document", () => {
   });
 });
 
-// The deprecation warning has to reach people running stdio, who by definition are not
-// reading the docs site. It is emitted before server.connect(), so it lands even if the
-// client tears the connection down immediately. Asserted against the built entrypoint
-// because main() runs at module top level and cannot be imported without starting up.
-describe("stdio deprecation warning", () => {
+// HTTP is the only transport as of 3.0.0. An environment left over from the npm-package
+// era — TRANSPORT_MODE=stdio and a SEQUENTUM_API_KEY — must neither revive stdio nor stop
+// the server from booting. Asserted against the built entrypoint because main() runs at
+// module top level and cannot be imported without starting up.
+describe("HTTP is the only transport", () => {
   const distEntry = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");
 
-  it("warns on stderr when starting in stdio mode", async () => {
+  async function bootAndProbe(
+    extraEnv: Record<string, string>
+  ): Promise<{ status: number; stderr: string }> {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      REQUIRE_AUTH: "false",
+      PORT: "0",
+      HOST: "127.0.0.1",
+      ...extraEnv,
+    };
+    // An inherited TRANSPORT_MODE would make the "unset" case meaningless.
+    if (!("TRANSPORT_MODE" in extraEnv)) delete env.TRANSPORT_MODE;
+
     const child = spawn(process.execPath, [distEntry], {
-      env: {
-        ...process.env,
-        TRANSPORT_MODE: "stdio",
-        SEQUENTUM_API_KEY: "sk-test-key-not-used-at-startup",
-      },
-      stdio: ["pipe", "ignore", "pipe"],
+      env,
+      stdio: ["ignore", "ignore", "pipe"],
     });
+    let stderr = "";
 
     try {
-      const stderr = await new Promise<string>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("no warning within 15s")), 15_000);
-        let buffered = "";
+      const port = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error(`server did not start in 15s: ${stderr}`)),
+          15_000
+        );
         child.stderr.on("data", (chunk: Buffer) => {
-          buffered += chunk.toString();
-          if (buffered.includes("running on stdio")) {
+          stderr += chunk.toString();
+          const match = /running on HTTP at http:\/\/127\.0\.0\.1:(\d+)\//.exec(stderr);
+          if (match) {
             clearTimeout(timer);
-            resolve(buffered);
+            resolve(match[1]);
           }
         });
         child.on("exit", (code) => {
           clearTimeout(timer);
-          reject(new Error(`server exited early with code ${code}: ${buffered}`));
+          reject(new Error(`server exited early with code ${code}: ${stderr}`));
         });
       });
 
-      expect(stderr).toContain("DEPRECATION WARNING");
-      expect(stderr).toContain("stdio transport and SEQUENTUM_API_KEY");
-      expect(stderr).toContain("https://mcp.sequentum.com/mcp");
+      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      return { status: res.status, stderr };
     } finally {
       child.kill("SIGKILL");
     }
-  });
+  }
+
+  it("starts HTTP when TRANSPORT_MODE is unset", async () => {
+    const { status } = await bootAndProbe({});
+    expect(status).toBe(200);
+  }, 20_000);
+
+  it("ignores a leftover TRANSPORT_MODE=stdio and SEQUENTUM_API_KEY", async () => {
+    const { status, stderr } = await bootAndProbe({
+      TRANSPORT_MODE: "stdio",
+      SEQUENTUM_API_KEY: "sk-leftover-from-the-npm-package",
+    });
+    expect(status).toBe(200);
+    expect(stderr).not.toMatch(/stdio|DEPRECATION|API Key/i);
+  }, 20_000);
 });

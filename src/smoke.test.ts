@@ -19,8 +19,8 @@ describe("native Node ESM smoke", () => {
 
   // The production entrypoint (dist/index.js) calls main() at module top level,
   // so it can't be imported without starting the server. Instead we import the
-  // server roots index.ts pulls in — handlers.js (stdio path), http-server.js
-  // (HTTP path, the deployed connector path), mcp-handler.js (the protocol
+  // server roots index.ts pulls in — handlers.js (the MCP server factory),
+  // http-server.js (the only transport), mcp-handler.js (the protocol
   // seam both HTTP requests and tests go through), and tools/index.js (the
   // root of the six domain handler modules, live risk given Task 2's helper
   // moves) — which together evaluate the entire production module graph
