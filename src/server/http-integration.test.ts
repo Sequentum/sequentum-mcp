@@ -55,6 +55,7 @@ describe("POST /mcp through the real Express app", () => {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         "Mcp-Method": "tools/list",
+        "Mcp-Protocol-Version": "2026-07-28",
       },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { _meta: ENVELOPE } }),
     });
@@ -64,6 +65,27 @@ describe("POST /mcp through the real Express app", () => {
     // A global express.json() consumes the stream and yields -32700 here.
     expect(body.error).toBeUndefined();
     expect(body.result.tools.length).toBe(43);
+  });
+
+  it("answers 413 to a request body over 4 MiB", async () => {
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "Mcp-Method": "tools/list",
+        "Mcp-Protocol-Version": "2026-07-28",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: { _meta: { ...ENVELOPE, pad: "x".repeat(4 * 1024 * 1024) } },
+      }),
+    });
+
+    expect(res.status).toBe(413);
+    expect(JSON.parse(await res.text()).error.code).toBe(-32000);
   });
 
   it("ignores a stale Mcp-Session-Id instead of failing", async () => {
@@ -112,8 +134,9 @@ describe("POST /mcp through the real Express app", () => {
   });
 
   it("allows the headers the revision requires, and no longer advertises sessions", async () => {
-    // Without Mcp-Method and Mcp-Name in the allowlist, tools/call from any browser
-    // client fails -32020 before reaching a handler.
+    // Without Mcp-Method, Mcp-Name and Mcp-Protocol-Version in the allowlist, tools/call
+    // from any browser client fails -32020 before reaching a handler. The SDK has
+    // required Mcp-Protocol-Version on every modern POST since 2.1.0.
     const res = await fetch(`${base}/mcp`, {
       method: "OPTIONS",
       headers: { origin: "https://claude.ai", "access-control-request-method": "POST" },
@@ -121,6 +144,7 @@ describe("POST /mcp through the real Express app", () => {
     const allowed = res.headers.get("access-control-allow-headers") ?? "";
     expect(allowed).toMatch(/Mcp-Method/i);
     expect(allowed).toMatch(/Mcp-Name/i);
+    expect(allowed).toMatch(/Mcp-Protocol-Version/i);
     expect(allowed).not.toMatch(/mcp-session-id/i);
     expect(res.headers.get("access-control-expose-headers") ?? "").not.toMatch(/mcp-session-id/i);
   });
@@ -247,6 +271,7 @@ describe("POST /mcp authentication", () => {
         accept: "application/json, text/event-stream",
         authorization: `Bearer ${token}`,
         "Mcp-Method": "tools/call",
+        "Mcp-Protocol-Version": "2026-07-28",
         "Mcp-Name": "list_agents",
       },
       body: JSON.stringify({
@@ -490,6 +515,7 @@ describe("GET / landing page", () => {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         "Mcp-Method": "tools/list",
+        "Mcp-Protocol-Version": "2026-07-28",
       },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { _meta: ENVELOPE } }),
     });
@@ -584,6 +610,7 @@ describe("token validation on /mcp (SE4-3856)", () => {
         // check the pass-through tests below need to clear to reach 200 rather
         // than being masked by a loose `not.toBe(401)` assertion.
         "Mcp-Method": "tools/list",
+        "Mcp-Protocol-Version": "2026-07-28",
       },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { _meta: ENVELOPE } }),
     });

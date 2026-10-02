@@ -7,7 +7,9 @@
  */
 import {
   createMcpHandler,
+  readRequestBody,
   BAGGAGE_META_KEY,
+  DEFAULT_MAX_REQUEST_BODY_SIZE,
   TRACEPARENT_META_KEY,
   TRACESTATE_META_KEY,
   type McpHttpHandler,
@@ -206,12 +208,20 @@ export function createSequentumMcpHandler(apiBaseUrl: string, version: string): 
    * again. The clone leaves the original stream intact for the SDK's own error path:
    * when the body is not JSON we pass no `parsedBody`, the SDK reads the original and
    * returns its usual 400 / -32700, unchanged from before this wrapper existed.
+   *
+   * The clone is read with the SDK's own bounded reader. The SDK enforces its body cap
+   * only when it reads the body itself, so a supplied `parsedBody` would skip it. An
+   * oversized body gets no `parsedBody` and no trace context, and the SDK answers it
+   * with its own 413. The clone stops reading just past the cap, so the original
+   * stream buffers at most that much. Behind Express, `toNodeHandler` already refuses
+   * an oversized body before this runs; this keeps the cap for any other caller.
    */
   const fetch: McpHttpHandler["fetch"] = async (request, options) => {
     let parsedBody = options?.parsedBody;
     if (parsedBody === undefined && request.method.toUpperCase() === "POST") {
       try {
-        parsedBody = await request.clone().json();
+        const body = await readRequestBody(request.clone(), DEFAULT_MAX_REQUEST_BODY_SIZE);
+        parsedBody = body.tooLarge ? undefined : JSON.parse(body.text);
       } catch {
         parsedBody = undefined;
       }
