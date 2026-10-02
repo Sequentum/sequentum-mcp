@@ -1,0 +1,11 @@
+[
+  {
+    "id": 101,
+    "name": "Shop prices",
+    "description": null,
+    "configType": 1,
+    "status": 10,
+    "validationStatus": 3,
+    "lastActivity": "2026-09-30T14:05:42.654321Z"
+  }
+]

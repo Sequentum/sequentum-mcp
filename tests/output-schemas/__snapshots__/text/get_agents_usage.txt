@@ -1,0 +1,14 @@
+{
+  "agents": [
+    {
+      "agentId": 101,
+      "agentName": "Shop prices",
+      "cost": 3.5,
+      "spaceId": null
+    }
+  ],
+  "totalRecordCount": 1,
+  "totalCost": 3.5,
+  "startDate": "2026-09-30T14:03:11.123456Z",
+  "endDate": "2026-09-30T14:05:42.654321Z"
+}

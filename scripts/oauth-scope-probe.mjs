@@ -1184,3 +1184,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 
 // Exported for tests/oauth-scope-probe.test.ts: pure functions, no I/O, no process access.
 export { judgeGrant, judgeMcp, judgeV1, expectedLogLine, linesForToken, judgeTokenError, tokenExchangeRow, GENERIC_INVALID_GRANT };
+// Reused by scripts/output-schema-contract.mjs for the same browser OAuth flow.
+export { ENVS, CallbackListener, OAuthClient, pkcePair, b64url, openBrowser, log, pressEnter };

@@ -1,0 +1,26 @@
+[
+  {
+    "id": 945,
+    "name": "Production",
+    "organizationId": 1,
+    "created": "2026-09-30T14:03:11.123456Z",
+    "isDefaultAccess": false,
+    "scope": "Private",
+    "runRetentionHours": null,
+    "initiatedBy": null,
+    "access": [
+      "Admins"
+    ]
+  },
+  {
+    "id": 1,
+    "name": "Shared",
+    "organizationId": 1,
+    "created": "2026-09-30T14:03:11.123456Z",
+    "isDefaultAccess": false,
+    "scope": null,
+    "runRetentionHours": null,
+    "initiatedBy": null,
+    "access": []
+  }
+]

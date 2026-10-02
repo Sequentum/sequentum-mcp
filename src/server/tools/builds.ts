@@ -6,7 +6,7 @@
  * dispatch-map refactor (see agents.ts for the original TODO reference).
  */
 import type { ToolHandler } from "./types.js";
-import { jsonResult } from "./types.js";
+import { structuredResult } from "./types.js";
 import { DEBUG } from "./shared.js";
 import {
   AGENT_BUILD_MAX_WAIT_MS,
@@ -30,7 +30,7 @@ const start_agent_build: ToolHandler = async (args, { apiClient, sendProgress, s
   const startResponse = await apiClient.startAgentBuild({ prompt, spaceId });
 
   if (!waitForCompletion) {
-    return jsonResult(startResponse);
+    return structuredResult(startResponse);
   }
 
   // Internal polling loop — client sees a single tool call instead of 4-12 roundtrips.
@@ -63,7 +63,7 @@ const start_agent_build: ToolHandler = async (args, { apiClient, sendProgress, s
     const status = await apiClient.getAgentBuildStatus(sessionId);
 
     if (status.status === "completed" || status.status === "ready") {
-      return jsonResult({ status: status.status, agentId: status.agentId, agentName: status.agentName, sessionId });
+      return structuredResult({ status: status.status, agentId: status.agentId, agentName: status.agentName, sessionId });
     }
 
     if (status.status === "error") {
@@ -110,7 +110,7 @@ const start_agent_build: ToolHandler = async (args, { apiClient, sendProgress, s
   // Timed out — the build is still running on the backend. Return the sessionId
   // so the caller can check status manually via get_agent_build_status.
   // isError is intentionally omitted: the build has not failed, we just stopped waiting.
-  return jsonResult({
+  return structuredResult({
     status: "timeout",
     sessionId,
     message: `Build did not complete within ${AGENT_BUILD_MAX_WAIT_LABEL}. The build is still running. Use get_agent_build_status with the sessionId to check.`,
@@ -136,7 +136,7 @@ const get_agent_build_status: ToolHandler = async (args, { apiClient }) => {
       : undefined,
   };
 
-  return jsonResult(sanitized);
+  return structuredResult(sanitized);
 };
 
 const stop_agent_build: ToolHandler = async (args, { apiClient }) => {
@@ -145,7 +145,7 @@ const stop_agent_build: ToolHandler = async (args, { apiClient }) => {
   const sessionId = validateString(params, "sessionId", { required: true, maxLength: 256 })!;
   await apiClient.stopAgentBuild(sessionId);
   // Return structured JSON consistent with every other tool handler (#8)
-  return jsonResult({ stopped: true, sessionId });
+  return structuredResult({ stopped: true, sessionId });
 };
 
 export const buildToolHandlers: Record<string, ToolHandler> = {

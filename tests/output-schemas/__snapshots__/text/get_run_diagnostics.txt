@@ -1,0 +1,25 @@
+{
+  "runId": 9001,
+  "agentId": 101,
+  "agentName": "",
+  "status": 7,
+  "errorMessage": "Navigation timed out",
+  "startTime": "2026-09-30T14:03:11.123456Z",
+  "endTime": "2026-09-30T14:05:42.654321Z",
+  "runtimeSeconds": null,
+  "stats": {
+    "dataCount": 3,
+    "inputCount": null,
+    "errorCount": 1,
+    "pageCount": 3,
+    "exportCount": null,
+    "traffic": null
+  },
+  "possibleCauses": [
+    "Network connectivity issues"
+  ],
+  "suggestedActions": [
+    "Check network connectivity",
+    "Verify target URL is accessible"
+  ]
+}

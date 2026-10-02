@@ -6,7 +6,7 @@
  * dispatch-map refactor (see the TODO that used to live at handlers.ts:285).
  */
 import type { ToolHandler } from "./types.js";
-import { jsonResult } from "./types.js";
+import { structuredResult, withStructured } from "./types.js";
 import { isPaginatedResponse, summarizeAgents } from "./shared.js";
 import {
   AgentApiModel,
@@ -88,20 +88,18 @@ const list_agents: ToolHandler = async (args, { apiClient }) => {
 
   const summary = summarizeAgents(agents);
 
-  // Include pagination info if available
-  const result = paginationInfo ? {
-    agents: summary,
-    pagination: paginationInfo,
-  } : summary;
+  // Always an object, so the output schema's root is the same on every path. The bare-array
+  // response only arrives when paging is not sent, which this handler never does.
+  const result = paginationInfo ? { agents: summary, pagination: paginationInfo } : { agents: summary };
 
-  return jsonResult(result);
+  return structuredResult(result);
 };
 
 const get_agent: ToolHandler = async (args, { apiClient }) => {
   const params = args;
   const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
   const agent = await apiClient.getAgent(agentId);
-  return jsonResult(agent);
+  return structuredResult(agent);
 };
 
 /**
@@ -122,7 +120,7 @@ const search_agents: ToolHandler = async (args, { apiClient }) => {
   const returned = Array.isArray(agents) ? agents.length : 0;
   const truncated = returned >= limit;
 
-  return jsonResult({
+  return structuredResult({
     agents: summarizeAgents(agents),
     returned,
     limit,
@@ -150,7 +148,7 @@ const get_agent_search_count: ToolHandler = async (args, { apiClient }) => {
   }
   const includeArchived = validateBoolean(params, "includeArchived", false);
   const count = await apiClient.getAgentSearchCount(query, includeArchived);
-  return jsonResult(count);
+  return structuredResult(count);
 };
 
 /**
@@ -159,7 +157,7 @@ const get_agent_search_count: ToolHandler = async (args, { apiClient }) => {
  */
 const get_personal_agent_count: ToolHandler = async (_args, { apiClient }) => {
   const count = await apiClient.getPersonalAgentCount();
-  return jsonResult(count);
+  return structuredResult(count);
 };
 
 // Run Tools
@@ -179,7 +177,7 @@ const get_agent_runs: ToolHandler = async (args, { apiClient }) => {
   const returned = Array.isArray(runs) ? runs.length : 0;
   const truncated = returned >= limit;
 
-  return jsonResult({
+  return structuredResult({
     runs,
     returned,
     limit,
@@ -203,7 +201,7 @@ const get_agent_run_summary: ToolHandler = async (args, { apiClient }) => {
   const params = args;
   const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
   const summary = await apiClient.getAgentRunSummary(agentId);
-  return jsonResult(summary);
+  return structuredResult(summary);
 };
 
 const get_run_status: ToolHandler = async (args, { apiClient }) => {
@@ -211,7 +209,7 @@ const get_run_status: ToolHandler = async (args, { apiClient }) => {
   const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
   const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
   const status = await apiClient.getRunStatus(agentId, runId);
-  return jsonResult(status);
+  return structuredResult(status);
 };
 
 const start_agent: ToolHandler = async (args, { apiClient }) => {
@@ -231,25 +229,14 @@ const start_agent: ToolHandler = async (args, { apiClient }) => {
 
   if (typeof result === "string") {
     // Synchronous run returned data directly
-    return {
-      content: [
-        {
-          type: "text",
-          text: result,
-        },
-      ],
-    };
-  } else {
-    // Asynchronous run returned run info
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Agent started successfully.\n\n${JSON.stringify(result, null, 2)}`,
-        },
-      ],
-    };
+    return withStructured({ content: [{ type: "text", text: result }] }, { data: result });
   }
+  // The text keeps its historical prefix on both paths (a parsed sync body is an object, not a
+  // string). structuredContent tells the two apart by the mode the caller asked for.
+  return withStructured(
+    { content: [{ type: "text", text: `Agent started successfully.\n\n${JSON.stringify(result, null, 2)}` }] },
+    isRunSynchronously ? { data: result } : { run: result }
+  );
 };
 
 const stop_agent: ToolHandler = async (args, { apiClient }) => {
@@ -323,14 +310,7 @@ const get_run_files: ToolHandler = async (args, { apiClient }) => {
   const files = await apiClient.getRunFiles(agentId, runId);
 
   if (files.length === 0) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: "No files found for this run.",
-        },
-      ],
-    };
+    return withStructured({ content: [{ type: "text", text: "No files found for this run." }] }, []);
   }
 
   const summary = files.map((f: AgentRunFileApiModel) => ({
@@ -341,7 +321,7 @@ const get_run_files: ToolHandler = async (args, { apiClient }) => {
     created: f.created,
   }));
 
-  return jsonResult(summary);
+  return structuredResult(summary);
 };
 
 const get_file_download_url: ToolHandler = async (args, { apiClient }) => {
@@ -350,14 +330,14 @@ const get_file_download_url: ToolHandler = async (args, { apiClient }) => {
   const runId = validateNumber(params, "runId", { min: 1, integer: true })!;
   const fileId = validateNumber(params, "fileId", { min: 1, integer: true })!;
   const result = await apiClient.downloadRunFile(agentId, runId, fileId);
-  return {
-    content: [
-      {
-        type: "text",
-        text: `Download URL:\n${result.redirectUrl}\n\nNote: This URL is temporary and will expire.`,
-      },
-    ],
-  };
+  return withStructured(
+    {
+      content: [
+        { type: "text", text: `Download URL:\n${result.redirectUrl}\n\nNote: This URL is temporary and will expire.` },
+      ],
+    },
+    { downloadUrl: result.redirectUrl }
+  );
 };
 
 // Version Tools
@@ -365,7 +345,7 @@ const get_agent_versions: ToolHandler = async (args, { apiClient }) => {
   const params = args;
   const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
   const versions = await apiClient.getAgentVersions(agentId);
-  return jsonResult(versions);
+  return structuredResult(versions);
 };
 
 const restore_agent_version: ToolHandler = async (args, { apiClient }) => {

@@ -1,0 +1,9 @@
+[
+  {
+    "id": 945,
+    "name": "Production",
+    "organizationId": 1,
+    "created": "2026-09-30T14:03:11.123456Z",
+    "isDefaultAccess": false
+  }
+]

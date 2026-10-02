@@ -245,6 +245,10 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
         // the only bridge; the schemas in tools.ts are hand-written JSON Schema and
         // are what `tools/list` emits verbatim either way.
         inputSchema: fromJsonSchema(tool.inputSchema as JsonSchemaType),
+        // the SDK validates every non-error result against this and turns a mismatch
+        // into an isError result, so the schemas are permissive by construction
+        // (output-schemas/helpers.ts). Tools without one (acknowledgement-only) skip it.
+        ...(tool.outputSchema ? { outputSchema: fromJsonSchema(tool.outputSchema as JsonSchemaType) } : {}),
         annotations: tool.annotations,
       },
       async (args, ctx) => {

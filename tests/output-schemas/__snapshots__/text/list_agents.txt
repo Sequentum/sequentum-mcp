@@ -1,0 +1,27 @@
+{
+  "agents": [
+    {
+      "id": 101,
+      "name": "Shop prices",
+      "description": "Collects product prices",
+      "status": "Success",
+      "configType": 1,
+      "version": 4,
+      "lastActivity": "2026-09-30T14:05:42.654321Z"
+    },
+    {
+      "id": 102,
+      "name": "News",
+      "description": null,
+      "status": "Never Run",
+      "configType": 2,
+      "version": 4,
+      "lastActivity": null
+    }
+  ],
+  "pagination": {
+    "totalRecordCount": 2,
+    "pageIndex": 1,
+    "recordsPerPage": 50
+  }
+}

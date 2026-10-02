@@ -235,6 +235,20 @@ The Sequentum MCP Server provides 43 tools across 9 categories for interacting w
 
 <!-- END AUTO GENERATED TOOLS -->
 
+## Structured output
+
+36 of the 43 tools declare an `outputSchema` and return `structuredContent` next to the usual
+text block (MCP 2026-07-28). The text block is unchanged, so clients that ignore structured
+content see no difference. The seven acknowledgement-only tools (`stop_agent`, `kill_agent`,
+`delete_run`, `restore_agent_version`, `delete_agent_schedule`, `enable_agent_schedule`,
+`disable_agent_schedule`) return text only.
+
+- `start_agent` returns `{ "run": … }` in async mode and `{ "data": … }` in sync mode.
+- Tools that return a list (`list_spaces`, `get_space_agents`, `list_agent_schedules`,
+  `get_scheduled_runs`, `get_agent_versions`, `get_run_files`) have an array schema. Clients on a
+  2025 protocol revision receive it wrapped as `{ "result": [...] }`, as the SDK projects it.
+- Status-like fields are numeric codes; their meanings are in each schema's descriptions.
+
 ## Available Prompts
 
 The server includes 9 reusable prompt templates that guide the AI through common multi-step workflows. See the [Prompts Reference](./docs/prompts-reference.md) for detailed documentation.

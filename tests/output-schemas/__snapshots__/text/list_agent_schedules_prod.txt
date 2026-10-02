@@ -1,0 +1,28 @@
+[
+  {
+    "tag": "",
+    "id": 3001,
+    "configId": 101,
+    "name": "Nightly",
+    "schedule": "0 2 * * *",
+    "localSchedule": "0 2 * * *",
+    "timezone": "UTC",
+    "nextRunTime": "2026-09-30T14:05:42.654321Z",
+    "startTime": null,
+    "scheduleType": 3,
+    "isEnabled": true,
+    "runEveryCount": null,
+    "runEveryPeriod": null,
+    "inputParameters": null,
+    "parallelism": 1,
+    "parallelMaxConcurrency": null,
+    "parallelExport": null,
+    "proxyPoolId": null,
+    "serverGroupId": null,
+    "logLevel": "Info",
+    "logMode": "Text",
+    "isExclusive": false,
+    "isWaitOnFailure": false,
+    "created": "2026-09-30T14:03:11.123456Z"
+  }
+]

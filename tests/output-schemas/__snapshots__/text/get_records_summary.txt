@@ -1,0 +1,10 @@
+{
+  "startDate": "2026-09-30T14:03:11.123456Z",
+  "endDate": "2026-09-30T14:05:42.654321Z",
+  "totalRecordsExtracted": 1200,
+  "totalRecordsExported": 1100,
+  "totalErrors": 4,
+  "totalPageLoads": 300,
+  "runCount": 12,
+  "agentId": null
+}

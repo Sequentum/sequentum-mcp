@@ -730,3 +730,24 @@ describe("resolveTraceContext", () => {
     expect(resolveTraceContext({}, undefined)).toEqual({});
   });
 });
+
+describe("output schemas on the 2026-07-28 wire", () => {
+  it("tools/list leaves array roots bare and object roots as objects", async () => {
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const body = await call(handler, "tools/list");
+    const schemaOf = (name: string) =>
+      body.result.tools.find((t: { name: string }) => t.name === name)?.outputSchema;
+    expect(schemaOf("list_spaces").type).toBe("array");
+    expect(schemaOf("get_credits_balance").type).toBe("object");
+    await handler.close();
+  });
+
+  it("tools/call returns a bare array as structuredContent", async () => {
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const body = await call(handler, "tools/call", { name: "list_spaces", arguments: {} });
+    expect(body.error, `tools/call failed: ${JSON.stringify(body.error)}`).toBeUndefined();
+    expect(body.result.isError).toBeFalsy();
+    expect(body.result.structuredContent).toEqual([]);
+    await handler.close();
+  });
+});
