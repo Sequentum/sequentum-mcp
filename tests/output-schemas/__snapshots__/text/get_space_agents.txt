@@ -1,0 +1,22 @@
+[
+  {
+    "id": 101,
+    "name": "Shop prices",
+    "description": null,
+    "configType": 1,
+    "status": 10,
+    "validationStatus": 3,
+    "lastActivity": "2026-09-30T14:05:42.654321Z",
+    "created": "2026-09-30T14:03:11.123456Z",
+    "updated": "2026-09-30T14:05:42.654321Z",
+    "version": 4,
+    "isArchived": false,
+    "approvalStatus": null,
+    "labels": [
+      {
+        "id": 7,
+        "name": "pricing"
+      }
+    ]
+  }
+]

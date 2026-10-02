@@ -1,0 +1,16 @@
+{
+  "transactions": [
+    {
+      "id": 77,
+      "transactionType": "Debit",
+      "amount": -1.25,
+      "balance": 214.78,
+      "created": "2026-09-30T14:05:42.654321Z",
+      "expiresAt": null,
+      "message": null
+    }
+  ],
+  "totalCount": 1,
+  "pageIndex": 1,
+  "recordsPerPage": 50
+}

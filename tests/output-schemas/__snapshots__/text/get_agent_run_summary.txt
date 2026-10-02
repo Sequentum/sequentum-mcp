@@ -1,0 +1,15 @@
+{
+  "totalCount": 12,
+  "statusCounts": [
+    {
+      "status": 7,
+      "statusName": "Failed",
+      "count": 2
+    },
+    {
+      "status": 10,
+      "statusName": "Success",
+      "count": 10
+    }
+  ]
+}

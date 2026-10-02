@@ -1,0 +1,5 @@
+{
+  "availableCredits": 214.78,
+  "organizationId": 1,
+  "retrievedAt": "2026-09-30T14:05:42.654321Z"
+}

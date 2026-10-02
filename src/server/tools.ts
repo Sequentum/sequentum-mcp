@@ -8,6 +8,7 @@
 import type { Tool } from "@modelcontextprotocol/server";
 import { PRE_CALL_CHECK, PROMPT_HANDLING_POLICY } from "./policies.js";
 import { AGENT_BUILD_MAX_WAIT_LABEL } from "./constants.js";
+import { outputSchemaFor } from "./output-schemas/index.js";
 
 export const tools: Tool[] = [
   // Agent Tools
@@ -17,7 +18,8 @@ export const tools: Tool[] = [
       "List web scraping agents with IDs, names, status, and configuration. " +
       "USE THIS FIRST to discover available agents before running or managing them. " +
       "Answers: 'What agents do I have?', 'Show me my scrapers', 'List all completed agents'. " +
-      "Returns: Array of agent summaries with id, name, status (last run status), configType, version, lastActivity. " +
+      "Returns: An object with agents (agent summaries with id, name, status (last run status label), " +
+      "configType, version, lastActivity) and pagination. " +
       "Pagination always applied (defaults: pageIndex=1, recordsPerPage=50). " +
       "TIP: Use 'search' param to find agents by name, or 'status' to filter by last run status (Completed, Failed, etc.).",
     inputSchema: {
@@ -67,6 +69,7 @@ export const tools: Tool[] = [
     // retried without asking). Read-only tools always get destructiveHint: false,
     // openWorldHint: false, idempotentHint: true. Write tools are classified per tool
     // in handlers.test.ts (expectedIdempotentHint), which is the regression guard.
+    outputSchema: outputSchemaFor("list_agents"),
     annotations: {
       title: "List Agents",
       readOnlyHint: true,
@@ -90,6 +93,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId"],
     },
+    outputSchema: outputSchemaFor("get_agent"),
     annotations: {
       title: "Get Agent",
       readOnlyHint: true,
@@ -116,6 +120,7 @@ export const tools: Tool[] = [
       },
       required: ["query"],
     },
+    outputSchema: outputSchemaFor("search_agents"),
     annotations: {
       title: "Search Agents",
       readOnlyHint: true,
@@ -142,6 +147,7 @@ export const tools: Tool[] = [
       },
       required: ["query"],
     },
+    outputSchema: outputSchemaFor("get_agent_search_count"),
     annotations: {
       title: "Get Agent Search Count",
       readOnlyHint: true,
@@ -163,6 +169,7 @@ export const tools: Tool[] = [
       "search_space_by_name cannot be used for it, and list_agents rejects spaceId=0 as invalid. " +
       "The total excludes archived agents and counts only agents.",
     inputSchema: { type: "object" as const, properties: {}, required: [] },
+    outputSchema: outputSchemaFor("get_personal_agent_count"),
     annotations: {
       title: "Get Personal Agent Count",
       readOnlyHint: true,
@@ -178,7 +185,7 @@ export const tools: Tool[] = [
     description:
       "Get execution history for an agent showing past runs with status, timing, and records extracted. " +
       "Answers: 'When did agent X last run?', 'Show run history', 'How many records were extracted?', 'Did the agent fail?'. " +
-      "Returns: An object with runs (array of runs with id, status, startTime, endTime, recordsExtracted, recordsExported, errorMessage), plus returned, limit and truncated. " +
+      "Returns: An object with runs (array of runs with id, status (numeric run status code), startTime, endTime, dataCount (records extracted), exportCount (records exported), message), plus returned, limit and truncated. " +
       "TRUNCATION: Only the most recent runs are returned — 50 unless you raise maxRecords. When truncated is true, the page came back full, so more runs may exist than were returned. " +
       "NEVER count this array to answer 'how many runs', 'how many failed' or 'how many succeeded' — use get_agent_run_summary, which returns exact server-computed totals. " +
       "TIP: Check the most recent run's status to see if agent is currently running or recently completed. " +
@@ -191,6 +198,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId"],
     },
+    outputSchema: outputSchemaFor("get_agent_runs"),
     annotations: {
       title: "Get Agent Runs",
       readOnlyHint: true,
@@ -217,6 +225,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId"],
     },
+    outputSchema: outputSchemaFor("get_agent_run_summary"),
     annotations: {
       title: "Get Agent Run Summary",
       readOnlyHint: true,
@@ -230,9 +239,9 @@ export const tools: Tool[] = [
     description:
       "Get the current status of a specific run. FASTER than get_agent_runs when you only need one run's status. " +
       "Answers: 'Is run 123 still running?', 'Did that run complete?', 'Check run status'. " +
-      "Returns: Single run with status, timing, records extracted. " +
+      "Returns: Single run with status, timing, and dataCount (records extracted). " +
       "USE AFTER start_agent to monitor a run you just started. " +
-      "Status values: Running, Completed, Failed, CompletedWithErrors, Stopped, Queued.",
+      "status is a numeric run status code: 1 Running, 2 Exporting, 3 Starting, 4 Queuing, 5 Stopping, 6 Failure, 7 Failed, 8 Stopped, 9 Completed, 10 Success, 11 Skipped, 12 Waiting, 13 UpdatingDataSet (0 Invalid).",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -241,6 +250,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId", "runId"],
     },
+    outputSchema: outputSchemaFor("get_run_status"),
     annotations: {
       title: "Get Run Status",
       readOnlyHint: true,
@@ -256,7 +266,7 @@ export const tools: Tool[] = [
       "(1) ASYNC (default): Returns immediately with runId - use get_run_status to monitor progress. " +
       "(2) SYNC: Set isRunSynchronously=true to wait and get scraped data directly (best for quick agents <60s). " +
       "Answers: 'Run agent X', 'Start the scraper', 'Execute the Amazon agent', 'Scrape this website'. " +
-      "Returns: In async mode: {runId, status}. In sync mode: Scraped data directly as JSON/text. " +
+      "Returns: In async mode: the run record (its id is the runId; status is a numeric run status code). In sync mode: Scraped data directly as JSON/text. " +
       "REQUIRED: Get agentId first using list_agents, search_agents, or get_agent_build_status (when building a new agent). " +
       "TIP: Use get_agent first to check what inputParameters the agent accepts before running. " +
       PRE_CALL_CHECK,
@@ -271,6 +281,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId"],
     },
+    outputSchema: outputSchemaFor("start_agent"),
     annotations: {
       title: "Start Agent",
       readOnlyHint: false,
@@ -380,6 +391,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId", "runId"],
     },
+    outputSchema: outputSchemaFor("get_run_files"),
     annotations: {
       title: "Get Run Files",
       readOnlyHint: true,
@@ -405,6 +417,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId", "runId", "fileId"],
     },
+    outputSchema: outputSchemaFor("get_file_download_url"),
     annotations: {
       title: "Get File Download URL",
       readOnlyHint: true,
@@ -429,6 +442,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId"],
     },
+    outputSchema: outputSchemaFor("get_agent_versions"),
     annotations: {
       title: "Get Agent Versions",
       readOnlyHint: true,
@@ -468,7 +482,7 @@ export const tools: Tool[] = [
     description:
       "List all scheduled tasks for a specific agent. Shows when the agent is configured to run automatically. " +
       "Answers: 'When does this agent run?', 'Show schedules for agent X', 'Is this agent scheduled?'. " +
-      "Returns: Array of schedules with id, name, cronExpression/schedule, nextRunTime, isEnabled, timezone. " +
+      "Returns: Array of schedules with id, name, schedule (the CRON expression), scheduleType, nextRunTime, isEnabled, timezone. " +
       "TIP: Check isEnabled to see if the schedule is active.",
     inputSchema: {
       type: "object" as const,
@@ -477,6 +491,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId"],
     },
+    outputSchema: outputSchemaFor("list_agent_schedules"),
     annotations: {
       title: "List Agent Schedules",
       readOnlyHint: true,
@@ -557,6 +572,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId", "name"],
     },
+    outputSchema: outputSchemaFor("create_agent_schedule"),
     annotations: {
       title: "Create Agent Schedule",
       readOnlyHint: false,
@@ -592,7 +608,7 @@ export const tools: Tool[] = [
     description:
       "Get details of a specific schedule for an agent. " +
       "Answers: 'Show me schedule X details', 'What are the settings for this schedule?'. " +
-      "Returns: Full schedule details including name, cronExpression, nextRunTime, isEnabled, timezone, and run parameters.",
+      "Returns: Full schedule details including name, schedule (the CRON expression), scheduleType, nextRunTime, isEnabled, timezone, and run parameters.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -601,6 +617,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId", "scheduleId"],
     },
+    outputSchema: outputSchemaFor("get_agent_schedule"),
     annotations: {
       title: "Get Agent Schedule",
       readOnlyHint: true,
@@ -677,6 +694,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId", "scheduleId", "name"],
     },
+    outputSchema: outputSchemaFor("update_agent_schedule"),
     annotations: {
       title: "Update Agent Schedule",
       readOnlyHint: false,
@@ -744,6 +762,7 @@ export const tools: Tool[] = [
       },
       required: [],
     },
+    outputSchema: outputSchemaFor("get_scheduled_runs"),
     annotations: {
       title: "Get Scheduled Runs",
       readOnlyHint: true,
@@ -761,6 +780,7 @@ export const tools: Tool[] = [
       "Answers: 'How many credits do I have?', 'What's my balance?', 'Check credits'. " +
       "Returns: availableCredits, organizationId, retrievedAt timestamp.",
     inputSchema: { type: "object" as const, properties: {}, required: [] },
+    outputSchema: outputSchemaFor("get_credits_balance"),
     annotations: {
       title: "Get Credits Balance",
       readOnlyHint: true,
@@ -784,6 +804,7 @@ export const tools: Tool[] = [
       },
       required: [],
     },
+    outputSchema: outputSchemaFor("get_spending_summary"),
     annotations: {
       title: "Get Spending Summary",
       readOnlyHint: true,
@@ -797,7 +818,7 @@ export const tools: Tool[] = [
     description:
       "Get the transaction history of credits (additions from purchases, deductions from usage). " +
       "Answers: 'Show credit history', 'What were my credit transactions?', 'When were credits added?'. " +
-      "Returns: Array of transactions with transactionType, amount, balance, created date, message.",
+      "Returns: An object with transactions (each with transactionType, amount, balance, created date, expiresAt, message), plus totalCount, pageIndex and recordsPerPage.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -806,6 +827,7 @@ export const tools: Tool[] = [
       },
       required: [],
     },
+    outputSchema: outputSchemaFor("get_credit_history"),
     annotations: {
       title: "Get Credit History",
       readOnlyHint: true,
@@ -837,6 +859,7 @@ export const tools: Tool[] = [
       },
       required: [],
     },
+    outputSchema: outputSchemaFor("get_agents_usage"),
     annotations: {
       title: "Get Agents Usage",
       readOnlyHint: true,
@@ -849,10 +872,10 @@ export const tools: Tool[] = [
     name: "get_agent_cost_breakdown",
     description:
       "Get detailed cost breakdown by usage type for a specific agent over time, useful for visualizing costs in charts. " +
-      "USE THIS to understand what's driving costs for an agent (server time vs exports vs proxies), or to chart agent costs over time. " +
+      "USE THIS to understand what's driving costs for an agent (run usage vs exports vs proxies), or to chart agent costs over time. " +
       "Answers: 'What's causing agent X's costs?', 'Show me cost breakdown for agent 123', 'Chart agent costs by day'. " +
       "Returns: Cost data with agentId, agentName, date labels array, usageTypes array (each with type name, data points, totalCost), totalCost, startDate, endDate. " +
-      "TIP: Use timeUnit='day' for daily granularity or 'month' for monthly. The labels array corresponds to data points in each usageTypes.data array.",
+      "TIP: Use timeUnit='day' for daily granularity or 'month' for monthly. Usage types are RunUsage, ExportDataBandwidth, ExportDataCpm, InputCount, ProxyUsage and AgentBuilder. Each usageTypes.data array lines up with labels, but is empty for a type with no usage.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -864,6 +887,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId"],
     },
+    outputSchema: outputSchemaFor("get_agent_cost_breakdown"),
     annotations: {
       title: "Get Agent Cost Breakdown",
       readOnlyHint: true,
@@ -894,6 +918,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId"],
     },
+    outputSchema: outputSchemaFor("get_agent_runs_cost"),
     annotations: {
       title: "Get Agent Runs Cost",
       readOnlyHint: true,
@@ -909,9 +934,10 @@ export const tools: Tool[] = [
     description:
       "List all accessible spaces (folders for organizing agents into groups). " +
       "Answers: 'What spaces do I have?', 'Show my folders', 'List agent groups'. " +
-      "Returns: Array of spaces with id, name, description. " +
+      "Returns: Array of spaces with id, name, created and, where available, scope and access. " +
       "USE THIS to find spaceId before using get_space_agents or filtering list_agents by space.",
     inputSchema: { type: "object" as const, properties: {}, required: [] },
+    outputSchema: outputSchemaFor("list_spaces"),
     annotations: {
       title: "List Spaces",
       readOnlyHint: true,
@@ -923,9 +949,9 @@ export const tools: Tool[] = [
   {
     name: "get_space",
     description:
-      "Get details of a specific space including its description and settings. " +
+      "Get details of a specific space, including its settings. " +
       "Answers: 'Tell me about space X', 'Show space details'. " +
-      "Returns: Space details with id, name, description, organizationId, created/updated dates.",
+      "Returns: Space details with id, name, organizationId, created and, where available, scope and access.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -933,6 +959,7 @@ export const tools: Tool[] = [
       },
       required: ["spaceId"],
     },
+    outputSchema: outputSchemaFor("get_space"),
     annotations: {
       title: "Get Space",
       readOnlyHint: true,
@@ -957,6 +984,7 @@ export const tools: Tool[] = [
       },
       required: ["spaceId"],
     },
+    outputSchema: outputSchemaFor("get_space_agents"),
     annotations: {
       title: "Get Space Agents",
       readOnlyHint: true,
@@ -984,6 +1012,7 @@ export const tools: Tool[] = [
       },
       required: ["spaceId"],
     },
+    outputSchema: outputSchemaFor("get_space_agent_count"),
     annotations: {
       title: "Get Space Agent Count",
       readOnlyHint: true,
@@ -997,7 +1026,7 @@ export const tools: Tool[] = [
     description:
       "Find a space by its name. Use when user mentions a space by name instead of ID. " +
       "Answers: 'Find the Production space', 'Get the Bot Blocking folder'. " +
-      "Returns: Matching space with id, name, description. " +
+      "Returns: Matching space with id, name, created and, where available, scope and access. " +
       "NEXT STEP: Use the returned spaceId with get_space_agents or run_space_agents.",
     inputSchema: {
       type: "object" as const,
@@ -1006,6 +1035,7 @@ export const tools: Tool[] = [
       },
       required: ["name"],
     },
+    outputSchema: outputSchemaFor("search_space_by_name"),
     annotations: {
       title: "Search Space by Name",
       readOnlyHint: true,
@@ -1030,6 +1060,7 @@ export const tools: Tool[] = [
       },
       required: ["spaceId"],
     },
+    outputSchema: outputSchemaFor("run_space_agents"),
     annotations: {
       title: "Run Space Agents",
       readOnlyHint: false,
@@ -1059,6 +1090,7 @@ export const tools: Tool[] = [
       },
       required: [],
     },
+    outputSchema: outputSchemaFor("get_runs_summary"),
     annotations: {
       title: "Get Runs Summary",
       readOnlyHint: true,
@@ -1083,6 +1115,7 @@ export const tools: Tool[] = [
       },
       required: [],
     },
+    outputSchema: outputSchemaFor("get_records_summary"),
     annotations: {
       title: "Get Records Summary",
       readOnlyHint: true,
@@ -1106,6 +1139,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId", "runId"],
     },
+    outputSchema: outputSchemaFor("get_run_diagnostics"),
     annotations: {
       title: "Get Run Diagnostics",
       readOnlyHint: true,
@@ -1129,6 +1163,7 @@ export const tools: Tool[] = [
       },
       required: ["agentId"],
     },
+    outputSchema: outputSchemaFor("get_latest_failure"),
     annotations: {
       title: "Get Latest Failure",
       readOnlyHint: true,
@@ -1182,6 +1217,7 @@ export const tools: Tool[] = [
       },
       required: ["prompt"],
     },
+    outputSchema: outputSchemaFor("start_agent_build"),
     annotations: {
       title: "Build Agent from Prompt",
       readOnlyHint: false,
@@ -1210,6 +1246,7 @@ export const tools: Tool[] = [
       },
       required: ["sessionId"],
     },
+    outputSchema: outputSchemaFor("get_agent_build_status"),
     annotations: {
       title: "Get Agent Build Status",
       readOnlyHint: true,
@@ -1235,6 +1272,7 @@ export const tools: Tool[] = [
       },
       required: ["sessionId"],
     },
+    outputSchema: outputSchemaFor("stop_agent_build"),
     annotations: {
       title: "Stop Agent Build",
       readOnlyHint: false,

@@ -1,0 +1,16 @@
+{
+  "agents": [
+    {
+      "id": 101,
+      "name": "Shop prices",
+      "description": "Collects product prices",
+      "status": "Success",
+      "configType": 1,
+      "version": 4,
+      "lastActivity": "2026-09-30T14:05:42.654321Z"
+    }
+  ],
+  "returned": 1,
+  "limit": 50,
+  "truncated": false
+}

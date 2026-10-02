@@ -1,0 +1,16 @@
+[
+  {
+    "userName": "builder",
+    "version": 4,
+    "created": "2026-09-30T14:05:42.654321Z",
+    "comments": "Fix selector",
+    "fileSize": 2048
+  },
+  {
+    "userName": null,
+    "version": 3,
+    "created": "2026-09-30T14:03:11.123456Z",
+    "comments": null,
+    "fileSize": 0
+  }
+]

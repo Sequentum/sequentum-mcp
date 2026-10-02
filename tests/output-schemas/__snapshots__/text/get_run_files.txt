@@ -1,0 +1,16 @@
+[
+  {
+    "id": 5001,
+    "name": "output.csv",
+    "fileType": 1,
+    "fileSize": "12.34 KB",
+    "created": "2026-09-30T14:05:42.654321Z"
+  },
+  {
+    "id": 5002,
+    "name": null,
+    "fileType": null,
+    "fileSize": "0.00 KB",
+    "created": "2026-09-30T14:05:42.654321Z"
+  }
+]

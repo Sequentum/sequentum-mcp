@@ -18,6 +18,7 @@
     "test:coverage": "vitest run --coverage",
     "smoke": "vitest run src/smoke.test.ts",
     "probe": "node scripts/oauth-scope-probe.mjs",
+    "contract:output-schemas": "npm run build && node scripts/output-schema-contract.mjs",
     "conformance": "node scripts/conformance.mjs",
     "smoke:deployment": "node scripts/qa-smoke.mjs",
     "validate:registry": "node scripts/validate-registry.mjs",
