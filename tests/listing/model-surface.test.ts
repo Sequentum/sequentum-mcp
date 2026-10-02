@@ -47,8 +47,8 @@ describe("model-facing listing", () => {
   // fails when its file is missing.
   it("tools/list leaves no snapshot file for a tool it no longer lists", () => {
     const names = new Set(listed.map((t) => `${t.name}.md`));
-    const files = readdirSync(new URL("./__snapshots__/tools/", import.meta.url)).filter((f) => f.endsWith(".md"));
-    expect(files.filter((f) => !names.has(f))).toEqual([]);
+    const snapshotFiles = readdirSync(new URL("./__snapshots__/tools/", import.meta.url)).filter((f) => f.endsWith(".md"));
+    expect(snapshotFiles.filter((f) => !names.has(f))).toEqual([]);
   });
 
   it("prompts/list", async () => {
