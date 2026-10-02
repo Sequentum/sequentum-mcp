@@ -119,12 +119,19 @@ npm run probe -- --env qa --mode enforce                              # after th
 
 | Mode | Scope matches | Scope mismatches |
 |---|---|---|
-| `log-only` | V1 2xx, MCP tool ok, no log line | V1 2xx, MCP tool ok, **and** a `Scope check would deny (log-only) … required=X granted=Y clientId=Z` line in CloudWatch |
-| `enforce` | V1 2xx, MCP tool ok | V1 **403** with `errorCode: insufficient_scope` and `WWW-Authenticate: Bearer error="insufficient_scope", scope="X"`; MCP tool error `Insufficient Scope: … the "X" scope …`; a `Scope check denied …` line |
+| `log-only` | V1 2xx, MCP tool ok, no log line | V1 2xx, **and** a `Scope check would deny (log-only) … required=X granted=Y clientId=Z` line in CloudWatch; MCP **403** scope challenge |
+| `enforce` | V1 2xx, MCP tool ok | V1 **403** with `errorCode: insufficient_scope` and `WWW-Authenticate: Bearer error="insufficient_scope", scope="X"`, and a `Scope check denied …` line; MCP **403** scope challenge |
 
-On a build carrying **SE4-3929**, the MCP tool error names the missing scope directly. On an
-older build it still collapses any upstream 403 into the fixed "Access Denied" text; this probe
-accepts either, but flags the old text in the summary as `old build: scope name not surfaced`.
+The mode describes the Control Center only. The MCP server also checks each
+tool's scope itself, before dispatch and whatever the Control Center's mode: a mismatched
+`tools/call` gets HTTP 403 with `WWW-Authenticate: Bearer error="insufficient_scope",
+scope="…"` naming the scopes the token holds plus the missing one, and never reaches V1, so it
+adds no CloudWatch line.
+
+Against an older MCP build without that check the call is still dispatched and the Control Center
+decides: a tool ok in `log-only`, a tool error in `enforce` (`Insufficient Scope: … the "X"
+scope …` on a build carrying **SE4-3929**, the fixed "Access Denied" text before it). The probe
+accepts that, but flags it in the summary as `old build: no pre-dispatch scope challenge`.
 Scope *names* are always asserted from direct V1 responses and CloudWatch as well, regardless
 of which build the MCP server is on.
 

@@ -1,11 +1,49 @@
 import { describe, it, expect } from "vitest";
 import { judgeGrant, judgeMcp, judgeV1, expectedLogLine, linesForToken, judgeTokenError, tokenExchangeRow, GENERIC_INVALID_GRANT } from "../scripts/oauth-scope-probe.mjs";
 
-// judgeMcp: enforce mode, granted scopes missing the one this call requires (a mismatch).
-describe("judgeMcp — enforce mode, scope mismatch (SE4-3929)", () => {
+// The MCP server answers a scope mismatch itself, before dispatch, in either mode.
+describe("judgeMcp — pre-dispatch scope challenge", () => {
+  const granted = new Set(["agents:read"]);
+  const challenged = (www: string) => ({ required: "billing:read", httpStatus: 403, isError: null, text: "", wwwAuthenticate: www });
+
+  it("passes on a 403 insufficient_scope challenge naming the required scope, in both modes", () => {
+    const call = challenged('Bearer error="insufficient_scope", scope="agents:read billing:read", resource_metadata="https://x/.well-known/oauth-protected-resource"');
+    expect(judgeMcp(call, granted, "enforce")).toMatchObject({ ok: true, note: "" });
+    expect(judgeMcp(call, granted, "log-only")).toMatchObject({ ok: true, note: "" });
+  });
+
+  it("fails on a 403 whose challenge does not name the required scope", () => {
+    expect(judgeMcp(challenged('Bearer error="insufficient_scope", scope="agents:read"'), granted, "enforce").ok).toBe(false);
+  });
+
+  it("fails on a 403 without an insufficient_scope challenge", () => {
+    expect(judgeMcp(challenged(""), granted, "enforce").ok).toBe(false);
+  });
+
+  it("fails on a 403 for a call whose scope was granted", () => {
+    const call = { ...challenged('Bearer error="insufficient_scope", scope="billing:read"'), required: "agents:read" };
+    expect(judgeMcp(call, granted, "enforce").ok).toBe(false);
+  });
+
+  it("fails on a mismatched call answered with neither 200 nor 403, expecting the challenge", () => {
+    const call = { required: "billing:read", httpStatus: 500, isError: null, text: "boom" };
+    expect(judgeMcp(call, granted, "enforce")).toMatchObject({ ok: false, expected: "403 scope challenge", observed: "HTTP 500" });
+  });
+
+  it("still passes an older build that dispatched the mismatched call, flagged as such", () => {
+    const call = { required: "billing:read", httpStatus: 200, isError: false, text: "" };
+    const result = judgeMcp(call, granted, "log-only");
+    expect(result.ok).toBe(true);
+    expect(result.note).toContain("no pre-dispatch scope challenge");
+  });
+});
+
+// judgeMcp: an older MCP build without the pre-dispatch check, which dispatched the call, in
+// enforce mode, granted scopes missing the one this call requires (a mismatch).
+describe("judgeMcp — older build without the pre-dispatch check, enforce mode, scope mismatch (SE4-3929)", () => {
   const granted = new Set(["agents:read"]);
 
-  it("passes on the new Insufficient Scope text that names the required scope", () => {
+  it("passes on the Insufficient Scope text that names the required scope, flagged as an older build", () => {
     const call = {
       required: "billing:read",
       httpStatus: 200,
@@ -14,6 +52,7 @@ describe("judgeMcp — enforce mode, scope mismatch (SE4-3929)", () => {
     };
     const result = judgeMcp(call, granted, "enforce");
     expect(result.ok).toBe(true);
+    expect(result.note).toContain("no pre-dispatch scope challenge");
   });
 
   it("fails when the Insufficient Scope text names a different scope than required", () => {
@@ -52,15 +91,10 @@ describe("judgeMcp — enforce mode, scope mismatch (SE4-3929)", () => {
   });
 });
 
-describe("judgeMcp — log-only mode is unaffected by the SE4-3929 change", () => {
-  it("still expects a plain tool-ok result for a scope mismatch under log-only", () => {
-    const granted = new Set(["agents:read"]);
-    const call = { required: "billing:read", httpStatus: 200, isError: false, text: "" };
-    const result = judgeMcp(call, granted, "log-only");
-    expect(result.ok).toBe(true);
-  });
-
-  it("still expects ok on a granted scope regardless of mode", () => {
+// A log-only scope mismatch on an older build is covered by "still passes an older build that
+// dispatched the mismatched call" above.
+describe("judgeMcp — granted scope", () => {
+  it("expects ok on a granted scope regardless of mode", () => {
     const granted = new Set(["billing:read"]);
     const call = { required: "billing:read", httpStatus: 200, isError: false, text: "" };
     expect(judgeMcp(call, granted, "enforce").ok).toBe(true);

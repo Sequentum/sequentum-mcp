@@ -112,6 +112,50 @@ describe("validateToken", () => {
     }
   });
 
+  it("exposes the scope, clientId and token_type claims the scope challenge needs", async () => {
+    const pair = await generatePair();
+    // The claim names and shapes Control Center's OAuthService.GenerateUserToken mints:
+    // a space-delimited `scope` string and a camelCase `clientId`.
+    const token = await signJwt(
+      pair.privateKey,
+      { alg: "RS256", kid: "k1" },
+      {
+        exp: future(),
+        aud: ORIGIN,
+        scope: "agents:read  runs:read offline_access",
+        clientId: "https://claude.ai/oauth/client.json",
+        token_type: "authorization_code",
+      }
+    );
+
+    const verdict = await validateToken(token, ORIGIN, keySource({ k1: pair.publicKey }));
+
+    expect(verdict.kind).toBe("valid");
+    if (verdict.kind === "valid") {
+      expect(verdict.claims.scopes).toEqual(["agents:read", "runs:read", "offline_access"]);
+      expect(verdict.claims.clientId).toBe("https://claude.ai/oauth/client.json");
+      expect(verdict.claims.tokenType).toBe("authorization_code");
+    }
+  });
+
+  it("reports no scopes and no client or token type when those claims are absent or not strings", async () => {
+    const pair = await generatePair();
+    const token = await signJwt(
+      pair.privateKey,
+      { alg: "RS256", kid: "k1" },
+      { exp: future(), aud: ORIGIN, scope: ["agents:read"], clientId: 42 }
+    );
+
+    const verdict = await validateToken(token, ORIGIN, keySource({ k1: pair.publicKey }));
+
+    expect(verdict.kind).toBe("valid");
+    if (verdict.kind === "valid") {
+      expect(verdict.claims.scopes).toEqual([]);
+      expect(verdict.claims.clientId).toBeUndefined();
+      expect(verdict.claims.tokenType).toBeUndefined();
+    }
+  });
+
   it("accepts the legacy audience used when no resource parameter was sent", async () => {
     const pair = await generatePair();
     const token = await signJwt(

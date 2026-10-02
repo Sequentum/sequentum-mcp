@@ -39,6 +39,15 @@ export interface Claims {
   readonly aud: readonly string[];
   readonly exp: number;
   readonly kid: string;
+  /**
+   * The space-delimited `scope` claim, split. Empty when the claim is absent, empty or not a
+   * string — which the Control Center treats as granting nothing.
+   */
+  readonly scopes: readonly string[];
+  /** The `clientId` claim (camelCase, as Control Center mints it), when it is a string. */
+  readonly clientId?: string;
+  /** The `token_type` claim: `authorization_code` for user tokens, `client_credentials` for server keys. */
+  readonly tokenType?: string;
 }
 
 /**
@@ -220,5 +229,16 @@ export async function validateToken(
     return { kind: "unverifiable", reason: "wrong-audience", kid };
   }
 
-  return { kind: "valid", claims: { aud, exp, kid } };
+  const { scope, clientId, token_type: tokenType } = parsed.payload;
+  return {
+    kind: "valid",
+    claims: {
+      aud,
+      exp,
+      kid,
+      scopes: typeof scope === "string" ? scope.split(" ").filter(Boolean) : [],
+      ...(typeof clientId === "string" ? { clientId } : {}),
+      ...(typeof tokenType === "string" ? { tokenType } : {}),
+    },
+  };
 }
