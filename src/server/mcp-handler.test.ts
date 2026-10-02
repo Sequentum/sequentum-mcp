@@ -20,6 +20,9 @@ vi.mock("../api/api-client.js", () => ({
 import { SequentumApiClient } from "../api/api-client.js";
 import { createSequentumMcpHandler, resolveTraceContext, traceContextFromMeta } from "./mcp-handler.js";
 
+/** The SDK's default request body cap (DEFAULT_MAX_REQUEST_BODY_SIZE). */
+const MAX_BODY = 4 * 1024 * 1024;
+
 const ENVELOPE = {
   "io.modelcontextprotocol/protocolVersion": "2026-07-28",
   "io.modelcontextprotocol/clientInfo": { name: "cache-test", version: "1.0.0" },
@@ -52,6 +55,7 @@ async function call(
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         "Mcp-Method": method,
+        "Mcp-Protocol-Version": "2026-07-28",
         ...(mcpName ? { "Mcp-Name": mcpName } : {}),
       },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: { _meta: ENVELOPE, ...params } }),
@@ -191,6 +195,7 @@ describe("statelessness", () => {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           "Mcp-Method": "tools/list",
+          "Mcp-Protocol-Version": "2026-07-28",
           authorization: "Bearer token-a",
         },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { _meta: ENVELOPE } }),
@@ -203,6 +208,7 @@ describe("statelessness", () => {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           "Mcp-Method": "tools/list",
+          "Mcp-Protocol-Version": "2026-07-28",
           authorization: "Bearer token-b",
         },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { _meta: ENVELOPE } }),
@@ -236,6 +242,7 @@ describe("statelessness", () => {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           "Mcp-Method": "tools/call",
+          "Mcp-Protocol-Version": "2026-07-28",
           "Mcp-Name": "list_agents",
           "Mcp-Session-Id": "stale-session-from-a-different-handler",
         },
@@ -279,6 +286,7 @@ describe("Mcp-Name enforcement", () => {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         "Mcp-Method": "tools/call",
+        "Mcp-Protocol-Version": "2026-07-28",
       },
       body: JSON.stringify({
         jsonrpc: "2.0", id: 1, method: "tools/call",
@@ -320,6 +328,7 @@ describe("progress notifications", () => {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           "Mcp-Method": "tools/call",
+          "Mcp-Protocol-Version": "2026-07-28",
           "Mcp-Name": "start_agent_build",
         },
         body: JSON.stringify({
@@ -390,6 +399,7 @@ describe("era logging", () => {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           "Mcp-Method": "tools/list",
+          "Mcp-Protocol-Version": "2026-07-28",
           traceparent,
         },
         body: JSON.stringify({
@@ -419,6 +429,7 @@ describe("era logging", () => {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           "Mcp-Method": "tools/list",
+          "Mcp-Protocol-Version": "2026-07-28",
           tracestate,
         },
         body: JSON.stringify({
@@ -446,6 +457,7 @@ describe("era logging", () => {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           "Mcp-Method": "tools/list",
+          "Mcp-Protocol-Version": "2026-07-28",
         },
         body: JSON.stringify({
           jsonrpc: "2.0",
@@ -473,6 +485,7 @@ describe("era logging", () => {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           "Mcp-Method": "tools/list",
+          "Mcp-Protocol-Version": "2026-07-28",
           traceparent: fromHeader,
         },
         body: JSON.stringify({
@@ -500,6 +513,7 @@ describe("era logging", () => {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           "Mcp-Method": "tools/list",
+          "Mcp-Protocol-Version": "2026-07-28",
         },
         body: JSON.stringify({
           jsonrpc: "2.0",
@@ -535,6 +549,34 @@ describe("era logging", () => {
     await handler.close();
   });
 
+  it("logs a params._meta traceparent from a body just under the 4 MiB cap", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const traceparent = "00-33333333333333333333333333333333-4444444444444444-01";
+    const res = await handler.fetch(
+      new Request("http://localhost/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "Mcp-Method": "tools/list",
+          "Mcp-Protocol-Version": "2026-07-28",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: { _meta: { ...ENVELOPE, traceparent, pad: "x".repeat(MAX_BODY - 4096) } },
+        }),
+      })
+    );
+    expect(res.status).toBe(200);
+    const logged = spy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain(`traceparent=${JSON.stringify(traceparent)}`);
+    spy.mockRestore();
+    await handler.close();
+  });
+
   it("modern-era requests still work end to end when the body is pre-parsed by the wrapper", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
@@ -558,6 +600,7 @@ describe("era logging", () => {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           "Mcp-Method": "tools/list",
+          "Mcp-Protocol-Version": "2026-07-28",
           authorization: "Bearer secret-token-xyz",
         },
         body: JSON.stringify({
@@ -630,6 +673,7 @@ describe("era logging", () => {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           "Mcp-Method": "tools/list",
+          "Mcp-Protocol-Version": "2026-07-28",
           "user-agent": evilUserAgent,
         },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { _meta: ENVELOPE } }),
@@ -659,6 +703,7 @@ describe("era logging", () => {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           "Mcp-Method": "tools/list",
+          "Mcp-Protocol-Version": "2026-07-28",
           "user-agent": hugeUserAgent,
         },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { _meta: ENVELOPE } }),
@@ -669,6 +714,108 @@ describe("era logging", () => {
     expect(logged).toContain(`client=${JSON.stringify("A".repeat(200))}`);
     spy.mockRestore();
     await handler.close();
+  });
+});
+
+describe("request size limits", () => {
+  // The SDK applies its body cap only when it reads the body itself, and the
+  // trace-context wrapper normally pre-parses it. These bodies are valid JSON on
+  // purpose: an unbounded pre-parse would succeed and silently skip the cap.
+  function oversizedJson(): string {
+    return JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: { _meta: { ...ENVELOPE, pad: "x".repeat(MAX_BODY) } },
+    });
+  }
+
+  const headers = {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+    "Mcp-Method": "tools/list",
+    "Mcp-Protocol-Version": "2026-07-28",
+  };
+
+  it("answers 413 to a body whose Content-Length is over 4 MiB", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const body = oversizedJson();
+    const res = await handler.fetch(
+      new Request("http://localhost/mcp", {
+        method: "POST",
+        headers: { ...headers, "content-length": String(Buffer.byteLength(body)) },
+        body,
+      })
+    );
+    expect(res.status).toBe(413);
+    expect(JSON.parse(await res.text()).error.code).toBe(-32000);
+    spy.mockRestore();
+    await handler.close();
+  });
+
+  it("answers 413 to a streamed body over 4 MiB that declares no Content-Length", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const bytes = new TextEncoder().encode(oversizedJson());
+    const chunk = 64 * 1024;
+    let offset = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset >= bytes.byteLength) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(bytes.subarray(offset, offset + chunk));
+        offset += chunk;
+      },
+    });
+    const req = new Request("http://localhost/mcp", {
+      method: "POST",
+      headers,
+      body: stream,
+      duplex: "half",
+    } as RequestInit);
+    expect(req.headers.get("content-length")).toBeNull();
+    const res = await handler.fetch(req);
+    expect(res.status).toBe(413);
+    expect(JSON.parse(await res.text()).error.code).toBe(-32000);
+    spy.mockRestore();
+    await handler.close();
+  });
+
+  // Batches only exist on the legacy wire: 2026-07-28 rejects every batch outright,
+  // so these use envelope-free pings to reach the size check.
+  async function postLegacyPingBatch(size: number) {
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const batch = Array.from({ length: size }, (_, i) => ({ jsonrpc: "2.0", id: i + 1, method: "ping" }));
+    const res = await handler.fetch(
+      new Request("http://localhost/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: JSON.stringify(batch),
+      })
+    );
+    const text = await res.text();
+    await handler.close();
+    return { status: res.status, text };
+  }
+
+  it("accepts a legacy JSON-RPC batch of exactly 100 messages", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { status } = await postLegacyPingBatch(100);
+    expect(status).toBe(200);
+    spy.mockRestore();
+  });
+
+  it("rejects a legacy JSON-RPC batch of 101 messages", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { status, text } = await postLegacyPingBatch(101);
+    expect(status).toBe(400);
+    const body = JSON.parse(text);
+    expect(body.error.code).toBe(-32600);
+    expect(body.error.message).toMatch(/Batch must not exceed 100 messages/);
+    spy.mockRestore();
   });
 });
 
