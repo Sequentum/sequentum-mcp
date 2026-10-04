@@ -3,8 +3,16 @@ pipeline {
         label 'jenkins-agent'
     }
 
+    // SE4-4140: Jenkins reads this file from git (develop), so the poll below works. A
+    // build the poll starts gets the default TargetBranch. When you cut a new release
+    // line (release/2.2), change this default in the same commit.
     parameters {
-        string(name: 'TargetBranch', description: 'Target branch to merge into')
+        string(name: 'TargetBranch', defaultValue: 'release/2.1', description: 'Release branch to merge develop into, like release/2.1')
+    }
+
+    options {
+        // two builds must not race on the same version file and push
+        disableConcurrentBuilds()
     }
 
     environment {
@@ -13,7 +21,8 @@ pipeline {
     }
 
     triggers {
-        // Trigger automatically on commits to develop branch
+        // Build each new commit on develop. QA pushes only to the release branch,
+        // never to develop, so its own commits can't start another build.
         pollSCM('H/5 * * * *') // Poll SCM every 5 minutes
     }
 
@@ -22,7 +31,12 @@ pipeline {
             steps {
                 script {
                     SOURCE_BRANCH = "develop"
-                    TARGET_BRANCH = params.TargetBranch
+                    TARGET_BRANCH = (params.TargetBranch ?: '').trim()
+                    // stop before any merge or push unless the target is a release branch. An
+                    // empty name, develop or main would make QA commit to the wrong branch.
+                    if (!(TARGET_BRANCH ==~ /release\/[0-9]+\.[0-9]+/)) {
+                        error("TargetBranch must look like release/2.1. It is '${TARGET_BRANCH}'.")
+                    }
                     echo "Source branch: ${SOURCE_BRANCH}"
                     echo "Target branch: ${TARGET_BRANCH}"
                 }

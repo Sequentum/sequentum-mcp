@@ -3,9 +3,11 @@ pipeline {
         label 'jenkins-agent'
     }
 
+    // Jenkins reads this file from git, so these defaults are what the job shows.
+    // When you cut a new release line, change the SourceBranch default too.
     parameters {
-        string(name: 'SourceBranch', defaultValue: 'release/2.0', description: 'Source branch to merge from')
-        string(name: 'TargetBranch', defaultValue: 'main', description: 'Target branch to merge into')
+        string(name: 'SourceBranch', defaultValue: 'release/2.1', description: 'Release branch to merge into main, like release/2.1')
+        string(name: 'TargetBranch', defaultValue: 'main', description: 'Branch to merge into. Must be main.')
     }
 
     environment {
@@ -19,10 +21,43 @@ pipeline {
         stage('Get Selected Branches') {
             steps {
                 script {
-                    SOURCE_BRANCH = params.SourceBranch
-                    TARGET_BRANCH = params.TargetBranch
+                    SOURCE_BRANCH = (params.SourceBranch ?: '').trim()
+                    TARGET_BRANCH = (params.TargetBranch ?: '').trim()
+                    // stop before any merge or push unless these are a release branch and main
+                    if (!(SOURCE_BRANCH ==~ /release\/[0-9]+\.[0-9]+/)) {
+                        error("SourceBranch must look like release/2.1. It is '${SOURCE_BRANCH}'.")
+                    }
+                    if (TARGET_BRANCH != 'main') {
+                        error("TargetBranch must be main. It is '${TARGET_BRANCH}'.")
+                    }
                     echo "Source branch: ${SOURCE_BRANCH}"
                     echo "Target branch: ${TARGET_BRANCH}"
+                }
+            }
+        }
+
+        stage('Check GitHub App') {
+            steps {
+                // SE4-4140: the GitHub Release later in this build uses the org's GitHub
+                // App (credential github-app-sequentum-jenkins). It belongs to the org,
+                // not a person, and Jenkins makes short-lived tokens from it. Check it
+                // here, so a broken credential stops the build before anything is
+                // merged, built, tagged or deployed. GitHub's "push" flag is always
+                // false for an App token, so this checks only for a 200.
+                withCredentials([usernamePassword(credentialsId: 'github-app-sequentum-jenkins',
+                                                  usernameVariable: 'GH_USER',
+                                                  passwordVariable: 'GH_TOKEN')]) {
+                    sh '''
+                        # -K - reads the header from stdin, so the token stays out of the process list
+                        code=$(printf 'header = "Authorization: Bearer %s"\\n' "${GH_TOKEN}" \
+                            | curl -sS -K - -o /dev/null -w '%{http_code}' \
+                                -H "Accept: application/vnd.github+json" \
+                                "https://api.github.com/repos/Sequentum/sequentum-mcp" || true)
+                        if [ "${code}" != "200" ]; then
+                            echo "The GitHub App can't reach Sequentum/sequentum-mcp (GitHub answered ${code}). Check the github-app-sequentum-jenkins credential, and that the App is installed on the repo."
+                            exit 1
+                        fi
+                    '''
                 }
             }
         }
@@ -378,7 +413,7 @@ JSONEOF
             steps {
                 script { mergeChanges() }
                 dir('sequentum-mcp') {
-                    withCredentials([usernamePassword(credentialsId: 'jenkins-se4-main',
+                    withCredentials([usernamePassword(credentialsId: 'github-app-sequentum-jenkins',
                                                       usernameVariable: 'GH_USER',
                                                       passwordVariable: 'GH_TOKEN')]) {
                         sh '''#!/bin/bash
