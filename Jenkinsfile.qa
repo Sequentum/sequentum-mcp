@@ -4,10 +4,11 @@ pipeline {
     }
 
     // SE4-4140: Jenkins reads this file from git (develop), so the poll below works. A
-    // build the poll starts gets the default TargetBranch. When you cut a new release
-    // line (release/2.2), change this default in the same commit.
+    // build the poll starts gets the default TargetBranch. develop holds 3.0 (SE4-4076),
+    // so QA builds release/3.0. When you cut the next release line, change this default
+    // in the same commit.
     parameters {
-        string(name: 'TargetBranch', defaultValue: 'release/2.1', description: 'Release branch to merge develop into, like release/2.1')
+        string(name: 'TargetBranch', defaultValue: 'release/3.0', description: 'Release branch to merge develop into, like release/3.0')
     }
 
     options {
