@@ -283,7 +283,7 @@ lines. See [docs/oauth-scope-probe.md](./docs/oauth-scope-probe.md).
 | OAuth login not opening | Ensure your client supports OAuth and Streamable HTTP. Try restarting the client. For Claude.ai and Claude Desktop, connect from the [connector directory](#claudeai-and-claude-desktop) rather than a config file. |
 | Connection refused | Verify the URL is `https://mcp.sequentum.com/mcp` and check your network connection. |
 | `API Error 401: Unauthorized` | Your OAuth session is invalid or was revoked. Disconnect and reconnect the Sequentum MCP server to sign in again. |
-| `Insufficient Scope: This action requires the "…" scope` | Disconnect and reconnect the Sequentum MCP server, then approve the requested permissions, to re-authorize with the scope named in the message. If it recurs right after reconnecting, the client may have cached a stale scope list — check the connector's OAuth settings. |
+| Asked to re-authorize, or `Insufficient Scope: This action requires the "…" scope` | The connection was not granted a permission the tool needs. The server answers such a call with an HTTP 403 `insufficient_scope` challenge naming the scopes required, and clients that support step-up authorization ask you to approve them. Otherwise, or if you see the `Insufficient Scope` message, disconnect and reconnect the Sequentum MCP server and approve the requested permissions. If it recurs right after reconnecting, the client may have cached a stale scope list — check the connector's OAuth settings. |
 | `API Error 404: Not Found` | The agent, run, or file doesn't exist, or you don't have access to it. |
 | `API Error 429: Too Many Requests` | Rate limit exceeded. Wait a moment and try again. |
 

@@ -18,6 +18,16 @@
 
 ### Changed
 
+- **Each tool and resource now declares the OAuth scopes it needs, and the server checks
+  them before dispatch.** A `tools/call` or `resources/read` whose token lacks one is
+  answered with HTTP 403 and `WWW-Authenticate: Bearer error="insufficient_scope",
+  scope="…", resource_metadata="…"`, the challenge MCP clients use to step the user up to
+  the missing scope, and the Sequentum API is not called. The scope list names the scopes
+  the token already holds plus the missing ones, so re-authorizing does not narrow the
+  grant. The requirements mirror the Control Center's own per-endpoint scopes;
+  `start_agent_build` needs both `agents:write` and `agents:read`. Client-credentials
+  tokens, which the Control Center exempts, are not checked. The "Insufficient Scope" tool
+  error remains as the fallback for a 403 from the API itself.
 - Tool errors for a 401 or 403 from the Sequentum API no longer mention API keys. A 401
   now says to disconnect and reconnect the Sequentum MCP server to sign in again.
 

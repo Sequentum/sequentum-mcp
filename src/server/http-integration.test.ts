@@ -864,3 +864,184 @@ describe("token validation on /mcp (SE4-3856)", () => {
     });
   });
 });
+
+// A tool's required scopes are checked before dispatch, so a token that lacks
+// one gets the RFC 6750 step-up challenge (HTTP 403) instead of a tool error carried on a
+// 200 after a wasted round trip to the Control Center.
+describe("per-tool scope challenge on /mcp", () => {
+  let server: HttpServer;
+  let controlCenter: HttpServer;
+  let base: string;
+  let pair: CryptoKeyPair;
+  let apiCalls: string[];
+
+  const KID = "scope-key";
+
+  function segment(obj: unknown): string {
+    return Buffer.from(JSON.stringify(obj), "utf8").toString("base64url");
+  }
+
+  async function mint(claims: Record<string, unknown>): Promise<string> {
+    const payload = { exp: Math.floor(Date.now() / 1000) + 3600, aud: process.env.MCP_CANONICAL_ORIGIN, ...claims };
+    const input = `${segment({ alg: "RS256", kid: KID })}.${segment(payload)}`;
+    const sig = await crypto.subtle.sign({ name: "RSASSA-PKCS1-v1_5" }, pair.privateKey, new TextEncoder().encode(input));
+    return `${input}.${Buffer.from(sig).toString("base64url")}`;
+  }
+
+  /** A user token as Control Center's OAuthService.GenerateUserToken mints it. */
+  function userToken(scope: string): Promise<string> {
+    return mint({ scope, clientId: "https://client.example.test/cimd.json", token_type: "authorization_code" });
+  }
+
+  function callTool(token: string, name: string, era: "modern" | "legacy") {
+    const modern = era === "modern";
+    return fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+        ...(modern ? { "Mcp-Method": "tools/call", "Mcp-Name": name, "Mcp-Protocol-Version": "2026-07-28" } : {}),
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name, arguments: {}, ...(modern ? { _meta: ENVELOPE } : {}) },
+      }),
+    });
+  }
+
+  function readResource(token: string, uri: string) {
+    return fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+        "Mcp-Method": "resources/read",
+        "Mcp-Name": uri,
+        "Mcp-Protocol-Version": "2026-07-28",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "resources/read", params: { uri, _meta: ENVELOPE } }),
+    });
+  }
+
+  beforeEach(async () => {
+    delete process.env.REQUIRE_AUTH;
+    apiCalls = [];
+
+    pair = await crypto.subtle.generateKey(
+      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["sign", "verify"]
+    );
+    const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+
+    // A stand-in Control Center: serves the JWKS and records every V1 API call, so a test
+    // can prove a challenged request never reached the upstream API.
+    controlCenter = createServer((req, res) => {
+      if (req.url === "/api/oauth/certs") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ keys: [{ kty: "RSA", use: "sig", alg: "RS256", kid: KID, n: jwk.n, e: jwk.e }] }));
+        return;
+      }
+      if (req.url?.startsWith("/api/v1/")) {
+        apiCalls.push(`${req.method} ${req.url.split("?")[0]}`);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end("[]");
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => controlCenter.listen(0, "127.0.0.1", () => resolve()));
+    const ccAddr = controlCenter.address();
+    if (!ccAddr || typeof ccAddr === "string") throw new Error("expected a TCP address");
+    const apiBase = `http://127.0.0.1:${ccAddr.port}`;
+
+    server = await startHttpServer(apiBase, apiBase, "9.9.9", 0, "127.0.0.1");
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    base = `http://127.0.0.1:${addr.port}`;
+    process.env.MCP_CANONICAL_ORIGIN = base;
+  });
+
+  afterEach(async () => {
+    delete process.env.MCP_CANONICAL_ORIGIN;
+    delete process.env.REQUIRE_AUTH;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    // Already closed by the fail-open test; close() then reports an error, which is fine.
+    await new Promise<void>((resolve) => controlCenter.close(() => resolve()));
+  });
+
+  for (const era of ["modern", "legacy"] as const) {
+    it(`answers a ${era} tools/call missing the tool's scope with 403 and a step-up challenge`, async () => {
+      const res = await callTool(await userToken("runs:read offline_access"), "list_agents", era);
+
+      expect(res.status).toBe(403);
+      const challenge = res.headers.get("www-authenticate") ?? "";
+      expect(challenge).toContain('error="insufficient_scope"');
+      // Granted scopes first, the missing one appended; offline_access never advertised.
+      expect(challenge).toContain('scope="runs:read agents:read"');
+      expect(challenge).toContain(`resource_metadata="${base}/.well-known/oauth-protected-resource"`);
+      expect(apiCalls).toEqual([]);
+    });
+  }
+
+  it("dispatches a tools/call whose token holds the tool's scope", async () => {
+    const res = await callTool(await userToken("agents:read"), "list_agents", "modern");
+
+    expect(res.status).toBe(200);
+    expect(apiCalls).toEqual(["GET /api/v1/agent/all"]);
+  });
+
+  it("challenges a token granted no scopes at all, as the Control Center denies it", async () => {
+    const res = await callTool(await userToken(""), "get_credits_balance", "modern");
+
+    expect(res.status).toBe(403);
+    expect(res.headers.get("www-authenticate")).toContain('scope="billing:read"');
+    expect(apiCalls).toEqual([]);
+  });
+
+  it("challenges a resources/read missing the endpoint's scope", async () => {
+    const res = await readResource(await userToken("agents:read"), "sequentum://billing/balance");
+
+    expect(res.status).toBe(403);
+    expect(res.headers.get("www-authenticate")).toContain('scope="agents:read billing:read"');
+    expect(apiCalls).toEqual([]);
+  });
+
+  it("challenges a templated resources/read missing the endpoint's scope", async () => {
+    const res = await readResource(await userToken("agents:read"), "sequentum://agents/1/runs");
+
+    expect(res.status).toBe(403);
+    expect(res.headers.get("www-authenticate")).toContain('scope="agents:read runs:read"');
+  });
+
+  it("does not challenge a client_credentials token, which the Control Center exempts", async () => {
+    const token = await mint({ clientId: "server-key", token_type: "client_credentials" });
+
+    const res = await callTool(token, "list_agents", "modern");
+
+    expect(res.status).toBe(200);
+    expect(apiCalls).toEqual(["GET /api/v1/agent/all"]);
+  });
+
+  it("does not challenge when the token cannot be verified, keeping the fail-open path", async () => {
+    await new Promise<void>((resolve) => controlCenter.close(() => resolve()));
+
+    const res = await callTool(await userToken(""), "list_agents", "modern");
+
+    // Reaches the handler (whose upstream call then fails): neither challenged nor rejected.
+    expect(res.status).toBe(200);
+  });
+
+  it("does not challenge when REQUIRE_AUTH=false", async () => {
+    process.env.REQUIRE_AUTH = "false";
+
+    const res = await callTool(await userToken(""), "list_agents", "modern");
+
+    expect(res.status).toBe(200);
+    expect(apiCalls).toEqual(["GET /api/v1/agent/all"]);
+  });
+});
