@@ -187,6 +187,8 @@ export function scopeChallengeFor(required: readonly string[]): ScopeChallengeHa
     const granted = authInfo.scopes.filter((scope) => scope !== OFFLINE_ACCESS_SCOPE);
     const missing = required.filter((scope) => !granted.includes(scope));
     const [first, ...rest] = [...granted, ...missing];
+    // `first` is undefined only when both lists are empty, which a non-empty `missing` rules
+    // out; the check narrows the scopes to the SDK's non-empty tuple type without a cast.
     if (missing.length === 0 || first === undefined) return undefined;
     return {
       scopes: [first, ...rest],
