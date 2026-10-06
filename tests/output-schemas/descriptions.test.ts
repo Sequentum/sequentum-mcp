@@ -30,3 +30,35 @@ describe("descriptions match the output schemas", () => {
     expect(doc).not.toMatch(/(Array of spaces|Matching space|Space details) with `id`, `name`, `description`/);
   });
 });
+
+const param = (tool: string, name: string) => {
+  const props = (tools.find((t) => t.name === tool)?.inputSchema.properties ?? {}) as Record<string, { description?: string; enum?: unknown[] }>;
+  return props[name] ?? {};
+};
+
+// SE4-4000: parameter prose must match what the API accepts, or the model picks a wrong argument on the first call.
+describe("parameters match the API", () => {
+  it("get_runs_summary.status lists only real statuses and states the families", () => {
+    const text = param("get_runs_summary", "status").description ?? "";
+    expect(text).not.toContain("CompletedWithErrors");
+    expect(text).toContain("`Failed`/`Failure` are one filter");
+    expect(text).toContain("`Completed`/`Success`");
+  });
+
+  it("get_runs_summary dates describe the API defaults", () => {
+    const start = param("get_runs_summary", "startDate").description ?? "";
+    const end = param("get_runs_summary", "endDate").description ?? "";
+    expect(start).not.toContain("Defaults to today");
+    expect(start).toContain("Defaults to 24 hours before now");
+    expect(start).toContain("datetime");
+    expect(end).not.toContain("Defaults to today");
+    expect(end).toContain("to the end of that day");
+  });
+
+  it("list_agents.status accepts 13 and states the families", () => {
+    const status = param("list_agents", "status");
+    expect(status.enum).toContain(13);
+    expect(status.description).toContain("13=UpdatingDataSet");
+    expect(status.description).toContain("6=Failure and 7=Failed are one filter");
+  });
+});

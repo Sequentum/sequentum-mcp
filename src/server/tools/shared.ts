@@ -43,6 +43,7 @@ function getRunStatusLabel(status: number | undefined): string {
     10: "Success",
     11: "Skipped",
     12: "Waiting",
+    13: "UpdatingDataSet",
   };
   if (status === undefined || status === null) {
     return "Never Run";

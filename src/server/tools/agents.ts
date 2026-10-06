@@ -11,10 +11,10 @@ import { isPaginatedResponse, summarizeAgents } from "./shared.js";
 import {
   AgentApiModel,
   AgentRunFileApiModel,
-  AgentRunStatus,
   ConfigType,
   ListAgentsRequest,
   RunRemoveMethod,
+  RunStatus,
 } from "../../api/types.js";
 import {
   validateBoolean,
@@ -26,7 +26,7 @@ import {
 
 const list_agents: ToolHandler = async (args, { apiClient }) => {
   const params = args;
-  const statusNum = validateNumber(params, "status", { required: false, min: 0, max: 12, integer: true });
+  const statusNum = validateNumber(params, "status", { required: false, min: 0, max: 13, integer: true });
   const spaceId = validateNumber(params, "spaceId", { required: false, min: 1, integer: true });
   const search = validateString(params, "search", false);
   const configTypeStr = validateString(params, "configType", false);
@@ -43,9 +43,9 @@ const list_agents: ToolHandler = async (args, { apiClient }) => {
   };
 
   // Add other optional filters
-  // Status is now the RunStatus enum value (1=Running, 7=Failed, 9=Completed, etc.)
+  // Status is the numeric RunStatus value (6=Failure, 7=Failed, 9=Completed, etc.)
   if (statusNum !== undefined) {
-    filters.status = statusNum as AgentRunStatus;
+    filters.status = statusNum as RunStatus;
   }
   if (spaceId !== undefined) {
     filters.spaceId = spaceId;

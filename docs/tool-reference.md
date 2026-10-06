@@ -75,7 +75,7 @@ List web scraping agents with IDs, names, status, and configuration.
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `status` | number | No | Filter by last run status. See [Run Status Values](#run-status-values). |
+| `status` | number | No | Filter by last run status. See [Run Status Values](#run-status-values). `6` Failure and `7` Failed are one filter, and so are `9` Completed and `10` Success. |
 | `spaceId` | number | No | Filter by space ID. Use `list_spaces` first to find space IDs. |
 | `search` | string | No | Search by agent name (case-insensitive partial match). |
 | `configType` | string | No | Filter by type: `Agent`, `Command`, `Api`, or `Shared`. |
@@ -1151,9 +1151,9 @@ Get aggregate statistics about agent runs in a date range: counts of completed, 
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `startDate` | string | No | Start date in ISO 8601 format. Defaults to today. |
-| `endDate` | string | No | End date in ISO 8601 format. Defaults to today. |
-| `status` | string | No | Filter by run status: `'Failed'`, `'Completed'`, `'CompletedWithErrors'`, `'Running'`. |
+| `startDate` | string | No | Start of the range, ISO 8601 date or datetime (for example `'2026-01-15T08:00:00Z'`). Defaults to 24 hours before now. |
+| `endDate` | string | No | End of the range, ISO 8601 date. When given, the range runs to the end of that day. Defaults to now. |
+| `status` | string | No | Filter by run status name, for example `'Failed'`, `'Completed'`, `'Running'`. `Failed`/`Failure` are one filter, and so are `Completed`/`Success`. |
 | `includeDetails` | boolean | No | If `true`, includes `failedRunDetails` array with agent names and error messages. Default: `true`. |
 
 #### Returns
@@ -1266,12 +1266,15 @@ Show the last error for the Amazon scraper
 | 4 | Queuing | Waiting in queue |
 | 5 | Stopping | Shutting down |
 | 6 | Failure | Failed during execution |
-| 7 | Failed | Completed with failure |
+| 7 | Failed | Failed to launch |
 | 8 | Stopped | Manually stopped |
 | 9 | Completed | Finished successfully |
 | 10 | Success | Completed without errors |
 | 11 | Skipped | Skipped execution |
 | 12 | Waiting | Waiting for resources |
+| 13 | UpdatingDataSet | Updating a data set |
+
+On status filters, `Failure`/`Failed` and `Completed`/`Success` are one filter: either value returns both.
 
 ---
 

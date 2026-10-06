@@ -16,7 +16,7 @@ Title: Get Runs Summary
 
 ## Description
 
-Get aggregate statistics about agent runs in a date range: counts of completed, failed, running, etc. Answers: 'How many agents ran yesterday?', 'What failed last week?', 'Show run statistics', 'Give me a summary of runs'. Returns: totalRuns, completedRuns, failedRuns, completedWithErrorsRuns, runningRuns, queuedRuns, stoppedRuns. TIP: Set includeDetails=true to get details of which specific agents failed and why. TIP: Use status filter to focus on specific outcomes (e.g., 'Failed' to see only failures).
+Get aggregate statistics about agent runs in a date range: counts of completed, failed, running, etc. Answers: 'How many agents ran yesterday?', 'What failed last week?', 'Show run statistics', 'Give me a summary of runs'. Returns: totalRuns, completedRuns, failedRuns, runningRuns, queuedRuns, stoppedRuns (completedWithErrorsRuns is always 0). TIP: Set includeDetails=true to get details of which specific agents failed and why. TIP: Use status filter to focus on specific outcomes (e.g., 'Failed' to see only failures).
 
 ## inputSchema
 
@@ -26,15 +26,15 @@ Get aggregate statistics about agent runs in a date range: counts of completed, 
   "properties": {
     "startDate": {
       "type": "string",
-      "description": "Start date in ISO 8601 format. Example: '2026-01-15'. Defaults to today if not specified."
+      "description": "Start of the range, ISO 8601 date or datetime. Examples: '2026-01-15', '2026-01-15T08:00:00Z'. Use a datetime for ranges like 'the last 50 hours'. Defaults to 24 hours before now."
     },
     "endDate": {
       "type": "string",
-      "description": "End date in ISO 8601 format. Example: '2026-01-16'. Defaults to today if not specified."
+      "description": "End of the range, ISO 8601 date. When given, the range runs to the end of that day. Defaults to now."
     },
     "status": {
       "type": "string",
-      "description": "Filter by run status: 'Failed', 'Completed', 'CompletedWithErrors', 'Running'. Only shows runs with this status."
+      "description": "Filter by run status name: 'Failed', 'Completed', 'Running', 'Stopped', 'Queuing', or any other run status name. `Failed`/`Failure` are one filter, and so are `Completed`/`Success`. Only counts runs with this status."
     },
     "includeDetails": {
       "type": "boolean",
