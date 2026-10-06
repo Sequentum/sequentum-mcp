@@ -30,7 +30,7 @@ Get aggregate statistics about agent runs in a date range: counts of completed, 
     },
     "endDate": {
       "type": "string",
-      "description": "End of the range, ISO 8601 date. When given, the range runs to the end of that day. Defaults to now."
+      "description": "End of the range, ISO 8601 date. When given, the range runs to the end of that day. It must not be earlier than startDate, so with a datetime startDate give the following day or omit endDate: a date-only endDate on startDate's own day is rejected. Defaults to now."
     },
     "status": {
       "type": "string",

@@ -53,6 +53,7 @@ describe("parameters match the API", () => {
     expect(start).toContain("datetime");
     expect(end).not.toContain("Defaults to today");
     expect(end).toContain("to the end of that day");
+    expect(end).toContain("must not be earlier than startDate");
   });
 
   it("list_agents.status accepts 13 and states the families", () => {

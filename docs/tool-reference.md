@@ -1152,13 +1152,13 @@ Get aggregate statistics about agent runs in a date range: counts of completed, 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `startDate` | string | No | Start of the range, ISO 8601 date or datetime (for example `'2026-01-15T08:00:00Z'`). Defaults to 24 hours before now. |
-| `endDate` | string | No | End of the range, ISO 8601 date. When given, the range runs to the end of that day. Defaults to now. |
+| `endDate` | string | No | End of the range, ISO 8601 date. When given, the range runs to the end of that day. It must not be earlier than `startDate`, so with a datetime `startDate` give the following day or omit `endDate`: a date-only `endDate` on `startDate`'s own day is rejected. Defaults to now. |
 | `status` | string | No | Filter by run status name, for example `'Failed'`, `'Completed'`, `'Running'`. `Failed`/`Failure` are one filter, and so are `Completed`/`Success`. |
 | `includeDetails` | boolean | No | If `true`, includes `failedRunDetails` array with agent names and error messages. Default: `true`. |
 
 #### Returns
 
-`totalRuns`, `completedRuns`, `failedRuns`, `completedWithErrorsRuns`, `runningRuns`, `queuedRuns`, `stoppedRuns`. When `includeDetails` is `true`, also includes `failedRunDetails` with `agentId`, `agentName`, `runId`, `errorMessage`.
+`totalRuns`, `completedRuns`, `failedRuns`, `runningRuns`, `queuedRuns`, `stoppedRuns`, and `completedWithErrorsRuns`, which is always `0`. When `includeDetails` is `true`, also includes `failedRunDetails` with `agentId`, `agentName`, `runId`, `errorMessage`.
 
 #### Example Prompts
 

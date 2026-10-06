@@ -1084,7 +1084,7 @@ export const tools: Tool[] = [
       type: "object" as const,
       properties: {
         startDate: { type: "string", description: "Start of the range, ISO 8601 date or datetime. Examples: '2026-01-15', '2026-01-15T08:00:00Z'. Use a datetime for ranges like 'the last 50 hours'. Defaults to 24 hours before now." },
-        endDate: { type: "string", description: "End of the range, ISO 8601 date. When given, the range runs to the end of that day. Defaults to now." },
+        endDate: { type: "string", description: "End of the range, ISO 8601 date. When given, the range runs to the end of that day. It must not be earlier than startDate, so with a datetime startDate give the following day or omit endDate: a date-only endDate on startDate's own day is rejected. Defaults to now." },
         status: { type: "string", description: "Filter by run status name: 'Failed', 'Completed', 'Running', 'Stopped', 'Queuing', or any other run status name. `Failed`/`Failure` are one filter, and so are `Completed`/`Success`. Only counts runs with this status." },
         includeDetails: { type: "boolean", description: "If true, includes failedRunDetails array with specific agent names and error messages. Default: true." },
       },

@@ -8,7 +8,7 @@
  * cycle — see the smoke.test.ts comment for the production incident this class
  * of bug already caused.
  */
-import type { AgentApiModel, PaginatedAgentsResponse } from "../../api/types.js";
+import { RunStatus, type AgentApiModel, type PaginatedAgentsResponse } from "../../api/types.js";
 import {
   validateBoolean,
   validateJsonString,
@@ -26,29 +26,14 @@ import {
 export const DEBUG = process.env.DEBUG === "1";
 
 /**
- * Map RunStatus numeric value to human-readable string
+ * Map RunStatus numeric value to its name, via the enum's reverse mapping
  */
 function getRunStatusLabel(status: number | undefined): string {
-  const statusMap: Record<number, string> = {
-    0: "Invalid",
-    1: "Running",
-    2: "Exporting",
-    3: "Starting",
-    4: "Queuing",
-    5: "Stopping",
-    6: "Failure",
-    7: "Failed",
-    8: "Stopped",
-    9: "Completed",
-    10: "Success",
-    11: "Skipped",
-    12: "Waiting",
-    13: "UpdatingDataSet",
-  };
   if (status === undefined || status === null) {
     return "Never Run";
   }
-  return statusMap[status] ?? `Unknown (${status})`;
+  const name: unknown = RunStatus[status];
+  return typeof name === "string" ? name : `Unknown (${status})`;
 }
 
 /**
