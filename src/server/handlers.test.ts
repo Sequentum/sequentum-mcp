@@ -823,6 +823,17 @@ describe("toolDispatch", () => {
     expect(getAllAgents).toHaveBeenCalledWith({ pageIndex: 1, recordsPerPage: 50 });
   });
 
+  it("list_agents accepts status 13 (UpdatingDataSet) and rejects 14", async () => {
+    const getAllAgents = vi.fn().mockResolvedValue([]);
+    const apiClient = { getAllAgents } as unknown as SequentumApiClient;
+    const ctx = { apiClient, sendProgress: async () => {}, signal: new AbortController().signal };
+
+    await toolDispatch.list_agents({ status: 13 }, ctx);
+    expect(getAllAgents).toHaveBeenCalledWith({ pageIndex: 1, recordsPerPage: 50, status: 13 });
+
+    await expect(toolDispatch.list_agents({ status: 14 }, ctx)).rejects.toThrow(/must be <= 13/);
+  });
+
   it("exposes a handler for every schedule, billing, and space tool", () => {
     const expected = [
       "list_agent_schedules", "create_agent_schedule", "delete_agent_schedule",
