@@ -204,26 +204,6 @@ export interface StartAgentRequest {
 }
 
 /**
- * Agent last run status enum - represents the RunStatus from the last execution
- * Used for filtering agents by their last run result
- */
-export enum AgentRunStatus {
-  Invalid = 0,
-  Running = 1,
-  Exporting = 2,
-  Starting = 3,
-  Queuing = 4,
-  Stopping = 5,
-  Failure = 6,
-  Failed = 7,
-  Stopped = 8,
-  Completed = 9,
-  Success = 10,
-  Skipped = 11,
-  Waiting = 12,
-}
-
-/**
  * Configuration type enum
  */
 export enum ConfigType {
@@ -239,21 +219,26 @@ export type RunRemoveMethod =
   | "RemoveAllFilesAndAgentInput";
 
 /**
- * Run status enum
+ * Run status codes, as the API returns and accepts them (numeric).
+ * Source of truth: se4-main Core/Common/Enums/RunStatus.cs. Keep the two in step.
+ * On the API's status filters, Failure (6)/Failed (7) and Completed (9)/Success (10)
+ * are one filter (SE4-4000).
  */
 export enum RunStatus {
-  Unknown = "Unknown",
-  Queuing = "Queuing",
-  Queued = "Queued",
-  Starting = "Starting",
-  Running = "Running",
-  Stopping = "Stopping",
-  Stopped = "Stopped",
-  Completed = "Completed",
-  CompletedWithErrors = "CompletedWithErrors",
-  Failed = "Failed",
-  FailedToStart = "FailedToStart",
-  WaitingOnFailure = "WaitingOnFailure",
+  Invalid = 0,
+  Running = 1,
+  Exporting = 2,
+  Starting = 3,
+  Queuing = 4,
+  Stopping = 5,
+  Failure = 6,
+  Failed = 7,
+  Stopped = 8,
+  Completed = 9,
+  Success = 10,
+  Skipped = 11,
+  Waiting = 12,
+  UpdatingDataSet = 13,
 }
 
 /**
@@ -324,8 +309,8 @@ export type ApiError = ApiErrorBody;
  * Request model for filtering agents
  */
 export interface ListAgentsRequest {
-  /** Filter by agent's last run status (RunStatus enum value) */
-  status?: AgentRunStatus;
+  /** Filter by agent's last run status (RunStatus value) */
+  status?: RunStatus;
   /** Filter by space ID */
   spaceId?: number;
   /** Search by agent name (partial match) - maps to API 'name' parameter */

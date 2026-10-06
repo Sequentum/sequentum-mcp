@@ -39,9 +39,10 @@ List web scraping agents with IDs, names, status, and configuration. USE THIS FI
         9,
         10,
         11,
-        12
+        12,
+        13
       ],
-      "description": "Filter by last run status: 0=Invalid, 1=Running, 2=Exporting, 3=Starting, 4=Queuing, 5=Stopping, 6=Failure, 7=Failed, 8=Stopped, 9=Completed, 10=Success, 11=Skipped, 12=Waiting. Agents that never ran have null status."
+      "description": "Filter by last run status: 0=Invalid, 1=Running, 2=Exporting, 3=Starting, 4=Queuing, 5=Stopping, 6=Failure, 7=Failed, 8=Stopped, 9=Completed, 10=Success, 11=Skipped, 12=Waiting, 13=UpdatingDataSet. 6=Failure and 7=Failed are one filter, and so are 9=Completed and 10=Success: either value returns agents in both. Agents that never ran have null status and match no status filter."
     },
     "spaceId": {
       "type": "number",

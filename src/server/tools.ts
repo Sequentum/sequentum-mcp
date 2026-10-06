@@ -27,8 +27,8 @@ export const tools: Tool[] = [
       properties: {
         status: {
           type: "number",
-          enum: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-          description: "Filter by last run status: 0=Invalid, 1=Running, 2=Exporting, 3=Starting, 4=Queuing, 5=Stopping, 6=Failure, 7=Failed, 8=Stopped, 9=Completed, 10=Success, 11=Skipped, 12=Waiting. Agents that never ran have null status.",
+          enum: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+          description: "Filter by last run status: 0=Invalid, 1=Running, 2=Exporting, 3=Starting, 4=Queuing, 5=Stopping, 6=Failure, 7=Failed, 8=Stopped, 9=Completed, 10=Success, 11=Skipped, 12=Waiting, 13=UpdatingDataSet. 6=Failure and 7=Failed are one filter, and so are 9=Completed and 10=Success: either value returns agents in both. Agents that never ran have null status and match no status filter.",
         },
         spaceId: {
           type: "number",
@@ -1077,15 +1077,15 @@ export const tools: Tool[] = [
     description:
       "Get aggregate statistics about agent runs in a date range: counts of completed, failed, running, etc. " +
       "Answers: 'How many agents ran yesterday?', 'What failed last week?', 'Show run statistics', 'Give me a summary of runs'. " +
-      "Returns: totalRuns, completedRuns, failedRuns, completedWithErrorsRuns, runningRuns, queuedRuns, stoppedRuns. " +
+      "Returns: totalRuns, completedRuns, failedRuns, runningRuns, queuedRuns, stoppedRuns (completedWithErrorsRuns is always 0). " +
       "TIP: Set includeDetails=true to get details of which specific agents failed and why. " +
       "TIP: Use status filter to focus on specific outcomes (e.g., 'Failed' to see only failures).",
     inputSchema: {
       type: "object" as const,
       properties: {
-        startDate: { type: "string", description: "Start date in ISO 8601 format. Example: '2026-01-15'. Defaults to today if not specified." },
-        endDate: { type: "string", description: "End date in ISO 8601 format. Example: '2026-01-16'. Defaults to today if not specified." },
-        status: { type: "string", description: "Filter by run status: 'Failed', 'Completed', 'CompletedWithErrors', 'Running'. Only shows runs with this status." },
+        startDate: { type: "string", description: "Start of the range, ISO 8601 date or datetime. Examples: '2026-01-15', '2026-01-15T08:00:00Z'. Use a datetime for ranges like 'the last 50 hours'. Defaults to 24 hours before now." },
+        endDate: { type: "string", description: "End of the range, ISO 8601 date. When given, the range runs to the end of that day. It must not be earlier than startDate, so with a datetime startDate give the following day or omit endDate: a date-only endDate on startDate's own day is rejected. Defaults to now." },
+        status: { type: "string", description: "Filter by run status name: 'Failed', 'Completed', 'Running', 'Stopped', 'Queuing', or any other run status name. `Failed`/`Failure` are one filter, and so are `Completed`/`Success`. Only counts runs with this status." },
         includeDetails: { type: "boolean", description: "If true, includes failedRunDetails array with specific agent names and error messages. Default: true." },
       },
       required: [],
