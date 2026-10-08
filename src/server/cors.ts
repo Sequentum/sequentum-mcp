@@ -9,7 +9,7 @@
 /**
  * Build the list of origins that are allowed to make cross-origin requests.
  *
- * Always starts with the hardcoded Sequentum, Anthropic, and OpenAI defaults.
+ * Always starts with the hardcoded Sequentum, Anthropic, OpenAI, and Glama defaults.
  * If the ALLOWED_ORIGINS environment variable is set (comma-separated exact
  * origins), those entries are **appended** to the defaults — Claude, ChatGPT,
  * and Sequentum domains remain accessible even when the variable is set.
@@ -50,6 +50,12 @@ export function buildAllowedOrigins(
     // ChatGPT-specific subdomain is needed in future, add it explicitly so the
     // trust scope stays auditable.
     "https://platform.openai.com",
+    // Glama's MCP directory runs a browser-based inspector at glama.ai/mcp/inspector
+    // that calls listed servers directly from the page.  www.glama.ai redirects to
+    // the apex; the subdomain pattern follows the Claude rule above so a move of
+    // the inspector to a Glama subdomain keeps working.
+    "https://glama.ai",
+    /^https:\/\/(?:[a-z0-9-]+\.)+glama\.ai$/,
     "https://dashboard.sequentum.com",
     "https://mcp.sequentum.com",
   ];
