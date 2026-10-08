@@ -31,6 +31,13 @@
 - Tool errors for a 401 or 403 from the Sequentum API no longer mention API keys. A 401
   now says to disconnect and reconnect the Sequentum MCP server to sign in again.
 
+### Fixed
+
+- **Glama's browser-based MCP inspector can now reach the server.** `https://glama.ai` and
+  its subdomains are in the built-in CORS origin allowlist (`src/server/cors.ts`).
+  Requests from the inspector previously got a 403 on `/mcp`, and the preflight carried no
+  `Access-Control-Allow-Origin`.
+
 ## [2.0.0] - 2026-09-14
 
 ### BREAKING CHANGES

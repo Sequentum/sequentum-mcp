@@ -114,6 +114,10 @@ describe("isAllowedOrigin (exact matches)", () => {
   it("allows https://platform.openai.com", () => {
     expect(allowed("https://platform.openai.com")).toBe(true);
   });
+
+  it("allows https://glama.ai", () => {
+    expect(allowed("https://glama.ai")).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -157,6 +161,32 @@ describe("isAllowedOrigin (chatgpt subdomain regex)", () => {
 
   it("rejects https://notchatgpt.com (no chatgpt. label)", () => {
     expect(allowed("https://notchatgpt.com")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isAllowedOrigin — glama subdomain regex
+// ---------------------------------------------------------------------------
+
+describe("isAllowedOrigin (glama subdomain regex)", () => {
+  it("allows single-level subdomain under glama.ai", () => {
+    expect(allowed("https://www.glama.ai")).toBe(true);
+  });
+
+  it("allows multi-level subdomain under glama.ai", () => {
+    expect(allowed("https://inspector.us.glama.ai")).toBe(true);
+  });
+
+  it("rejects https://glama.ai.evil.com (apex is evil.com)", () => {
+    expect(allowed("https://glama.ai.evil.com")).toBe(false);
+  });
+
+  it("rejects https://notglama.ai (no glama. label)", () => {
+    expect(allowed("https://notglama.ai")).toBe(false);
+  });
+
+  it("rejects http://glama.ai (wrong scheme)", () => {
+    expect(allowed("http://glama.ai")).toBe(false);
   });
 });
 
