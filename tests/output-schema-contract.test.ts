@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { READ_TOOLS, WRITE_TOOLS, exitCode, judgeCall, listOf, rejectedCall, uncalledReadTools } from "../scripts/output-schema-contract.mjs";
+import { READ_TOOLS, WRITE_TOOLS, createApiClient, exitCode, judgeCall, listOf, rejectedCall, uncalledReadTools } from "../scripts/output-schema-contract.mjs";
+import { SequentumApiClient } from "../src/api/api-client.js";
 import { outputSchemas } from "../src/server/output-schemas/index.js";
+
+describe("createApiClient", () => {
+  it("keeps the client's default timeout and retries, so calls are not cancelled at once", () => {
+    const expected = new SequentumApiClient("https://dashboard-qa.sequentum.com");
+    expected.setAccessToken("token");
+    expect(createApiClient(SequentumApiClient, "https://dashboard-qa.sequentum.com", "token")).toEqual(expected);
+  });
+});
 
 describe("judgeCall", () => {
   it("passes a success result that carries structured content", () => {
