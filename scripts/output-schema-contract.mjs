@@ -83,6 +83,13 @@ export function exitCode(rows) {
   return rows.some((r) => r.verdict === "SCHEMA FAIL") ? 1 : 0;
 }
 
+/** The API client main() uses: the client's own timeout and retry defaults, with the OAuth token. */
+export function createApiClient(SequentumApiClient, baseUrl, accessToken) {
+  const apiClient = new SequentumApiClient(baseUrl);
+  apiClient.setAccessToken(accessToken);
+  return apiClient;
+}
+
 async function login(env, opts) {
   const listener = new CallbackListener();
   await listener.listen(opts.port);
@@ -120,8 +127,7 @@ async function main() {
   const { SequentumApiClient } = await import(pathToFileURL(path.join(dist, "api", "api-client.js")).href);
   const { Client, InMemoryTransport } = await import("@modelcontextprotocol/client");
 
-  const apiClient = new SequentumApiClient(env.baseUrl, null);
-  apiClient.setAccessToken(accessToken);
+  const apiClient = createApiClient(SequentumApiClient, env.baseUrl, accessToken);
   const server = createMcpServer(apiClient, "contract-check");
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
