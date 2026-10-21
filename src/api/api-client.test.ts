@@ -981,6 +981,112 @@ describe("SequentumApiClient", () => {
     });
   });
 
+  // SE4-4389: a synchronous start waits on the server for up to `timeout` seconds, so the
+  // client must not give up at its default 30 s first.
+  describe("synchronous start timeout", () => {
+    /**
+     * A fetch that answers after `answerAfterMs` (never, for Infinity), or fails like fetch
+     * does when its signal aborts.
+     */
+    function fetchAnsweringAfter(answerAfterMs: number) {
+      vi.mocked(fetch).mockImplementationOnce(
+        (_url, init) =>
+          new Promise<Response>((resolve, reject) => {
+            const answer = () =>
+              resolve({
+                ok: true,
+                status: 200,
+                headers: new Headers({ "content-type": "application/json" }),
+                json: async () => ({ data: "scraped" }),
+              } as Response);
+            // setTimeout treats a delay above 2^31-1 ms as 1 ms, so "never" must set no timer.
+            const timer = Number.isFinite(answerAfterMs) ? setTimeout(answer, answerAfterMs) : undefined;
+            init?.signal?.addEventListener("abort", () => {
+              clearTimeout(timer);
+              const abortError = new Error("The operation was aborted");
+              abortError.name = "AbortError";
+              reject(abortError);
+            });
+          })
+      );
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("should wait past 30 s for a synchronous start", async () => {
+      fetchAnsweringAfter(45_000);
+
+      const result = client.startAgent(42, { isRunSynchronously: true, timeout: 60 });
+      await vi.advanceTimersByTimeAsync(45_000);
+
+      await expect(result).resolves.toEqual({ data: "scraped" });
+    });
+
+    it("should give a synchronous start its timeout plus 30 s", async () => {
+      fetchAnsweringAfter(Infinity);
+
+      const result = client.startAgent(42, { isRunSynchronously: true, timeout: 120 });
+      const outcome = result.then(
+        () => "resolved",
+        (error: Error) => error.message
+      );
+      await vi.advanceTimersByTimeAsync(149_999);
+      let settled: string | undefined;
+      void outcome.then((value) => (settled = value));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(outcome).resolves.toBe(
+        "Request timeout after 150000ms: /api/v1/agent/42/start"
+      );
+    });
+
+    it("should use 60 s plus 30 s when a synchronous start has no timeout", async () => {
+      fetchAnsweringAfter(89_000);
+
+      const result = client.startAgent(42, { isRunSynchronously: true });
+      await vi.advanceTimersByTimeAsync(89_000);
+
+      await expect(result).resolves.toEqual({ data: "scraped" });
+    });
+
+    it("should keep the 30 s client timeout for an asynchronous start", async () => {
+      fetchAnsweringAfter(45_000);
+
+      const result = client.startAgent(42, {});
+      const outcome = result.then(
+        () => "resolved",
+        (error: Error) => error.message
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      await expect(outcome).resolves.toBe(
+        "Request timeout after 30000ms: /api/v1/agent/42/start"
+      );
+    });
+
+    it("should let a single request override the client timeout", async () => {
+      fetchAnsweringAfter(Infinity);
+      const noRetryClient = authedClient(mockBaseUrl, 30_000, 0);
+
+      let settled: string | undefined;
+      void (noRetryClient as any).request("/api/v1/agent/7", {}, 5_000).then(
+        () => (settled = "resolved"),
+        (error: Error) => (settled = error.message)
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(settled).toBe("Request timeout after 5000ms: /api/v1/agent/7");
+    });
+  });
+
   // ==========================================
   // Schedule Operations Tests
   // ==========================================
