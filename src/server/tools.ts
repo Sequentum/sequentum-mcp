@@ -276,7 +276,7 @@ export const tools: Tool[] = [
         agentId: { type: "number", description: "The unique ID of the agent to run. Get this from list_agents, search_agents, or get_agent_build_status (when building a new agent)." },
         inputParameters: { type: "string", description: "JSON string of input parameters. Check agent's inputParameters with get_agent to see what's accepted. Example: '{\"url\": \"https://example.com\"}'" },
         isRunSynchronously: { type: "boolean", description: "If true, wait for completion and return scraped data. If false (default), return immediately with runId. Use true only for quick agents." },
-        timeout: { type: "number", description: "Timeout in seconds for synchronous runs. Only used when isRunSynchronously=true. Default: 60." },
+        timeout: { type: "number", description: "Timeout in seconds for synchronous runs. Only used when isRunSynchronously=true. Default: 60. A synchronous call can stay open for this many seconds plus about 30 s." },
         parallelism: { type: "number", description: "Number of parallel instances. Default: 1. Cannot be >1 when isRunSynchronously=true." },
       },
       required: ["agentId"],
