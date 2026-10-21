@@ -38,7 +38,7 @@ Start a web scraping agent execution. Two modes available: (1) ASYNC (default): 
     },
     "timeout": {
       "type": "number",
-      "description": "Timeout in seconds for synchronous runs. Only used when isRunSynchronously=true. Default: 60."
+      "description": "Timeout in seconds for synchronous runs. Only used when isRunSynchronously=true. Default: 60. A synchronous call can stay open for this many seconds plus about 30 s."
     },
     "parallelism": {
       "type": "number",
