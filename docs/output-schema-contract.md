@@ -1,6 +1,6 @@
 # Output schema contract check
 
-`npm run contract:output-schemas` checks the tools' output schemas against real data from the
+`pnpm run contract:output-schemas` checks the tools' output schemas against real data from the
 QA Control Center. Run it before taking an output-schema change out of draft, and again
 whenever the Control Center changes a DTO the MCP server returns.
 
@@ -13,7 +13,7 @@ this check uses live ones.
 
 ## What it does
 
-1. Builds the branch (`npm run build`).
+1. Builds the branch (`pnpm run build`).
 2. Opens the QA login page, then a consent page asking for read scopes only
    (`agents:read runs:read spaces:read billing:read`). The token stays in memory.
 3. Starts the built server in process, pointed at `https://dashboard-qa.sequentum.com`.

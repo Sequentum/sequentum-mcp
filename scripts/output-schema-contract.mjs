@@ -12,7 +12,7 @@
 // upstream even by mistake. The token stays in memory: it is never printed or written.
 // QA only: fields production's Control Center lacks are handled when schemas are written.
 //
-// Usage: npm run contract:output-schemas [-- --reuse-client <client_id>] [--port <n>]
+// Usage: pnpm run contract:output-schemas [--reuse-client <client_id>] [--port <n>]
 import { parseArgs } from "node:util";
 import { randomBytes } from "node:crypto";
 import process from "node:process";
@@ -118,7 +118,7 @@ async function main() {
   });
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const dist = path.join(root, "dist");
-  if (!existsSync(path.join(dist, "server", "handlers.js"))) throw new Error("dist/ is missing: run npm run build first");
+  if (!existsSync(path.join(dist, "server", "handlers.js"))) throw new Error("dist/ is missing: run pnpm run build first");
   const env = ENVS.qa;
 
   const accessToken = await login(env, { port: Number(values.port), reuseClient: values["reuse-client"] });

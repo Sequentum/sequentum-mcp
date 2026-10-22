@@ -272,7 +272,7 @@ The server exposes 18 read-only resources (7 static + 11 templates) that AI clie
 
 ### Verifying scope enforcement end to end
 
-`npm run probe -- --env qa --mode log-only` runs the real OAuth flow against QA (browser login
+`pnpm run probe --env qa --mode log-only` runs the real OAuth flow against QA (browser login
 and consent, loopback callback, PKCE), then calls the V1 API directly and through this server
 with tokens of three scope profiles and checks CloudWatch for the Control Center's scope-check
 lines. See [docs/oauth-scope-probe.md](./docs/oauth-scope-probe.md).
@@ -366,6 +366,26 @@ ALLOWED_ORIGINS="https://my-dashboard.example.com,https://other.example.com"
 These origins are **appended** to the defaults — Claude, ChatGPT, and Sequentum access is preserved.  Wildcards and regular expressions are not supported via the env var; if you need a subdomain wildcard, add a `RegExp` entry directly in `src/server/cors.ts`.
 
 > **Note:** `Origin` matching is case-sensitive and does not include a path or query string.  Native MCP clients (Cursor, Claude Desktop, Claude Code) send no `Origin` header and are not affected by this allowlist.
+
+## Development
+
+This repository uses [pnpm](https://pnpm.io), not npm. `npm install` is refused on purpose.
+You need Node 22 or newer (`.nvmrc` pins 24, which the Docker image runs). Corepack, which
+ships with Node, installs the pnpm version named in `package.json`:
+
+```bash
+corepack enable
+pnpm install
+pnpm test
+pnpm run build
+```
+
+pnpm runs no dependency install scripts unless the package is listed under `allowBuilds` in
+`pnpm-workspace.yaml`. If `pnpm install` reports an ignored build script after a dependency
+change, add the package there: `true` if it needs the script to work, `false` otherwise.
+
+Arguments go straight after the script name, without npm's `--`
+(`pnpm run probe --env qa --mode log-only`). pnpm passes a `--` on to the script.
 
 ## Privacy Policy
 
