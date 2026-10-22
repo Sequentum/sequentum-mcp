@@ -28,7 +28,7 @@ endpoint itself enforces `client_id`, detects reuse, and serializes concurrent r
 
 ## Prerequisites
 
-- Node 20 or newer. No npm dependencies beyond this repository's.
+- Node 22 or newer. No npm dependencies beyond this repository's.
 - The `aws` CLI on `PATH` with credentials that can read the QA Control Center log group. Or
   pass `--skip-cloudwatch`.
 - A QA user in an organization with **at least one agent and one space**. The `agents:write`
