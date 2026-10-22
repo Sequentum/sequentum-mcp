@@ -13,7 +13,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [20, 22, 24]
+        node-version: [22, 24]
 
     steps:
       - name: Checkout
@@ -49,9 +49,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # The conformance CLI (0.2.0-alpha.12) imports fs.globSync, which Node
-      # added in 22. The server itself still supports Node 20; only this test
-      # tool needs 22 or later.
+      # Runs on the oldest supported line (engines.node is >=22). The
+      # conformance CLI (0.2.0-alpha.12) imports fs.globSync, which Node added
+      # in 22, so the floor cannot drop below this without breaking the job.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
