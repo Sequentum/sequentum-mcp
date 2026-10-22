@@ -170,9 +170,9 @@ pipeline {
                 script {
                     mergeChanges()
                     dir('sequentum-mcp') {
-                        // Pin Node 20 to match the runtime image (Dockerfile). The agent's
+                        // Pin Node 24 to match the runtime image (Dockerfile). The agent's
                         // own Node is 18, which has no global crypto and fails the suite.
-                        docker.image('node:20-alpine').inside('-e HOME=/tmp -e npm_config_cache=/tmp/.npm') {
+                        docker.image('node:24-alpine').inside('-e HOME=/tmp -e npm_config_cache=/tmp/.npm') {
                             sh '''
                                 set -e
                                 node --version
