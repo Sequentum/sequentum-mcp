@@ -1193,7 +1193,7 @@ async function main() {
 // Only run main() when this file is the process's entry point, not when it is imported --
 // e.g. by tests/oauth-scope-probe.test.ts, which imports the pure judge functions below and
 // must not trigger a live CLI run (browser windows, AWS calls, exit codes) as a side effect
-// of loading the module. `npm run probe` still runs exactly as before.
+// of loading the module. `pnpm run probe` still runs exactly as before.
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().then(
     (code) => process.exit(code),

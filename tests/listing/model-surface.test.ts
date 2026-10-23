@@ -8,7 +8,7 @@ import { tools as registered } from "../../src/server/tools.js";
 // listings plus the server instructions. Descriptions are the main prompt-injection surface and
 // the directory review rejects behavioural wording, so every change to this text must show up as
 // a reviewable diff. Unlike tests/output-schemas/__snapshots__, these files ARE meant to be
-// updated (`npx vitest run tests/listing -u`) whenever wording changes on purpose; the diff in
+// updated (`pnpm exec vitest run tests/listing -u`) whenever wording changes on purpose; the diff in
 // the pull request is the review. Descriptions are written raw, not JSON-escaped, so a one-word
 // edit shows as a one-word diff.
 

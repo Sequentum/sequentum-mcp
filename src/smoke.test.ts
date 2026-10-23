@@ -38,7 +38,7 @@ describe("native Node ESM smoke", () => {
     it(`loads ${target.replace(repoRoot, ".")} under the native Node ESM loader`, () => {
       if (!existsSync(target)) {
         throw new Error(
-          `Build artifact missing: ${target}. Run \`npm run build\` before the smoke test.`
+          `Build artifact missing: ${target}. Run \`pnpm run build\` before the smoke test.`
         );
       }
 
