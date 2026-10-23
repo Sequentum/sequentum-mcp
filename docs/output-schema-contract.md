@@ -13,7 +13,7 @@ this check uses live ones.
 
 ## What it does
 
-1. Builds the branch (`pnpm run build`).
+1. Builds the branch (`tsc`, as the build script does).
 2. Opens the QA login page, then a consent page asking for read scopes only
    (`agents:read runs:read spaces:read billing:read`). The token stays in memory.
 3. Starts the built server in process, pointed at `https://dashboard-qa.sequentum.com`.

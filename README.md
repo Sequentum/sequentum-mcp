@@ -370,8 +370,9 @@ These origins are **appended** to the defaults — Claude, ChatGPT, and Sequentu
 ## Development
 
 This repository uses [pnpm](https://pnpm.io), not npm. `npm install` is refused on purpose.
-You need Node 22 or newer (`.nvmrc` pins 24, which the Docker image runs). Corepack, which
-ships with Node, installs the pnpm version named in `package.json`:
+You need Node 22 or newer (`.nvmrc` pins 24, which the Docker image runs). Corepack installs
+the pnpm version named in `package.json`. It ships with Node 22 and 24; on Node 25 or newer,
+install it first with `npm install -g corepack`:
 
 ```bash
 corepack enable

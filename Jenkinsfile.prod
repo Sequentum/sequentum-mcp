@@ -575,7 +575,18 @@ def mergeChanges() {
         # merge to target branch
         git checkout ${TARGET_BRANCH}
         git pull
-        git merge -Xtheirs ${SOURCE_BRANCH}
+        # The pnpm move deleted package-lock.json, which earlier version commits on
+        # the target branch modified. -Xtheirs cannot settle that modify/delete
+        # conflict, so take the deletion when it is the only conflict; fail otherwise.
+        if ! git merge -Xtheirs ${SOURCE_BRANCH}; then
+            if [ "\$(git diff --name-only --diff-filter=U)" = "package-lock.json" ] \\
+                && ! git cat-file -e "${SOURCE_BRANCH}:package-lock.json" 2>/dev/null; then
+                git rm -q package-lock.json
+                git commit --no-edit
+            else
+                exit 1
+            fi
+        fi
 
         # Push merged changes
         git push
