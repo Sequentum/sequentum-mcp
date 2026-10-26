@@ -12,7 +12,7 @@
  * --expected-failures baseline is scenario-level and would silence every
  * check in a scenario; judging per check keeps each passing check a guard.
  *
- * Imports the built judge, so run `npm run build` first.
+ * Imports the built judge, so run `pnpm run build` first.
  */
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
@@ -235,7 +235,7 @@ async function runOne(judgeScenario, entry, era, mcpUrl) {
 async function main() {
   const judgePath = join(ROOT, "dist", "utils", "conformance-checks.js");
   if (!existsSync(judgePath)) {
-    console.error("dist/utils/conformance-checks.js not found — run `npm run build` first.");
+    console.error("dist/utils/conformance-checks.js not found — run `pnpm run build` first.");
     process.exit(1);
   }
   const { judgeScenario } = await import(judgePath);
@@ -247,7 +247,7 @@ async function main() {
     // This script runs the BUILT output, matching src/smoke.test.ts's habit of
     // validating what actually ships under real Node.
     if (!existsSync(join(ROOT, "dist", "index.js"))) {
-      console.error("dist/index.js not found — run `npm run build` first.");
+      console.error("dist/index.js not found — run `pnpm run build` first.");
       process.exit(1);
     }
 

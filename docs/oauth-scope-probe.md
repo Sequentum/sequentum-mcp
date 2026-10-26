@@ -6,7 +6,7 @@ revoke-on-refresh (**SE4-3896**), and refresh-token hardening (**SE4-3922**: man
 environment. QA only.
 
 ```bash
-npm run probe -- --env qa --mode log-only
+pnpm run probe --env qa --mode log-only
 ```
 
 It performs the authorization-code flow exactly the way an MCP client does — Dynamic Client
@@ -28,7 +28,7 @@ endpoint itself enforces `client_id`, detects reuse, and serializes concurrent r
 
 ## Prerequisites
 
-- Node 22 or newer. No npm dependencies beyond this repository's.
+- Node 22 or newer. No dependencies beyond this repository's.
 - The `aws` CLI on `PATH` with credentials that can read the QA Control Center log group. Or
   pass `--skip-cloudwatch`.
 - A QA user in an organization with **at least one agent and one space**. The `agents:write`
@@ -42,10 +42,10 @@ endpoint itself enforces `client_id`, detects reuse, and serializes concurrent r
 ## Running
 
 ```bash
-npm run probe -- --env qa --mode log-only --preflight-only            # no side effects
-npm run probe -- --env qa --mode log-only                             # full run: login, three consent clicks, one revoke click
-npm run probe -- --env qa --mode log-only --profile read --skip-3896  # quickest real signal, one consent click
-npm run probe -- --env qa --mode enforce                              # after the flip
+pnpm run probe --env qa --mode log-only --preflight-only            # no side effects
+pnpm run probe --env qa --mode log-only                             # full run: login, three consent clicks, one revoke click
+pnpm run probe --env qa --mode log-only --profile read --skip-3896  # quickest real signal, one consent click
+pnpm run probe --env qa --mode enforce                              # after the flip
 ```
 
 | Flag | Meaning |
