@@ -3,29 +3,33 @@ FROM node:24-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy package files. pnpm-workspace.yaml holds the allowBuilds list, so only the
+# dependencies named there may run install scripts.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
-# Stamp the release version into package.json (and package-lock.json) when the
-# build supplies one. The server reads its version from package.json at runtime,
-# so this is what /health and the MCP serverInfo.version end up reporting.
-# Without the build arg the files are left untouched and a plain `docker build`
-# keeps working. Must run before `npm ci` so the lock file stays consistent.
+# Stamp the release version into package.json when the build supplies one. The
+# server reads its version from package.json at runtime, so this is what /health
+# and the MCP serverInfo.version end up reporting. Without the build arg the file
+# is left untouched and a plain `docker build` keeps working. pnpm-lock.yaml
+# holds no version, so stamping it after the lockfile was written is safe.
 ARG VERSION
 RUN if [ -n "$VERSION" ]; then \
-      npm version "$VERSION" --no-git-tag-version --allow-same-version --ignore-scripts; \
+      apk add --no-cache jq \
+      && jq --arg v "$VERSION" '.version = $v' package.json > package.tmp \
+      && mv package.tmp package.json; \
     fi
 
-# Install all dependencies (including dev for build)
-# Skip lifecycle scripts - we build explicitly after copying source
-RUN npm ci --ignore-scripts
+# Install all dependencies (including dev for build), exactly as pnpm-lock.yaml says.
+# Corepack fetches the pnpm version named in package.json's packageManager field.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable && pnpm install --frozen-lockfile
 
 # Copy source code
 COPY tsconfig.json ./
 COPY src/ ./src/
 
 # Build TypeScript
-RUN npx tsc
+RUN pnpm exec tsc
 
 # Production stage
 FROM node:24-alpine
@@ -34,9 +38,12 @@ WORKDIR /app
 
 # Copy the (possibly version-stamped) package files from the builder stage rather
 # than from the build context, so both stages agree on the version, and install
-# production dependencies only
-COPY --from=builder /app/package.json /app/package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+# production dependencies only. The pnpm store and the pnpm and Corepack caches are
+# deleted afterwards to keep the image small.
+COPY --from=builder /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable && pnpm install --frozen-lockfile --prod \
+    && rm -rf "$(pnpm store path)" /root/.cache
 
 # Copy built files from builder stage
 COPY --from=builder /app/dist ./dist
