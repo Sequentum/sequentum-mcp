@@ -6,7 +6,7 @@
  * dispatch-map refactor (see agents.ts for the original TODO reference).
  */
 import type { ToolHandler } from "./types.js";
-import { jsonResult } from "./types.js";
+import { structuredResult, withStructured } from "./types.js";
 import { parseScheduleParams, validateScheduleStartTime } from "./shared.js";
 import { validateNumber, validateString } from "../../utils/validation.js";
 
@@ -14,7 +14,7 @@ const list_agent_schedules: ToolHandler = async (args, { apiClient }) => {
   const params = args;
   const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
   const schedules = await apiClient.getAgentSchedules(agentId);
-  return jsonResult(schedules);
+  return structuredResult(schedules);
 };
 
 const create_agent_schedule: ToolHandler = async (args, { apiClient }) => {
@@ -81,14 +81,10 @@ const create_agent_schedule: ToolHandler = async (args, { apiClient }) => {
     isExclusive,
     isWaitOnFailure,
   });
-  return {
-    content: [
-      {
-        type: "text",
-        text: `Schedule created successfully.\n\n${JSON.stringify(schedule, null, 2)}`,
-      },
-    ],
-  };
+  return withStructured(
+    { content: [{ type: "text", text: `Schedule created successfully.\n\n${JSON.stringify(schedule, null, 2)}` }] },
+    schedule
+  );
 };
 
 const delete_agent_schedule: ToolHandler = async (args, { apiClient }) => {
@@ -111,7 +107,7 @@ const get_agent_schedule: ToolHandler = async (args, { apiClient }) => {
   const agentId = validateNumber(params, "agentId", { min: 1, integer: true })!;
   const scheduleId = validateNumber(params, "scheduleId", { min: 1, integer: true })!;
   const schedule = await apiClient.getAgentSchedule(agentId, scheduleId);
-  return jsonResult(schedule);
+  return structuredResult(schedule);
 };
 
 const update_agent_schedule: ToolHandler = async (args, { apiClient }) => {
@@ -175,14 +171,10 @@ const update_agent_schedule: ToolHandler = async (args, { apiClient }) => {
     isExclusive,
     isWaitOnFailure,
   });
-  return {
-    content: [
-      {
-        type: "text",
-        text: `Schedule updated successfully.\n\n${JSON.stringify(updated, null, 2)}`,
-      },
-    ],
-  };
+  return withStructured(
+    { content: [{ type: "text", text: `Schedule updated successfully.\n\n${JSON.stringify(updated, null, 2)}` }] },
+    updated
+  );
 };
 
 const enable_agent_schedule: ToolHandler = async (args, { apiClient }) => {
@@ -220,7 +212,7 @@ const get_scheduled_runs: ToolHandler = async (args, { apiClient }) => {
   const startDate = validateString(params, "startDate", false);
   const endDate = validateString(params, "endDate", false);
   const schedules = await apiClient.getUpcomingSchedules(startDate, endDate);
-  return jsonResult(schedules);
+  return structuredResult(schedules);
 };
 
 export const scheduleToolHandlers: Record<string, ToolHandler> = {

@@ -20,6 +20,7 @@ import { tools } from "./tools.js";
 import { resources, resourceTemplates, readResource } from "./resources.js";
 import { prompts, getPromptMessages } from "./prompts.js";
 import { toolDispatch, type ProgressFn } from "./tools/index.js";
+import { RESOURCE_SCOPES, TOOL_SCOPES, scopeChallengeFor } from "./tool-scopes.js";
 import { DEBUG, isPaginatedResponse, parseScheduleParams, validateScheduleStartTime } from "./tools/shared.js";
 
 // ==========================================
@@ -53,7 +54,7 @@ export function formatToolError(error: unknown): {
   } else if (error instanceof ApiRequestError) {
     if (error.isUnauthorized) {
       errorPrefix = "Authentication Failed";
-      errorMessage = "Your API key or OAuth token is invalid or has expired. Please check your credentials.";
+      errorMessage = "Your OAuth token is invalid or has expired. Disconnect and reconnect the Sequentum MCP server to sign in again.";
     } else if (error.isInsufficientScope) {
       // SE4-3929: distinguished from the generic 403 below so the caller learns this is a
       // scope problem, not a permissions problem, and is told what to do about it.
@@ -66,7 +67,7 @@ export function formatToolError(error: unknown): {
       errorMessage = `This action requires ${need}. Disconnect and reconnect the Sequentum MCP server, then approve the requested permissions, to re-authorize.`;
     } else if (error.isForbidden) {
       errorPrefix = "Access Denied";
-      errorMessage = "You don't have permission to perform this action. Check your API key permissions.";
+      errorMessage = "You don't have permission to perform this action. Check your Sequentum account's permissions.";
     } else if (error.isNotFound) {
       errorPrefix = "Not Found";
       errorMessage = error.message;
@@ -230,6 +231,10 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
     if (!handler) {
       throw new Error(`No dispatch handler registered for tool "${tool.name}"`);
     }
+    const requiredScopes = TOOL_SCOPES[tool.name];
+    if (!requiredScopes) {
+      throw new Error(`No OAuth scopes declared for tool "${tool.name}" in tool-scopes.ts`);
+    }
 
     server.registerTool(
       tool.name,
@@ -245,7 +250,14 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
         // the only bridge; the schemas in tools.ts are hand-written JSON Schema and
         // are what `tools/list` emits verbatim either way.
         inputSchema: fromJsonSchema(tool.inputSchema as JsonSchemaType),
+        // the SDK validates every non-error result against this and turns a mismatch
+        // into an isError result, so the schemas are permissive by construction
+        // (output-schemas/helpers.ts). Tools without one (acknowledgement-only) skip it.
+        ...(tool.outputSchema ? { outputSchema: fromJsonSchema(tool.outputSchema as JsonSchemaType) } : {}),
         annotations: tool.annotations,
+        // Checked by the SDK before dispatch: a token missing one of these gets HTTP 403
+        // with an insufficient_scope challenge instead of reaching the handler.
+        scopeChallenge: scopeChallengeFor(requiredScopes),
       },
       async (args, ctx) => {
         if (DEBUG) {
@@ -283,13 +295,27 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
   // Resources
   // ==========================================
 
+  // Every resource is API-backed, so each declares the scope of the endpoint it reads,
+  // exactly like the tools above. scopeChallenge is not part of resources/list output.
+  const resourceScopeChallenge = (uriOrTemplate: string) => {
+    const requiredScopes = RESOURCE_SCOPES[uriOrTemplate];
+    if (!requiredScopes) {
+      throw new Error(`No OAuth scopes declared for resource "${uriOrTemplate}" in tool-scopes.ts`);
+    }
+    return scopeChallengeFor(requiredScopes);
+  };
+
   for (const resource of resources) {
     server.registerResource(
       resource.name,
       resource.uri,
       // registerResource requires a metadata argument; forward the descriptive
       // fields declared in resources.ts so resources/list output is unchanged.
-      { description: resource.description, mimeType: resource.mimeType },
+      {
+        description: resource.description,
+        mimeType: resource.mimeType,
+        scopeChallenge: resourceScopeChallenge(resource.uri),
+      },
       (uri) => readResourceResult(uri, apiClient)
     );
   }
@@ -301,7 +327,11 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
       // enumeration has to be a deliberate choice — these templates are only
       // readable by URI, never enumerable.
       new ResourceTemplate(template.uriTemplate, { list: undefined }),
-      { description: template.description, mimeType: template.mimeType },
+      {
+        description: template.description,
+        mimeType: template.mimeType,
+        scopeChallenge: resourceScopeChallenge(template.uriTemplate),
+      },
       (uri) => readResourceResult(uri, apiClient)
     );
   }

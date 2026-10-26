@@ -1,5 +1,43 @@
 # Changelog
 
+## [3.0.0] - Unreleased
+
+### BREAKING CHANGES
+
+- **The stdio transport and `SEQUENTUM_API_KEY` authentication are removed.** The server
+  now runs only the Streamable HTTP transport with OAuth 2.1; connect to
+  `https://mcp.sequentum.com/mcp`. This completes the deprecation announced in 2.0.0,
+  which had set no removal version. Versions of the `sequentum-mcp` npm package that are
+  already published stay installable and deprecated; no new versions are published.
+- **`TRANSPORT_MODE` is no longer read.** HTTP is the only mode, so the variable has no
+  effect and can be removed from any deployment configuration.
+- **The package is no longer publishable.** `package.json` is marked `private` and no
+  longer declares the `sequentum-mcp` bin.
+- **The `SequentumApiClient` constructor dropped its `apiKey` parameter.** It is now
+  `(baseUrl, requestTimeoutMs, maxRetries)`; authenticate with `setAccessToken()`.
+
+### Changed
+
+- **Each tool and resource now declares the OAuth scopes it needs, and the server checks
+  them before dispatch.** A `tools/call` or `resources/read` whose token lacks one is
+  answered with HTTP 403 and `WWW-Authenticate: Bearer error="insufficient_scope",
+  scope="…", resource_metadata="…"`, the challenge MCP clients use to step the user up to
+  the missing scope, and the Sequentum API is not called. The scope list names the scopes
+  the token already holds plus the missing ones, so re-authorizing does not narrow the
+  grant. The requirements mirror the Control Center's own per-endpoint scopes;
+  `start_agent_build` needs both `agents:write` and `agents:read`. Client-credentials
+  tokens, which the Control Center exempts, are not checked. The "Insufficient Scope" tool
+  error remains as the fallback for a 403 from the API itself.
+- Tool errors for a 401 or 403 from the Sequentum API no longer mention API keys. A 401
+  now says to disconnect and reconnect the Sequentum MCP server to sign in again.
+
+### Fixed
+
+- **Glama's browser-based MCP inspector can now reach the server.** `https://glama.ai` and
+  its subdomains are in the built-in CORS origin allowlist (`src/server/cors.ts`).
+  Requests from the inspector previously got a 403 on `/mcp`, and the preflight carried no
+  `Access-Control-Allow-Origin`.
+
 ## [2.0.0] - 2026-09-14
 
 ### BREAKING CHANGES

@@ -1,0 +1,25 @@
+Started agents in space.
+
+{
+  "spaceId": 945,
+  "spaceName": "Production",
+  "totalAgents": 2,
+  "agentsStarted": 1,
+  "agentsFailed": 1,
+  "results": [
+    {
+      "agentId": 101,
+      "agentName": "Shop prices",
+      "success": true,
+      "runId": 9001,
+      "errorMessage": null
+    },
+    {
+      "agentId": 102,
+      "agentName": "News",
+      "success": false,
+      "runId": null,
+      "errorMessage": "Agent is already running"
+    }
+  ]
+}

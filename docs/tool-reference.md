@@ -75,7 +75,7 @@ List web scraping agents with IDs, names, status, and configuration.
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `status` | number | No | Filter by last run status. See [Run Status Values](#run-status-values). |
+| `status` | number | No | Filter by last run status. See [Run Status Values](#run-status-values). `6` Failure and `7` Failed are one filter, and so are `9` Completed and `10` Success. |
 | `spaceId` | number | No | Filter by space ID. Use `list_spaces` first to find space IDs. |
 | `search` | string | No | Search by agent name (case-insensitive partial match). |
 | `configType` | string | No | Filter by type: `Agent`, `Command`, `Api`, or `Shared`. |
@@ -86,7 +86,7 @@ List web scraping agents with IDs, names, status, and configuration.
 
 #### Returns
 
-Array of agent summaries with `id`, `name`, `status`, `configType`, `version`, `lastActivity`.
+An object with `agents` (agent summaries with `id`, `name`, `status`, `configType`, `version`, `lastActivity`) and `pagination`.
 
 #### Example Prompts
 
@@ -217,7 +217,7 @@ Get execution history for an agent showing past runs with status, timing, and re
 
 #### Returns
 
-An object with `runs` (array of runs with `id`, `status`, `startTime`, `endTime`, `recordsExtracted`, `recordsExported`, `errorMessage`), plus `returned`, `limit` and `truncated`. Only the most recent runs are returned — 50 unless you raise `maxRecords`; when `truncated` is `true`, the page came back full, so more runs may exist than were returned. Never count `runs` to answer "how many runs", "how many failed" or "how many succeeded" — use [`get_agent_run_summary`](#get_agent_run_summary) instead.
+An object with `runs` (array of runs with `id`, `status` (numeric run status code), `startTime`, `endTime`, `dataCount`, `exportCount`, `message`), plus `returned`, `limit` and `truncated`. Only the most recent runs are returned — 50 unless you raise `maxRecords`; when `truncated` is `true`, the page came back full, so more runs may exist than were returned. Never count `runs` to answer "how many runs", "how many failed" or "how many succeeded" — use [`get_agent_run_summary`](#get_agent_run_summary) instead.
 
 #### Example Prompts
 
@@ -270,7 +270,7 @@ Get the current status of a specific run. Faster than `get_agent_runs` when you 
 
 #### Returns
 
-Single run details with `id`, `status`, `startTime`, `endTime`, `recordsExtracted`, `recordsExported`, `errorMessage`.
+Single run details with `id` (the runId), `status` (numeric run status code: 1 Running … 10 Success, 7 Failed), `startTime`, `endTime`, `dataCount`, `exportCount`, `message`, `tableType`.
 
 #### Example Prompts
 
@@ -301,7 +301,7 @@ Start a web scraping agent execution. Two modes available:
 
 #### Returns
 
-- **Async mode**: `runId`, `status`
+- **Async mode**: the run record (`id` is the runId, `status` is a numeric run status code)
 - **Sync mode**: Scraped data directly as JSON/text
 
 #### Errors
@@ -551,7 +551,7 @@ List all scheduled tasks for a specific agent. Shows when the agent is configure
 
 #### Returns
 
-Array of schedules with `id`, `name`, `cronExpression`/`schedule`, `nextRunTime`, `isEnabled`, `timezone`.
+Array of schedules with `id`, `name`, `schedule` (the CRON expression), `scheduleType`, `nextRunTime`, `isEnabled`, `timezone`.
 
 #### Example Prompts
 
@@ -578,7 +578,7 @@ Get details of a specific schedule for an agent, including its full configuratio
 
 #### Returns
 
-Full schedule details with `id`, `name`, `cronExpression`/`schedule`, `nextRunTime`, `isEnabled`, `timezone`, and run parameters.
+Full schedule details with `id`, `name`, `schedule` (the CRON expression), `scheduleType`, `nextRunTime`, `isEnabled`, `timezone`, and run parameters.
 
 #### Example Prompts
 
@@ -620,7 +620,7 @@ Create a schedule for an agent. Three schedule types are supported:
 
 #### Returns
 
-Created schedule details with `id`, `name`, `nextRunTime`, `cronExpression`/`schedule`, `timezone`, `isEnabled`.
+Created schedule details with `id`, `name`, `nextRunTime`, `schedule` (the CRON expression), `timezone`, `isEnabled`.
 
 #### Errors
 
@@ -671,7 +671,7 @@ If `scheduleType` is not explicitly provided, it is inferred from the fields you
 
 #### Returns
 
-Updated schedule details with `id`, `name`, `nextRunTime`, `cronExpression`/`schedule`, `timezone`, `isEnabled`.
+Updated schedule details with `id`, `name`, `nextRunTime`, `schedule` (the CRON expression), `timezone`, `isEnabled`.
 
 #### Example Prompts
 
@@ -857,7 +857,7 @@ Get the transaction history of credits (additions from purchases, deductions fro
 
 #### Returns
 
-Array of transactions with `transactionType`, `amount`, `balance`, `created` date, `message`.
+An object with `transactions` (each with `transactionType`, `amount`, `balance`, `created`, `expiresAt`, `message`), plus `totalCount`, `pageIndex` and `recordsPerPage`.
 
 #### Example Prompts
 
@@ -912,7 +912,7 @@ List agents by cost for last week
 
 Get detailed cost breakdown by usage type for a specific agent over time, useful for visualizing costs in charts.
 
-**Use this** to understand what's driving costs for an agent (server time vs exports vs proxies), or to chart agent costs over time.
+**Use this** to understand what's driving costs for an agent (run usage vs exports vs proxies), or to chart agent costs over time.
 
 #### Parameters
 
@@ -928,7 +928,7 @@ Get detailed cost breakdown by usage type for a specific agent over time, useful
 
 Cost data with `agentId`, `agentName`, date `labels` array, `usageTypes` array (each with type name, data points, totalCost), `totalCost`, `startDate`, `endDate`.
 
-The `labels` array corresponds to data points in each `usageTypes.data` array, making it ideal for charting.
+Usage types are `RunUsage`, `ExportDataBandwidth`, `ExportDataCpm`, `InputCount`, `ProxyUsage` and `AgentBuilder`. Each `usageTypes.data` array lines up with `labels`, but is empty for a type with no usage.
 
 #### Example Prompts
 
@@ -993,7 +993,7 @@ None.
 
 #### Returns
 
-Array of spaces with `id`, `name`, `description`.
+Array of spaces with `id`, `name`, `organizationId`, `created` and, where available, `scope` and `access`.
 
 #### Example Prompts
 
@@ -1009,7 +1009,7 @@ List agent groups
 
 ### get_space
 
-Get details of a specific space including its description and settings.
+Get details of a specific space, including its settings.
 
 #### Parameters
 
@@ -1019,7 +1019,7 @@ Get details of a specific space including its description and settings.
 
 #### Returns
 
-Space details with `id`, `name`, `description`, `organizationId`, `created`, `updated`.
+Space details with `id`, `name`, `organizationId`, `created` and, where available, `scope` and `access`.
 
 #### Example Prompts
 
@@ -1096,7 +1096,7 @@ Find a space by its name. Use when user mentions a space by name instead of ID.
 
 #### Returns
 
-Matching space with `id`, `name`, `description`.
+Matching space with `id`, `name`, `organizationId`, `created` and, where available, `scope` and `access`.
 
 #### Example Prompts
 
@@ -1151,14 +1151,14 @@ Get aggregate statistics about agent runs in a date range: counts of completed, 
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `startDate` | string | No | Start date in ISO 8601 format. Defaults to today. |
-| `endDate` | string | No | End date in ISO 8601 format. Defaults to today. |
-| `status` | string | No | Filter by run status: `'Failed'`, `'Completed'`, `'CompletedWithErrors'`, `'Running'`. |
+| `startDate` | string | No | Start of the range, ISO 8601 date or datetime (for example `'2026-01-15T08:00:00Z'`). Defaults to 24 hours before now. |
+| `endDate` | string | No | End of the range, ISO 8601 date. When given, the range runs to the end of that day. It must not be earlier than `startDate`, so with a datetime `startDate` give the following day or omit `endDate`: a date-only `endDate` on `startDate`'s own day is rejected. Defaults to now. |
+| `status` | string | No | Filter by run status name, for example `'Failed'`, `'Completed'`, `'Running'`. `Failed`/`Failure` are one filter, and so are `Completed`/`Success`. |
 | `includeDetails` | boolean | No | If `true`, includes `failedRunDetails` array with agent names and error messages. Default: `true`. |
 
 #### Returns
 
-`totalRuns`, `completedRuns`, `failedRuns`, `completedWithErrorsRuns`, `runningRuns`, `queuedRuns`, `stoppedRuns`. When `includeDetails` is `true`, also includes `failedRunDetails` with `agentId`, `agentName`, `runId`, `errorMessage`.
+`totalRuns`, `completedRuns`, `failedRuns`, `runningRuns`, `queuedRuns`, `stoppedRuns`, and `completedWithErrorsRuns`, which is always `0`. When `includeDetails` is `true`, also includes `failedRunDetails` with `agentId`, `agentName`, `runId`, `errorMessage`.
 
 #### Example Prompts
 
@@ -1211,7 +1211,7 @@ Get detailed diagnostics for a specific run, including error messages, possible 
 
 #### Returns
 
-`errorMessage`, `possibleCauses` (array of strings), `suggestedActions` (array of strings), `status`, `startTime`, `endTime`, `recordsExtracted`, `recordsExported`.
+`errorMessage`, `possibleCauses` (array of strings), `suggestedActions` (array of strings), `status` (numeric run status code), `startTime`, `endTime`, `runtimeSeconds`, and `stats` (`dataCount`, `exportCount`, `errorCount`, `pageCount`).
 
 #### Example Prompts
 
@@ -1239,7 +1239,7 @@ This is a shortcut for calling `get_agent_runs`, filtering for failures, then ca
 
 #### Returns
 
-`errorMessage`, `possibleCauses` (array of strings), `suggestedActions` (array of strings), `status`, `startTime`, `endTime`, `recordsExtracted`, `recordsExported`.
+`errorMessage`, `possibleCauses` (array of strings), `suggestedActions` (array of strings), `status` (numeric run status code), `startTime`, `endTime`, `runtimeSeconds`, and `stats` (`dataCount`, `exportCount`, `errorCount`, `pageCount`).
 
 Returns an informational message if the agent has no recent failed runs.
 
@@ -1266,12 +1266,15 @@ Show the last error for the Amazon scraper
 | 4 | Queuing | Waiting in queue |
 | 5 | Stopping | Shutting down |
 | 6 | Failure | Failed during execution |
-| 7 | Failed | Completed with failure |
+| 7 | Failed | Failed to launch |
 | 8 | Stopped | Manually stopped |
 | 9 | Completed | Finished successfully |
 | 10 | Success | Completed without errors |
 | 11 | Skipped | Skipped execution |
 | 12 | Waiting | Waiting for resources |
+| 13 | UpdatingDataSet | Updating a data set |
+
+On status filters, `Failure`/`Failed` and `Completed`/`Success` are one filter: either value returns both.
 
 ---
 
@@ -1333,7 +1336,7 @@ Poll the current status of an agent building session. Call this repeatedly until
 
 > **Note:** Stop polling on any of: `completed`, `ready`, `error`, `cancelled`. The session tears down automatically after reaching a terminal status.
 
-> **Polling cadence:** Build duration is highly variable (seconds to several minutes). If the user has expressed a polling preference (e.g., *"poll quickly"*, *"be patient"*, *"every N seconds"*), honor it. Otherwise default to a moderate cadence with backoff (e.g., start ~5s, back off to ~15–30s) and avoid waiting longer than ~30s between polls so the user gets timely feedback when the build completes. The [`build-agent-from-prompt`](prompts-reference.md#build-agent-from-prompt) and [`inspect-agent-draft`](prompts-reference.md#inspect-agent-draft) prompts accept a `pollingPreference` argument that gets forwarded into the model's instructions.
+> **Polling cadence:** Build duration is highly variable (seconds to several minutes). If the user has expressed a polling preference (e.g., *"poll quickly"*, *"be patient"*, *"every N seconds"*), honor it. Otherwise default to a moderate cadence with backoff (e.g., start ~5s, back off to ~15–30s) and avoid waiting longer than ~30s between polls so the user gets timely feedback when the build completes. The [`inspect-agent-draft`](prompts-reference.md#inspect-agent-draft) prompt accepts a `pollingPreference` argument that gets forwarded into the model's instructions.
 
 #### Parameters
 

@@ -1,0 +1,5 @@
+# pnpm runs no dependency install scripts unless they are listed here.
+# true: the package downloads or checks a native binary the build, tests or lint need.
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true

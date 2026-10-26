@@ -1,0 +1,12 @@
+{
+  "startDate": "2026-09-30T14:03:11.123456Z",
+  "endDate": "2026-09-30T14:05:42.654321Z",
+  "totalRuns": 3,
+  "completedRuns": 2,
+  "failedRuns": 0,
+  "completedWithErrorsRuns": 0,
+  "runningRuns": 1,
+  "queuedRuns": 0,
+  "stoppedRuns": 0,
+  "failedRunDetails": null
+}

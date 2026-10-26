@@ -2,13 +2,23 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SequentumApiClient } from "./api-client.js";
 import { AuthenticationError, ApiRequestError, RateLimitError } from "./types.js";
 
+/** A client that authenticates the way the HTTP transport does: with a Bearer token. */
+function authedClient(
+  baseUrl: string,
+  requestTimeoutMs?: number,
+  maxRetries?: number
+): SequentumApiClient {
+  const client = new SequentumApiClient(baseUrl, requestTimeoutMs, maxRetries);
+  client.setAccessToken("test-token");
+  return client;
+}
+
 describe("SequentumApiClient", () => {
   let client: SequentumApiClient;
   const mockBaseUrl = "https://api.example.com";
-  const mockApiKey = "sk-test-key-123";
 
   beforeEach(() => {
-    client = new SequentumApiClient(mockBaseUrl, mockApiKey);
+    client = authedClient(mockBaseUrl);
     vi.stubGlobal("fetch", vi.fn());
   });
 
@@ -18,16 +28,13 @@ describe("SequentumApiClient", () => {
 
   describe("constructor", () => {
     it("should remove trailing slash from baseUrl", () => {
-      const clientWithSlash = new SequentumApiClient(
-        "https://api.example.com/",
-        mockApiKey
-      );
+      const clientWithSlash = new SequentumApiClient("https://api.example.com/");
       // Access private property for testing
       expect((clientWithSlash as any).baseUrl).toBe("https://api.example.com");
     });
 
-    it("should store the API key", () => {
-      expect((client as any).apiKey).toBe(mockApiKey);
+    it("should start with no access token", () => {
+      expect(new SequentumApiClient(mockBaseUrl).getAccessToken()).toBeNull();
     });
 
     it("should use default timeout of 30000ms", () => {
@@ -35,8 +42,13 @@ describe("SequentumApiClient", () => {
     });
 
     it("should accept custom timeout", () => {
-      const customClient = new SequentumApiClient(mockBaseUrl, mockApiKey, 60000);
+      const customClient = authedClient(mockBaseUrl, 60000);
       expect((customClient as any).requestTimeoutMs).toBe(60000);
+    });
+
+    it("should accept custom maxRetries as the third argument", () => {
+      const customClient = new SequentumApiClient(mockBaseUrl, 30000, 5);
+      expect((customClient as any).maxRetries).toBe(5);
     });
   });
 
@@ -60,7 +72,7 @@ describe("SequentumApiClient", () => {
         "https://api.example.com/api/v1/agent/all",
         expect.objectContaining({
           headers: expect.objectContaining({
-            Authorization: "ApiKey sk-test-key-123",
+            Authorization: "Bearer test-token",
             "Content-Type": "application/json",
           }),
         })
@@ -925,7 +937,7 @@ describe("SequentumApiClient", () => {
   describe("timeout handling", () => {
     it("should throw timeout error when request is aborted", async () => {
       // Create client with very short timeout and no retries
-      const quickClient = new SequentumApiClient(mockBaseUrl, mockApiKey, 10, 0);
+      const quickClient = authedClient(mockBaseUrl, 10, 0);
 
       // Mock fetch to simulate abort
       const abortError = new Error("The operation was aborted");
@@ -939,7 +951,7 @@ describe("SequentumApiClient", () => {
 
     it("should include endpoint in timeout error message", async () => {
       // maxRetries=0 so no retries
-      const quickClient = new SequentumApiClient(mockBaseUrl, mockApiKey, 5, 0);
+      const quickClient = authedClient(mockBaseUrl, 5, 0);
 
       const abortError = new Error("The operation was aborted");
       abortError.name = "AbortError";
@@ -966,6 +978,112 @@ describe("SequentumApiClient", () => {
           signal: expect.any(AbortSignal),
         })
       );
+    });
+  });
+
+  // SE4-4389: a synchronous start waits on the server for up to `timeout` seconds, so the
+  // client must not give up at its default 30 s first.
+  describe("synchronous start timeout", () => {
+    /**
+     * A fetch that answers after `answerAfterMs` (never, for Infinity), or fails like fetch
+     * does when its signal aborts.
+     */
+    function fetchAnsweringAfter(answerAfterMs: number) {
+      vi.mocked(fetch).mockImplementationOnce(
+        (_url, init) =>
+          new Promise<Response>((resolve, reject) => {
+            const answer = () =>
+              resolve({
+                ok: true,
+                status: 200,
+                headers: new Headers({ "content-type": "application/json" }),
+                json: async () => ({ data: "scraped" }),
+              } as Response);
+            // setTimeout treats a delay above 2^31-1 ms as 1 ms, so "never" must set no timer.
+            const timer = Number.isFinite(answerAfterMs) ? setTimeout(answer, answerAfterMs) : undefined;
+            init?.signal?.addEventListener("abort", () => {
+              clearTimeout(timer);
+              const abortError = new Error("The operation was aborted");
+              abortError.name = "AbortError";
+              reject(abortError);
+            });
+          })
+      );
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("should wait past 30 s for a synchronous start", async () => {
+      fetchAnsweringAfter(45_000);
+
+      const result = client.startAgent(42, { isRunSynchronously: true, timeout: 60 });
+      await vi.advanceTimersByTimeAsync(45_000);
+
+      await expect(result).resolves.toEqual({ data: "scraped" });
+    });
+
+    it("should give a synchronous start its timeout plus 30 s", async () => {
+      fetchAnsweringAfter(Infinity);
+
+      const result = client.startAgent(42, { isRunSynchronously: true, timeout: 120 });
+      const outcome = result.then(
+        () => "resolved",
+        (error: Error) => error.message
+      );
+      await vi.advanceTimersByTimeAsync(149_999);
+      let settled: string | undefined;
+      void outcome.then((value) => (settled = value));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(outcome).resolves.toBe(
+        "Request timeout after 150000ms: /api/v1/agent/42/start"
+      );
+    });
+
+    it("should use 60 s plus 30 s when a synchronous start has no timeout", async () => {
+      fetchAnsweringAfter(89_000);
+
+      const result = client.startAgent(42, { isRunSynchronously: true });
+      await vi.advanceTimersByTimeAsync(89_000);
+
+      await expect(result).resolves.toEqual({ data: "scraped" });
+    });
+
+    it("should keep the 30 s client timeout for an asynchronous start", async () => {
+      fetchAnsweringAfter(45_000);
+
+      const result = client.startAgent(42, {});
+      const outcome = result.then(
+        () => "resolved",
+        (error: Error) => error.message
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      await expect(outcome).resolves.toBe(
+        "Request timeout after 30000ms: /api/v1/agent/42/start"
+      );
+    });
+
+    it("should let a single request override the client timeout", async () => {
+      fetchAnsweringAfter(Infinity);
+      const noRetryClient = authedClient(mockBaseUrl, 30_000, 0);
+
+      let settled: string | undefined;
+      void (noRetryClient as any).request("/api/v1/agent/7", {}, 5_000).then(
+        () => (settled = "resolved"),
+        (error: Error) => (settled = error.message)
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(settled).toBe("Request timeout after 5000ms: /api/v1/agent/7");
     });
   });
 
@@ -2173,35 +2291,23 @@ describe("SequentumApiClient", () => {
   });
 
   describe("authentication error handling", () => {
-    it("should throw AuthenticationError when no auth configured", async () => {
-      const clientNoAuth = new SequentumApiClient(mockBaseUrl, null);
-      // No access token set either
+    it("should throw AuthenticationError without sending a request when no access token is set", async () => {
+      const clientNoAuth = new SequentumApiClient(mockBaseUrl);
 
       await expect(clientNoAuth.getAllAgents()).rejects.toThrow(AuthenticationError);
+      expect(fetch).not.toHaveBeenCalled();
     });
 
     it("should throw AuthenticationError with descriptive message", async () => {
-      const clientNoAuth = new SequentumApiClient(mockBaseUrl, null);
+      const clientNoAuth = new SequentumApiClient(mockBaseUrl);
 
       await expect(clientNoAuth.getAllAgents()).rejects.toThrow(
-        "No authentication configured"
+        "No OAuth2 access token set."
       );
     });
 
-    it("should not throw AuthenticationError when API key is provided", async () => {
-      vi.mocked(fetch).mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        headers: new Headers({ "content-type": "application/json" }),
-        json: async () => [],
-      } as Response);
-
-      // Client with API key should work
-      await expect(client.getAllAgents()).resolves.not.toThrow();
-    });
-
     it("should not throw AuthenticationError when access token is set", async () => {
-      const clientWithToken = new SequentumApiClient(mockBaseUrl, null);
+      const clientWithToken = new SequentumApiClient(mockBaseUrl);
       clientWithToken.setAccessToken("test-bearer-token");
 
       vi.mocked(fetch).mockResolvedValueOnce({
@@ -2223,7 +2329,6 @@ describe("SequentumApiClient", () => {
 describe("rate limiting and retry", () => {
   let client: SequentumApiClient;
   const mockBaseUrl = "https://api.example.com";
-  const mockApiKey = "sk-test-key-123";
 
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
@@ -2235,7 +2340,7 @@ describe("rate limiting and retry", () => {
 
   it("should throw RateLimitError on 429 response", async () => {
     // maxRetries=0 so it throws immediately
-    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 0);
+    client = authedClient(mockBaseUrl, 30000, 0);
 
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: false,
@@ -2260,7 +2365,7 @@ describe("rate limiting and retry", () => {
 
   it("should retry GET requests on 429 and succeed", async () => {
     // maxRetries=2, so up to 3 attempts
-    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 2);
+    client = authedClient(mockBaseUrl, 30000, 2);
     // Override sleep to be instant for testing
     (client as any).baseDelayMs = 0;
     (client as any).maxDelayMs = 0;
@@ -2288,7 +2393,7 @@ describe("rate limiting and retry", () => {
   });
 
   it("should NOT retry POST requests on 429", async () => {
-    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 3);
+    client = authedClient(mockBaseUrl, 30000, 3);
 
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: false,
@@ -2304,7 +2409,7 @@ describe("rate limiting and retry", () => {
   });
 
   it("should retry GET requests on 502 Bad Gateway", async () => {
-    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 2);
+    client = authedClient(mockBaseUrl, 30000, 2);
     (client as any).baseDelayMs = 0;
     (client as any).maxDelayMs = 0;
 
@@ -2328,7 +2433,7 @@ describe("rate limiting and retry", () => {
   });
 
   it("should retry GET requests on 503 Service Unavailable", async () => {
-    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 2);
+    client = authedClient(mockBaseUrl, 30000, 2);
     (client as any).baseDelayMs = 0;
     (client as any).maxDelayMs = 0;
 
@@ -2352,7 +2457,7 @@ describe("rate limiting and retry", () => {
   });
 
   it("should NOT retry on 401 Unauthorized (even for GET)", async () => {
-    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 3);
+    client = authedClient(mockBaseUrl, 30000, 3);
 
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: false,
@@ -2366,7 +2471,7 @@ describe("rate limiting and retry", () => {
   });
 
   it("should NOT retry on 404 Not Found (even for GET)", async () => {
-    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 3);
+    client = authedClient(mockBaseUrl, 30000, 3);
 
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: false,
@@ -2380,7 +2485,7 @@ describe("rate limiting and retry", () => {
   });
 
   it("should exhaust retries and throw the last error", async () => {
-    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 2);
+    client = authedClient(mockBaseUrl, 30000, 2);
     (client as any).baseDelayMs = 0;
     (client as any).maxDelayMs = 0;
 
@@ -2411,7 +2516,7 @@ describe("rate limiting and retry", () => {
   });
 
   it("should parse Retry-After header as numeric seconds", async () => {
-    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 0);
+    client = authedClient(mockBaseUrl, 30000, 0);
 
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: false,
@@ -2431,7 +2536,7 @@ describe("rate limiting and retry", () => {
   });
 
   it("should handle missing Retry-After header gracefully", async () => {
-    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 0);
+    client = authedClient(mockBaseUrl, 30000, 0);
 
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: false,
@@ -2451,7 +2556,7 @@ describe("rate limiting and retry", () => {
   });
 
   it("should retry DELETE requests (idempotent) on 429", async () => {
-    client = new SequentumApiClient(mockBaseUrl, mockApiKey, 30000, 2);
+    client = authedClient(mockBaseUrl, 30000, 2);
     (client as any).baseDelayMs = 0;
     (client as any).maxDelayMs = 0;
 
@@ -2664,10 +2769,9 @@ describe("AuthenticationError", () => {
 describe("SequentumApiClient - Agent Builder", () => {
   let client: SequentumApiClient;
   const mockBaseUrl = "https://api.example.com";
-  const mockApiKey = "sk-test-key-123";
 
   beforeEach(() => {
-    client = new SequentumApiClient(mockBaseUrl, mockApiKey);
+    client = authedClient(mockBaseUrl);
     vi.stubGlobal("fetch", vi.fn());
   });
 

@@ -47,15 +47,11 @@ const DEFAULT_MAX_DELAY_MS = 30000;
 /** HTTP status codes that are safe to retry on idempotent requests */
 const RETRYABLE_STATUS_CODES = new Set([429, 502, 503, 504]);
 
+/** Extra client time on a synchronous start, on top of its server-side wait, for run creation and the round trip */
+const SYNC_START_TIMEOUT_MARGIN_SEC = 30;
+
 export class SequentumApiClient {
   private baseUrl: string;
-  /**
-   * @deprecated Only the stdio transport supplies an API key (`src/index.ts` passes
-   * `SEQUENTUM_API_KEY`); the HTTP transport constructs the client with `null` and
-   * authenticates via {@link SequentumApiClient.setAccessToken}. Deprecated with the stdio
-   * path and due for removal with it, leaving the Bearer branch as the only credential.
-   */
-  private apiKey: string | null;
   private accessToken: string | null = null;
   private requestTimeoutMs: number;
   private maxRetries: number;
@@ -63,22 +59,18 @@ export class SequentumApiClient {
   private maxDelayMs: number;
 
   /**
-   * Create a new Sequentum API client
+   * Create a new Sequentum API client. Requests authenticate with the OAuth2 access token
+   * set via {@link SequentumApiClient.setAccessToken}.
    * @param baseUrl - The base URL of the Sequentum API (e.g., https://dashboard.sequentum.com)
-   * @param apiKey - The API key (sk-...) for authentication (optional if using OAuth2).
-   *   Deprecated: supplied only by the deprecated stdio path. TypeScript has no
-   *   per-parameter `@deprecated`, so the tag sits on the `apiKey` field instead.
    * @param requestTimeoutMs - Request timeout in milliseconds (default: 30000)
    * @param maxRetries - Maximum number of retries for transient failures (default: 3)
    */
   constructor(
     baseUrl: string,
-    apiKey: string | null = null,
     requestTimeoutMs: number = 30000,
     maxRetries: number = DEFAULT_MAX_RETRIES
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
-    this.apiKey = apiKey;
     this.requestTimeoutMs = requestTimeoutMs;
     this.maxRetries = maxRetries;
     this.baseDelayMs = DEFAULT_BASE_DELAY_MS;
@@ -101,17 +93,13 @@ export class SequentumApiClient {
   }
 
   /**
-   * Build the Authorization header based on available credentials
+   * Build the Authorization header from the OAuth2 access token
    */
   private getAuthorizationHeader(): string {
     if (this.accessToken) {
       return `Bearer ${this.accessToken}`;
     }
-    if (this.apiKey) {
-      // Deprecated stdio path -- see the `apiKey` field. Removed with stdio, leaving Bearer.
-      return `ApiKey ${this.apiKey}`;
-    }
-    throw new AuthenticationError("No authentication configured. Set either an API key or OAuth2 access token.");
+    throw new AuthenticationError("No OAuth2 access token set.");
   }
 
   // ==========================================
@@ -253,6 +241,7 @@ export class SequentumApiClient {
    *
    * @param endpoint - API path (e.g. "/api/v1/agent/all")
    * @param options - fetch() options (method, body, etc.)
+   * @param timeoutMs - Per-attempt timeout in milliseconds (default: the client's request timeout)
    * @returns The raw Response object on success
    * @throws ApiRequestError (or subclass) on HTTP errors after retries are exhausted
    * @throws AuthenticationError if no credentials are configured
@@ -260,7 +249,8 @@ export class SequentumApiClient {
    */
   private async fetchWithRetry(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    timeoutMs: number = this.requestTimeoutMs
   ): Promise<Response> {
     const url = `${this.baseUrl}${endpoint}`;
     const headers: Record<string, string> = {
@@ -280,7 +270,7 @@ export class SequentumApiClient {
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
         const response = await fetch(url, {
@@ -317,7 +307,7 @@ export class SequentumApiClient {
           throw error;
         }
         if (error instanceof Error && error.name === "AbortError") {
-          const timeoutError = new Error(`Request timeout after ${this.requestTimeoutMs}ms: ${endpoint}`);
+          const timeoutError = new Error(`Request timeout after ${timeoutMs}ms: ${endpoint}`);
           // Retry timeouts on idempotent requests
           if (attempt < maxAttempts - 1) {
             lastError = timeoutError;
@@ -340,13 +330,14 @@ export class SequentumApiClient {
   /**
    * Make an authenticated request to the API and parse the JSON response.
    * Includes automatic retry for transient failures (429, 502, 503, 504) on
-   * idempotent methods.
+   * idempotent methods. `timeoutMs` overrides the client's request timeout for this call.
    */
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    timeoutMs?: number
   ): Promise<T> {
-    const response = await this.fetchWithRetry(endpoint, options);
+    const response = await this.fetchWithRetry(endpoint, options, timeoutMs);
 
     // Handle redirect for file downloads
     if (response.redirected) {
@@ -520,6 +511,12 @@ export class SequentumApiClient {
     agentId: number,
     request: StartAgentRequest
   ): Promise<AgentRunApiModel | string> {
+    const timeoutSec = request.timeout ?? 60;
+    // A synchronous start holds the request open while the run waits for a server and runs,
+    // so the client must outlast the server-side wait instead of giving up at its default.
+    const timeoutMs = request.isRunSynchronously
+      ? (timeoutSec + SYNC_START_TIMEOUT_MARGIN_SEC) * 1000
+      : undefined;
     return this.request<AgentRunApiModel | string>(
       `/api/v1/agent/${agentId}/start`,
       {
@@ -530,14 +527,15 @@ export class SequentumApiClient {
           ParallelExport: request.parallelExport ?? "Combined",
           ProxyPoolId: request.proxyPoolId,
           InputParameters: request.inputParameters,
-          Timeout: request.timeout ?? 60,
+          Timeout: timeoutSec,
           IsExclusive: request.isExclusive ?? true,
           IsWaitOnFailure: request.isWaitOnFailure ?? false,
           IsRunSynchronously: request.isRunSynchronously ?? false,
           LogLevel: request.logLevel ?? "Info",
           LogMode: request.logMode ?? "Text",
         }),
-      }
+      },
+      timeoutMs
     );
   }
 

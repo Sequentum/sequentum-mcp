@@ -1,0 +1,7 @@
+{
+  "agents": [],
+  "totalRecordCount": 0,
+  "totalCost": 0,
+  "startDate": "2026-09-30T14:03:11.123456Z",
+  "endDate": "2026-09-30T14:05:42.654321Z"
+}

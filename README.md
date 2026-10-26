@@ -114,45 +114,10 @@ Use the server URL `https://mcp.sequentum.com/mcp` in your client's MCP configur
 
 The server supports [Client ID Metadata Documents (CIMD)](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document-00) as the preferred client identification method, with [Dynamic Client Registration (RFC 7591)](https://datatracker.ietf.org/doc/html/rfc7591) as a fallback. MCP clients that support CIMD (such as Cursor) can use their own URL as a `client_id` without any prior registration.
 
-## Deprecated: stdio and API-key auth
+## Local stdio mode (removed)
 
-> **Deprecated:** Running the MCP server locally over the **stdio** transport,
-> authenticated with `SEQUENTUM_API_KEY`, is deprecated and will be removed in a future
-> release. The `sequentum-mcp` npm package is deprecated along with it. Connect to
-> `https://mcp.sequentum.com/mcp` over HTTP with OAuth 2.1 instead — see
-> [Set Up Your Client](#set-up-your-client).
->
-> This does not affect Sequentum API keys themselves, which remain fully supported for
-> the [REST API](https://docs.sequentum.com/api-reference/authentication).
-
-The MCP [authorization specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
-directs stdio implementations not to use OAuth, and to take credentials from the
-environment instead. Moving the server to OAuth 2.1 therefore retires the stdio path
-along with it — the two deprecations are one decision, not two.
-
-If you are running this configuration today, it keeps working — on Node 20 or later:
-
-```json
-{
-  "mcpServers": {
-    "sequentum": {
-      "command": "npx",
-      "args": ["-y", "sequentum-mcp"],
-      "env": {
-        "SEQUENTUM_API_KEY": "sk-your-api-key-here"
-      }
-    }
-  }
-}
-```
-
-The API key is created in the [Sequentum Control Center](https://dashboard.sequentum.com)
-under **Settings** > **API Keys**, and `SEQUENTUM_API_URL` overrides the Sequentum
-instance it connects to (default `https://dashboard.sequentum.com`).
-
-To migrate, delete that block and follow the setup instructions for your client above.
-If you need Sequentum MCP somewhere that cannot reach `mcp.sequentum.com`, contact
-support — there is no supported self-hosted deployment.
+Running the server locally over stdio with `SEQUENTUM_API_KEY` (`npx sequentum-mcp`) was removed in 3.0.0.
+Connect to `https://mcp.sequentum.com/mcp` instead — see [Set Up Your Client](#set-up-your-client). Sequentum API keys still work for the [REST API](https://docs.sequentum.com/api-reference/authentication).
 
 ## Example Usage
 
@@ -235,6 +200,20 @@ The Sequentum MCP Server provides 43 tools across 9 categories for interacting w
 
 <!-- END AUTO GENERATED TOOLS -->
 
+## Structured output
+
+36 of the 43 tools declare an `outputSchema` and return `structuredContent` next to the usual
+text block (MCP 2026-07-28). The text block is unchanged, so clients that ignore structured
+content see no difference. The seven acknowledgement-only tools (`stop_agent`, `kill_agent`,
+`delete_run`, `restore_agent_version`, `delete_agent_schedule`, `enable_agent_schedule`,
+`disable_agent_schedule`) return text only.
+
+- `start_agent` returns `{ "run": … }` in async mode and `{ "data": … }` in sync mode.
+- Tools that return a list (`list_spaces`, `get_space_agents`, `list_agent_schedules`,
+  `get_scheduled_runs`, `get_agent_versions`, `get_run_files`) have an array schema. Clients on a
+  2025 protocol revision receive it wrapped as `{ "result": [...] }`, as the SDK projects it.
+- Status-like fields are numeric codes; their meanings are in each schema's descriptions.
+
 ## Available Prompts
 
 The server includes 9 reusable prompt templates that guide the AI through common multi-step workflows. See the [Prompts Reference](./docs/prompts-reference.md) for detailed documentation.
@@ -293,7 +272,7 @@ The server exposes 18 read-only resources (7 static + 11 templates) that AI clie
 
 ### Verifying scope enforcement end to end
 
-`npm run probe -- --env qa --mode log-only` runs the real OAuth flow against QA (browser login
+`pnpm run probe --env qa --mode log-only` runs the real OAuth flow against QA (browser login
 and consent, loopback callback, PKCE), then calls the V1 API directly and through this server
 with tokens of three scope profiles and checks CloudWatch for the Control Center's scope-check
 lines. See [docs/oauth-scope-probe.md](./docs/oauth-scope-probe.md).
@@ -303,9 +282,8 @@ lines. See [docs/oauth-scope-probe.md](./docs/oauth-scope-probe.md).
 |-------|----------|
 | OAuth login not opening | Ensure your client supports OAuth and Streamable HTTP. Try restarting the client. For Claude.ai and Claude Desktop, connect from the [connector directory](#claudeai-and-claude-desktop) rather than a config file. |
 | Connection refused | Verify the URL is `https://mcp.sequentum.com/mcp` and check your network connection. |
-| `SEQUENTUM_API_KEY required` | [Deprecated](#deprecated-stdio-and-api-key-auth) local stdio mode only. Add your API key to the `env` section of the MCP config, or migrate to the hosted server. |
-| `API Error 401: Unauthorized` | Your API key or OAuth token is invalid or expired. Re-authenticate or generate a new key. |
-| `Insufficient Scope: This action requires the "…" scope` | Disconnect and reconnect the Sequentum MCP server, then approve the requested permissions, to re-authorize with the scope named in the message. If it recurs right after reconnecting, the client may have cached a stale scope list — check the connector's OAuth settings. |
+| `API Error 401: Unauthorized` | Your OAuth session is invalid or was revoked. Disconnect and reconnect the Sequentum MCP server to sign in again. |
+| Asked to re-authorize, or `Insufficient Scope: This action requires the "…" scope` | The connection was not granted a permission the tool needs. The server answers such a call with an HTTP 403 `insufficient_scope` challenge naming the scopes required, and clients that support step-up authorization ask you to approve them. Otherwise, or if you see the `Insufficient Scope` message, disconnect and reconnect the Sequentum MCP server and approve the requested permissions. If it recurs right after reconnecting, the client may have cached a stale scope list — check the connector's OAuth settings. |
 | `API Error 404: Not Found` | The agent, run, or file doesn't exist, or you don't have access to it. |
 | `API Error 429: Too Many Requests` | Rate limit exceeded. Wait a moment and try again. |
 
@@ -313,12 +291,11 @@ For more troubleshooting help, see the [Troubleshooting Guide](./docs/troublesho
 
 ## HTTP Mode Configuration
 
-The hosted server at `mcp.sequentum.com` runs the Streamable HTTP transport
-(`TRANSPORT_MODE=http`) behind its own deployment configuration. The following
-environment variables tune caching, rate limiting, and proxy trust for that transport;
-they have no effect in the deprecated stdio mode. They are documented for readers of
-this source — there is no supported self-hosted deployment, and no container image is
-published.
+The hosted server at `mcp.sequentum.com` runs the Streamable HTTP transport, the only
+transport as of 3.0.0, behind its own deployment configuration. The following
+environment variables tune caching, rate limiting, and proxy trust for that transport.
+They are documented for readers of this source — there is no supported self-hosted
+deployment, and no container image is published.
 
 **HTTP mode is stateless as of 2.0.0.** There is no `Mcp-Session-Id` header and no
 per-client session state on the server: every request is handled independently by a
@@ -329,7 +306,6 @@ down. `MAX_SESSIONS` is no longer read.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TRANSPORT_MODE` | `stdio` | Set to `http` to run the Streamable HTTP transport. The `stdio` default is [deprecated](#deprecated-stdio-and-api-key-auth) and will be removed in a future release; the hosted server sets `http`. |
 | `PORT` | `3000` | HTTP server port. |
 | `SEQUENTUM_API_URL` | `https://dashboard.sequentum.com` | Base URL of the Sequentum API this server proxies to. |
 | `SEQUENTUM_OAUTH_ISSUER` | Value of `SEQUENTUM_API_URL` | This deployment's OAuth issuer identifier, advertised in `/.well-known/oauth-protected-resource`. Must be an absolute `https` URL with no query, fragment or userinfo, and must match the authorization server's `issuer` exactly. Set it only when the API base URL and the public OAuth issuer differ; a malformed value refuses to start. |
@@ -376,6 +352,7 @@ When the MCP server is accessed from a browser (e.g. the Claude web app or the C
 
 - `https://claude.ai`, `https://claude.com`, and all subdomains (e.g. `team.claude.ai`)
 - `https://chatgpt.com`, `https://platform.openai.com`, and all subdomains under `chatgpt.com` (e.g. `connector.chatgpt.com`)
+- `https://glama.ai` and all subdomains (for Glama's browser-based MCP inspector)
 - `https://dashboard.sequentum.com`
 - `https://mcp.sequentum.com`
 - `http://localhost:<port>`, `http://127.0.0.1:<port>`, and `http://[::1]:<port>` when `DEBUG=1`
@@ -389,6 +366,27 @@ ALLOWED_ORIGINS="https://my-dashboard.example.com,https://other.example.com"
 These origins are **appended** to the defaults — Claude, ChatGPT, and Sequentum access is preserved.  Wildcards and regular expressions are not supported via the env var; if you need a subdomain wildcard, add a `RegExp` entry directly in `src/server/cors.ts`.
 
 > **Note:** `Origin` matching is case-sensitive and does not include a path or query string.  Native MCP clients (Cursor, Claude Desktop, Claude Code) send no `Origin` header and are not affected by this allowlist.
+
+## Development
+
+This repository uses [pnpm](https://pnpm.io), not npm. `npm install` is refused on purpose.
+You need Node 22 or newer (`.nvmrc` pins 24, which the Docker image runs). Corepack installs
+the pnpm version named in `package.json`. It ships with Node 22 and 24; on Node 25 or newer,
+install it first with `npm install -g corepack`:
+
+```bash
+corepack enable
+pnpm install
+pnpm test
+pnpm run build
+```
+
+pnpm runs no dependency install scripts unless the package is listed under `allowBuilds` in
+`pnpm-workspace.yaml`. If `pnpm install` reports an ignored build script after a dependency
+change, add the package there: `true` if it needs the script to work, `false` otherwise.
+
+Arguments go straight after the script name, without npm's `--`
+(`pnpm run probe --env qa --mode log-only`). pnpm passes a `--` on to the script.
 
 ## Privacy Policy
 

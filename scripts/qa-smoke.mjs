@@ -7,7 +7,7 @@
  * public contract: the landing page, health, the two well-known documents, and
  * the shape of the 401 challenge. That is exactly what this checks.
  *
- * Imports the built module, so run `npm run build` first.
+ * Imports the built module, so run `pnpm run build` first.
  */
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,7 @@ const DEFAULT_BASE = "https://mcp-qa.sequentum.com";
 
 const built = join(ROOT, "dist", "utils", "deployment-checks.js");
 if (!existsSync(built)) {
-  console.error("dist/utils/deployment-checks.js not found — run `npm run build` first.");
+  console.error("dist/utils/deployment-checks.js not found — run `pnpm run build` first.");
   process.exit(1);
 }
 const { checkDeployment } = await import(built);

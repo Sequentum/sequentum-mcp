@@ -1,0 +1,8 @@
+{
+  "status": "error",
+  "agentId": null,
+  "agentName": null,
+  "error": "Build failed. Please review your prompt and try again.",
+  "agentElapsedSeconds": 12,
+  "browserIoSeconds": null
+}

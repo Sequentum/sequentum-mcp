@@ -1,0 +1,4 @@
+Download URL:
+https://files.example.com/output.csv?sig=abc
+
+Note: This URL is temporary and will expire.

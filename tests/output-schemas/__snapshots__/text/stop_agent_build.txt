@@ -1,0 +1,4 @@
+{
+  "stopped": true,
+  "sessionId": "sess-0001"
+}

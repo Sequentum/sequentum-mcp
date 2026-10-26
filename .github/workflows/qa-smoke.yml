@@ -22,18 +22,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Installs the pnpm version named in package.json's packageManager field.
+      # Must run before setup-node, whose pnpm cache needs pnpm on PATH.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
+          node-version: 24
+          cache: 'pnpm'
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       # The smoke script imports the built assertion module from dist/.
       - name: Build
-        run: npm run build
+        run: pnpm run build
 
       - name: Check deployed surface
-        run: npm run smoke:deployment -- "${{ inputs.base_url || 'https://mcp-qa.sequentum.com' }}"
+        run: pnpm run smoke:deployment "${{ inputs.base_url || 'https://mcp-qa.sequentum.com' }}"

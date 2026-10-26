@@ -16,7 +16,8 @@ import { renderLandingPage } from "./landing-page.js";
 import { MCP_RATE_LIMIT_MAX, MCP_RATE_LIMIT_WINDOW_MS, RATE_LIMIT_ERROR_CODE } from "./constants.js";
 import { createJwksCache, type JwksKeySource } from "../utils/jwks-cache.js";
 import { createResourceScopesSource, type ResourceScopesSource } from "../utils/resource-scopes.js";
-import { validateToken } from "../utils/token-validator.js";
+import { validateToken, type Claims } from "../utils/token-validator.js";
+import type { AuthInfo } from "@modelcontextprotocol/server";
 import { createSequentumMcpHandler, loggable } from "./mcp-handler.js";
 import glamaClaim from "./well-known/glama.json" with { type: "json" };
 
@@ -254,9 +255,32 @@ async function passesAuthGate(req: Request, res: Response, keys: JwksKeySource):
     // Degraded to pass-through; the API stays the authority. A sustained run of
     // these means validation is silently off and needs attention.
     logAuthOutcome(req, "unverifiable", verdict.reason, verdict.kid);
+    return true;
   }
 
+  attachAuthInfo(req, token, verdict.claims);
   return true;
+}
+
+/**
+ * Hand a verified user token to the SDK as `req.auth`, which `toNodeHandler` forwards as
+ * `authInfo` so each tool's and resource's scope challenge can run before dispatch.
+ *
+ * Only `authorization_code` (user) tokens get one. The Control Center exempts
+ * client-credentials tokens from scope checks, and they may carry no `scope` claim at all,
+ * so challenging them would deny what the API allows. Without `req.auth` the challenge
+ * lets the request through, as it does on the unverifiable and REQUIRE_AUTH=false paths.
+ */
+function attachAuthInfo(req: Request & { auth?: AuthInfo }, token: string, claims: Claims): void {
+  if (claims.tokenType !== "authorization_code") return;
+  req.auth = {
+    token,
+    clientId: claims.clientId ?? "",
+    scopes: [...claims.scopes],
+    expiresAt: claims.exp,
+    // The same document the 401 challenge points at, so a client steps up against it.
+    resourceMetadataUrl: `${getMcpServerOrigin(req)}/.well-known/oauth-protected-resource`,
+  };
 }
 
 /**

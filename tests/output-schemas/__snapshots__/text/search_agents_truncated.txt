@@ -1,0 +1,17 @@
+{
+  "agents": [
+    {
+      "id": 101,
+      "name": "Shop prices",
+      "description": "Collects product prices",
+      "status": "Success",
+      "configType": 1,
+      "version": 4,
+      "lastActivity": "2026-09-30T14:05:42.654321Z"
+    }
+  ],
+  "returned": 1,
+  "limit": 1,
+  "truncated": true,
+  "note": "This result was capped at the limit, so more agents may match than are listed. Do NOT count these to answer 'how many agents match' - call get_agent_search_count for the exact number, or raise maxRecords (max 1000)."
+}

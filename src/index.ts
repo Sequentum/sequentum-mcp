@@ -1,61 +1,45 @@
-#!/usr/bin/env node
-
 /**
  * Sequentum MCP Server
  *
  * A Model Context Protocol (MCP) server that enables AI assistants to interact
  * with the Sequentum web scraping platform.
  *
- * Supports two transport modes:
+ * Runs the Streamable HTTP transport for Claude Connectors (claude.ai, Claude Desktop)
+ * and other remote MCP clients, which connect to https://mcp.sequentum.com/mcp. The
+ * stdio transport and SEQUENTUM_API_KEY authentication were removed in 3.0.0.
  *
- * 1. STDIO MODE (default, DEPRECATED) - Local development, authenticated by API key.
- *    Deprecated together with the `sequentum-mcp` npm package and scheduled for removal
- *    in a future release; the MCP authorization specification directs stdio
- *    implementations away from OAuth, so moving to OAuth 2.1 retires this path.
- *    Connect to https://mcp.sequentum.com/mcp over HTTP instead.
- *    Environment Variables:
- *      SEQUENTUM_API_URL - Base URL of the Sequentum API (default: https://dashboard.sequentum.com)
- *      SEQUENTUM_API_KEY - Your API key (required, format: sk-...)
- *      DEBUG - Set to '1' for debug logging
+ * Environment Variables:
+ *   PORT - HTTP server port (default: 3000)
+ *   HOST - HTTP server host (default: 0.0.0.0)
+ *   SEQUENTUM_API_URL - Base URL of the Sequentum API (default: https://dashboard.sequentum.com)
+ *   SEQUENTUM_OAUTH_ISSUER - This deployment's OAuth issuer identifier, advertised in
+ *                  /.well-known/oauth-protected-resource and used as the redirect target
+ *                  for /.well-known/oauth-authorization-server. Defaults to
+ *                  SEQUENTUM_API_URL. Must be an absolute https URL with no query,
+ *                  fragment or userinfo, and must match the authorization server's own
+ *                  issuer exactly. A malformed value refuses to start.
+ *   DEBUG - Set to '1' for debug logging
+ *   REQUIRE_AUTH - Set to 'false' to bypass OAuth for testing (limited use: allows
+ *                  connecting to MCP server but tools will fail without valid tokens)
+ *   OPENAI_APPS_CHALLENGE_TOKEN - Token provided by OpenAI during ChatGPT App domain
+ *                  verification. Served at /.well-known/openai-apps-challenge as
+ *                  text/plain (200). Returns 404 when unset. Only needed during the
+ *                  submission flow; safe to unset afterwards.
+ *   LIST_CACHE_TTL_MS - Cache-hint freshness (ms) advertised on list-shaped results
+ *                  (tools/list, prompts/list, resources/list,
+ *                  resources/templates/list) and server/discover.
+ *   MCP_RATE_LIMIT_WINDOW_MS - Rate-limit window (ms) for the /mcp endpoint.
+ *   MCP_RATE_LIMIT_MAX - Max requests per window per IP for the /mcp endpoint.
+ *   TRUST_PROXY - Express 'trust proxy' setting: 'true'/'false', a hop count, or a
+ *                  comma-separated CIDR/IP allowlist of trusted reverse proxies.
+ *   ALLOWED_ORIGINS - Comma-separated list of additional exact-match Origins to
+ *                  allow via CORS, appended to the built-in defaults.
  *
- * 2. HTTP MODE - For Claude Connectors (claude.ai, Claude Desktop)
- *    Environment Variables:
- *      TRANSPORT_MODE - Set to 'http' to enable HTTP mode
- *      PORT - HTTP server port (default: 3000)
- *      HOST - HTTP server host (default: 0.0.0.0)
- *      SEQUENTUM_API_URL - Base URL of the Sequentum API (default: https://dashboard.sequentum.com)
- *      SEQUENTUM_OAUTH_ISSUER - This deployment's OAuth issuer identifier, advertised in
- *                     /.well-known/oauth-protected-resource and used as the redirect target
- *                     for /.well-known/oauth-authorization-server. Defaults to
- *                     SEQUENTUM_API_URL. Must be an absolute https URL with no query,
- *                     fragment or userinfo, and must match the authorization server's own
- *                     issuer exactly. A malformed value refuses to start.
- *      DEBUG - Set to '1' for debug logging
- *      REQUIRE_AUTH - Set to 'false' to bypass OAuth for testing (limited use: allows
- *                     connecting to MCP server but tools will fail without valid tokens)
- *      OPENAI_APPS_CHALLENGE_TOKEN - Token provided by OpenAI during ChatGPT App domain
- *                     verification. Served at /.well-known/openai-apps-challenge as
- *                     text/plain (200). Returns 404 when unset. Only needed during the
- *                     submission flow; safe to unset afterwards.
- *      LIST_CACHE_TTL_MS - Cache-hint freshness (ms) advertised on list-shaped results
- *                     (tools/list, prompts/list, resources/list,
- *                     resources/templates/list) and server/discover.
- *      MCP_RATE_LIMIT_WINDOW_MS - Rate-limit window (ms) for the /mcp endpoint.
- *      MCP_RATE_LIMIT_MAX - Max requests per window per IP for the /mcp endpoint.
- *      TRUST_PROXY - Express 'trust proxy' setting: 'true'/'false', a hop count, or a
- *                     comma-separated CIDR/IP allowlist of trusted reverse proxies.
- *      ALLOWED_ORIGINS - Comma-separated list of additional exact-match Origins to
- *                     allow via CORS, appended to the built-in defaults.
- *
- *    Authentication: OAuth2 tokens are provided by Claude's infrastructure
- *    via the Authorization header on each request.
+ * Authentication: OAuth2 tokens are provided by Claude's infrastructure
+ * via the Authorization header on each request.
  */
 
 import { createRequire } from "module";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { SequentumApiClient } from "./api/api-client.js";
-import type { AuthMode } from "./api/types.js";
-import { createMcpServer } from "./server/handlers.js";
 import { startHttpServer } from "./server/http-server.js";
 import { resolveIssuer } from "./utils/issuer.js";
 
@@ -66,56 +50,18 @@ const { version } = require("../package.json") as { version: string };
 // Configuration from environment variables
 const DEFAULT_API_URL = "https://dashboard.sequentum.com";
 const API_BASE_URL = process.env.SEQUENTUM_API_URL || DEFAULT_API_URL;
-/**
- * @deprecated Read only by the stdio transport, which is deprecated together with
- * `SEQUENTUM_API_KEY` authentication and the `sequentum-mcp` npm package. HTTP mode
- * authenticates with OAuth 2.1 bearer tokens and never reads this. See the file header.
- */
-const API_KEY = process.env.SEQUENTUM_API_KEY;
 const DEBUG = process.env.DEBUG === "1";
-
-// Transport configuration
-// - "stdio": Local development (default). DEPRECATED — removal planned; see the header.
-// - "http": For Claude Connectors (claude.ai, Claude Desktop)
-const TRANSPORT_MODE = process.env.TRANSPORT_MODE || "stdio";
 const HTTP_PORT = parseInt(process.env.PORT || "3000", 10);
 const HTTP_HOST = process.env.HOST || "0.0.0.0";
 
-// Determine authentication mode based on transport
-// - stdio mode: Uses API Key (for local development and Claude Code)
-// - HTTP mode: Uses OAuth2 via Claude's infrastructure (for Claude Connectors)
-let authMode: AuthMode;
-
-if (TRANSPORT_MODE === "http") {
-  authMode = "oauth2";
-  if (DEBUG) {
-    console.error("[DEBUG] HTTP mode: OAuth2 tokens will be received via request headers");
-  }
-} else {
-  if (!API_KEY) {
-    console.error("Error: API Key required for stdio mode");
-    console.error('Set SEQUENTUM_API_KEY="sk-your-api-key-here"');
-    console.error("\nFor Claude Connectors (OAuth2), use HTTP mode:");
-    console.error('Set TRANSPORT_MODE="http"');
-    process.exit(1);
-  }
-  authMode = "apikey";
-  if (DEBUG) {
-    console.error("[DEBUG] Using API Key authentication");
-  }
-}
-
 // Debug: Log environment configuration (only when DEBUG=1)
 if (DEBUG) {
-  console.error(`[DEBUG] TRANSPORT_MODE = ${TRANSPORT_MODE}`);
   console.error(
     `[DEBUG] API_BASE_URL = ${API_BASE_URL}${!process.env.SEQUENTUM_API_URL ? " (default)" : ""}`
   );
-  console.error(`[DEBUG] Auth Mode = ${authMode}`);
-  if (TRANSPORT_MODE === "http") {
-    console.error(`[DEBUG] HTTP_PORT = ${HTTP_PORT}`);
-    console.error(`[DEBUG] HTTP_HOST = ${HTTP_HOST}`);
-  }
+  console.error(`[DEBUG] HTTP_PORT = ${HTTP_PORT}`);
+  console.error(`[DEBUG] HTTP_HOST = ${HTTP_HOST}`);
+  console.error("[DEBUG] OAuth2 tokens will be received via request headers");
 }
 
 // ==========================================
@@ -123,33 +69,7 @@ if (DEBUG) {
 // ==========================================
 
 /**
- * Start the MCP server in stdio mode (for Claude Code and local development)
- *
- * @deprecated The stdio transport and `SEQUENTUM_API_KEY` authentication are deprecated and
- * will be removed in a future release, along with the `sequentum-mcp` npm package. The MCP
- * authorization specification directs stdio implementations away from OAuth, so moving to
- * OAuth 2.1 retires this path. Use {@link startHttpServer}; clients connect to
- * https://mcp.sequentum.com/mcp.
- */
-async function startStdioServer() {
-  console.error(
-    "DEPRECATION WARNING: the stdio transport and SEQUENTUM_API_KEY authentication are " +
-      "deprecated and will be removed in a future release, along with the sequentum-mcp " +
-      "npm package. Connect to https://mcp.sequentum.com/mcp over HTTP with OAuth 2.1 " +
-      "instead: https://docs.sequentum.com/mcp/connect"
-  );
-  console.error("Authentication: API Key");
-
-  const client = new SequentumApiClient(API_BASE_URL, API_KEY!);
-  const server = createMcpServer(client, version);
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("Sequentum MCP Server running on stdio");
-  console.error(`Connected to: ${API_BASE_URL}`);
-}
-
-/**
- * Resolves the OAuth issuer for HTTP mode, or exits.
+ * Resolves the OAuth issuer, or exits.
  *
  * Kept out of main() so the "exit" branch is a `never` return and TypeScript can see
  * that the caller always receives a string.
@@ -171,19 +91,11 @@ function resolveIssuerOrExit(): string {
 }
 
 async function main() {
-  if (TRANSPORT_MODE === "http") {
-    // Resolved here and not at module scope so stdio never reaches it: stdio publishes
-    // no metadata, has no use for an issuer, and must not gain a new way to fail over a
-    // malformed SEQUENTUM_OAUTH_ISSUER left in a shell profile.
-    const issuer = resolveIssuerOrExit();
-    await startHttpServer(API_BASE_URL, issuer, version, HTTP_PORT, HTTP_HOST);
-  } else {
-    await startStdioServer();
-  }
+  const issuer = resolveIssuerOrExit();
+  await startHttpServer(API_BASE_URL, issuer, version, HTTP_PORT, HTTP_HOST);
 }
 
 main().catch((error) => {
   console.error("Fatal error starting server:", error);
   process.exit(1);
 });
-

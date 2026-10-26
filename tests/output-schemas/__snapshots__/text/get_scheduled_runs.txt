@@ -1,0 +1,22 @@
+[
+  {
+    "scheduleId": 3001,
+    "agentId": 101,
+    "agentName": "Shop prices",
+    "scheduleName": "Nightly",
+    "schedule": "0 2 * * *",
+    "scheduleType": 3,
+    "runEveryCount": null,
+    "runEveryPeriod": null,
+    "nextRunTime": "2026-09-30T14:05:42.654321Z",
+    "timezone": null,
+    "isEnabled": true,
+    "spaceId": 0,
+    "spaceName": null,
+    "approvalStatus": null,
+    "lastRunId": -42,
+    "lastRunTime": "2026-09-30T14:03:11.123456Z",
+    "lastRunStatus": 10,
+    "lastRunMessage": null
+  }
+]

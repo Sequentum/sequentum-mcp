@@ -1,0 +1,22 @@
+{
+  "agentTemplates": null,
+  "configType": 1,
+  "description": "Collects product prices",
+  "documentation": null,
+  "icon": null,
+  "image": null,
+  "inputParameters": null,
+  "id": null,
+  "isActive": false,
+  "lastActivity": null,
+  "name": null,
+  "proxyPoolId": null,
+  "spaceId": null,
+  "startUrl": "https://shop.example.com",
+  "status": null,
+  "userId": 8,
+  "validationStatus": null,
+  "version": 4,
+  "created": "2026-09-30T14:03:11.123456Z",
+  "updated": "2026-09-30T14:05:42.654321Z"
+}

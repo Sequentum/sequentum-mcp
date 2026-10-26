@@ -1,0 +1,11 @@
+[
+  {
+    "scheduleId": 3001,
+    "agentId": 101,
+    "agentName": "Shop prices",
+    "scheduleName": "Nightly",
+    "nextRunTime": "2026-09-30T14:05:42.654321Z",
+    "timezone": null,
+    "isEnabled": true
+  }
+]

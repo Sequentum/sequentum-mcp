@@ -6,7 +6,7 @@
  * dispatch-map refactor (see agents.ts for the original TODO reference).
  */
 import type { ToolHandler } from "./types.js";
-import { jsonResult } from "./types.js";
+import { structuredResult } from "./types.js";
 import {
   getDefaultDateRange,
   validateDateRange,
@@ -18,7 +18,7 @@ import {
 
 const get_credits_balance: ToolHandler = async (_args, { apiClient }) => {
   const balance = await apiClient.getCreditsBalance();
-  return jsonResult(balance);
+  return structuredResult(balance);
 };
 
 const get_spending_summary: ToolHandler = async (args, { apiClient }) => {
@@ -26,7 +26,7 @@ const get_spending_summary: ToolHandler = async (args, { apiClient }) => {
   const startDate = validateString(params, "startDate", false);
   const endDate = validateString(params, "endDate", false);
   const spending = await apiClient.getSpendingSummary(startDate, endDate);
-  return jsonResult(spending);
+  return structuredResult(spending);
 };
 
 const get_credit_history: ToolHandler = async (args, { apiClient }) => {
@@ -34,7 +34,7 @@ const get_credit_history: ToolHandler = async (args, { apiClient }) => {
   const pageIndex = validateNumber(params, "pageIndex", { required: false, min: 1, integer: true });
   const recordsPerPage = validateNumber(params, "recordsPerPage", { required: false, min: 1, max: 100, integer: true });
   const history = await apiClient.getCreditHistory(pageIndex, recordsPerPage);
-  return jsonResult(history);
+  return structuredResult(history);
 };
 
 const get_agents_usage: ToolHandler = async (args, { apiClient }) => {
@@ -63,7 +63,7 @@ const get_agents_usage: ToolHandler = async (args, { apiClient }) => {
     name,
     usageTypes
   );
-  return jsonResult(result);
+  return structuredResult(result);
 };
 
 const get_agent_cost_breakdown: ToolHandler = async (args, { apiClient }) => {
@@ -87,7 +87,7 @@ const get_agent_cost_breakdown: ToolHandler = async (args, { apiClient }) => {
     timeUnit,
     usageTypes
   );
-  return jsonResult(result);
+  return structuredResult(result);
 };
 
 const get_agent_runs_cost: ToolHandler = async (args, { apiClient }) => {
@@ -117,7 +117,7 @@ const get_agent_runs_cost: ToolHandler = async (args, { apiClient }) => {
     sortOrder,
     usageTypes
   );
-  return jsonResult(result);
+  return structuredResult(result);
 };
 
 export const billingToolHandlers: Record<string, ToolHandler> = {

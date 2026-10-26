@@ -1,0 +1,2 @@
+title,price
+Widget,9.99

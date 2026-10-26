@@ -68,7 +68,7 @@ describe("formatToolError", () => {
       new ApiRequestError(401, "Unauthorized", "API said no", "/agents")
     );
     expect(result.content[0].text).toBe(
-      "Authentication Failed: Your API key or OAuth token is invalid or has expired. Please check your credentials."
+      "Authentication Failed: Your OAuth token is invalid or has expired. Disconnect and reconnect the Sequentum MCP server to sign in again."
     );
   });
 
@@ -77,7 +77,7 @@ describe("formatToolError", () => {
       new ApiRequestError(403, "Forbidden", "Not allowed", "/agents")
     );
     expect(result.content[0].text).toBe(
-      "Access Denied: You don't have permission to perform this action. Check your API key permissions."
+      "Access Denied: You don't have permission to perform this action. Check your Sequentum account's permissions."
     );
   });
 
@@ -823,6 +823,17 @@ describe("toolDispatch", () => {
     expect(getAllAgents).toHaveBeenCalledWith({ pageIndex: 1, recordsPerPage: 50 });
   });
 
+  it("list_agents accepts status 13 (UpdatingDataSet) and rejects 14", async () => {
+    const getAllAgents = vi.fn().mockResolvedValue([]);
+    const apiClient = { getAllAgents } as unknown as SequentumApiClient;
+    const ctx = { apiClient, sendProgress: async () => {}, signal: new AbortController().signal };
+
+    await toolDispatch.list_agents({ status: 13 }, ctx);
+    expect(getAllAgents).toHaveBeenCalledWith({ pageIndex: 1, recordsPerPage: 50, status: 13 });
+
+    await expect(toolDispatch.list_agents({ status: 14 }, ctx)).rejects.toThrow(/must be <= 13/);
+  });
+
   it("exposes a handler for every schedule, billing, and space tool", () => {
     const expected = [
       "list_agent_schedules", "create_agent_schedule", "delete_agent_schedule",
@@ -974,6 +985,13 @@ describe("tool registration invariants", () => {
         `${t.name} is wired to a handler named "${handler?.name}" — check the barrel exports`
       ).toBe(t.name);
     }
+  });
+
+  // SE4-4389: a sync start holds the tool call open for up to `timeout` seconds.
+  it("tells clients that a synchronous start_agent waits up to its timeout", () => {
+    const startAgent = tools.find((t) => t.name === "start_agent");
+    const timeout = startAgent?.inputSchema.properties?.timeout as { description?: string } | undefined;
+    expect(timeout?.description).toMatch(/can stay open for this many seconds plus about 30 s/);
   });
 });
 

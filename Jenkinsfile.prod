@@ -3,9 +3,11 @@ pipeline {
         label 'jenkins-agent'
     }
 
+    // Jenkins reads this file from git, so these defaults are what the job shows.
+    // When you cut a new release line, change the SourceBranch default too.
     parameters {
-        string(name: 'SourceBranch', defaultValue: 'release/2.0', description: 'Source branch to merge from')
-        string(name: 'TargetBranch', defaultValue: 'main', description: 'Target branch to merge into')
+        string(name: 'SourceBranch', defaultValue: 'release/2.1', description: 'Release branch to merge into main, like release/2.1')
+        string(name: 'TargetBranch', defaultValue: 'main', description: 'Branch to merge into. Must be main.')
     }
 
     environment {
@@ -19,10 +21,43 @@ pipeline {
         stage('Get Selected Branches') {
             steps {
                 script {
-                    SOURCE_BRANCH = params.SourceBranch
-                    TARGET_BRANCH = params.TargetBranch
+                    SOURCE_BRANCH = (params.SourceBranch ?: '').trim()
+                    TARGET_BRANCH = (params.TargetBranch ?: '').trim()
+                    // stop before any merge or push unless these are a release branch and main
+                    if (!(SOURCE_BRANCH ==~ /release\/[0-9]+\.[0-9]+/)) {
+                        error("SourceBranch must look like release/2.1. It is '${SOURCE_BRANCH}'.")
+                    }
+                    if (TARGET_BRANCH != 'main') {
+                        error("TargetBranch must be main. It is '${TARGET_BRANCH}'.")
+                    }
                     echo "Source branch: ${SOURCE_BRANCH}"
                     echo "Target branch: ${TARGET_BRANCH}"
+                }
+            }
+        }
+
+        stage('Check GitHub App') {
+            steps {
+                // SE4-4140: the GitHub Release later in this build uses the org's GitHub
+                // App (credential github-app-sequentum-jenkins). It belongs to the org,
+                // not a person, and Jenkins makes short-lived tokens from it. Check it
+                // here, so a broken credential stops the build before anything is
+                // merged, built, tagged or deployed. GitHub's "push" flag is always
+                // false for an App token, so this checks only for a 200.
+                withCredentials([usernamePassword(credentialsId: 'github-app-sequentum-jenkins',
+                                                  usernameVariable: 'GH_USER',
+                                                  passwordVariable: 'GH_TOKEN')]) {
+                    sh '''
+                        # -K - reads the header from stdin, so the token stays out of the process list
+                        code=$(printf 'header = "Authorization: Bearer %s"\\n' "${GH_TOKEN}" \
+                            | curl -sS -K - -o /dev/null -w '%{http_code}' \
+                                -H "Accept: application/vnd.github+json" \
+                                "https://api.github.com/repos/Sequentum/sequentum-mcp" || true)
+                        if [ "${code}" != "200" ]; then
+                            echo "The GitHub App can't reach Sequentum/sequentum-mcp (GitHub answered ${code}). Check the github-app-sequentum-jenkins credential, and that the App is installed on the repo."
+                            exit 1
+                        fi
+                    '''
                 }
             }
         }
@@ -135,15 +170,18 @@ pipeline {
                 script {
                     mergeChanges()
                     dir('sequentum-mcp') {
-                        // Pin Node 20 to match the runtime image (Dockerfile). The agent's
+                        // Pin Node 24 to match the runtime image (Dockerfile). The agent's
                         // own Node is 18, which has no global crypto and fails the suite.
-                        docker.image('node:20-alpine').inside('-e HOME=/tmp -e npm_config_cache=/tmp/.npm') {
+                        // The container runs as the Jenkins user, not root, so `corepack enable`
+                        // can't link pnpm into /usr/local/bin. `corepack pnpm` needs no link and
+                        // fetches the pnpm version named in package.json into $HOME (/tmp).
+                        docker.image('node:24-alpine').inside('-e HOME=/tmp -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0') {
                             sh '''
                                 set -e
                                 node --version
-                                npm --version
-                                npm ci
-                                npm test
+                                corepack pnpm --version
+                                corepack pnpm install --frozen-lockfile
+                                corepack pnpm test
                             '''
                         }
                     }
@@ -320,7 +358,7 @@ JSONEOF
                         """
 
                         // Sync package.json and server.json to the new version before committing/tagging
-                        sh "npm version '${VERSION}' --no-git-tag-version --allow-same-version --ignore-scripts"
+                        sh "jq --arg v '${VERSION}' '.version = \$v' package.json > package.tmp && mv package.tmp package.json"
                         sh "jq --arg v '${VERSION}' '.version = \$v' server.json > server.tmp && mv server.tmp server.json"
 
                         // Commit the version state file
@@ -331,8 +369,6 @@ JSONEOF
 
                             echo "Adding version files to git..."
                             git add version_state.json package.json server.json
-                            # package-lock.json may not exist in older trees; don't fail the stage if absent
-                            git add package-lock.json 2>/dev/null || true
 
                             echo "Checking for changes to commit..."
                             if git diff --cached --quiet; then
@@ -378,7 +414,7 @@ JSONEOF
             steps {
                 script { mergeChanges() }
                 dir('sequentum-mcp') {
-                    withCredentials([usernamePassword(credentialsId: 'jenkins-se4-main',
+                    withCredentials([usernamePassword(credentialsId: 'github-app-sequentum-jenkins',
                                                       usernameVariable: 'GH_USER',
                                                       passwordVariable: 'GH_TOKEN')]) {
                         sh '''#!/bin/bash
@@ -539,7 +575,18 @@ def mergeChanges() {
         # merge to target branch
         git checkout ${TARGET_BRANCH}
         git pull
-        git merge -Xtheirs ${SOURCE_BRANCH}
+        # The pnpm move deleted package-lock.json, which earlier version commits on
+        # the target branch modified. -Xtheirs cannot settle that modify/delete
+        # conflict, so take the deletion when it is the only conflict; fail otherwise.
+        if ! git merge -Xtheirs ${SOURCE_BRANCH}; then
+            if [ "\$(git diff --name-only --diff-filter=U)" = "package-lock.json" ] \\
+                && ! git cat-file -e "${SOURCE_BRANCH}:package-lock.json" 2>/dev/null; then
+                git rm -q package-lock.json
+                git commit --no-edit
+            else
+                exit 1
+            fi
+        fi
 
         # Push merged changes
         git push

@@ -1,0 +1,12 @@
+Agent started successfully.
+
+[
+  {
+    "title": "Widget",
+    "price": 9.99
+  },
+  {
+    "title": "Gadget",
+    "price": 19.5
+  }
+]

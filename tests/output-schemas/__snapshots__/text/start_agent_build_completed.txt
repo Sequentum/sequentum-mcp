@@ -1,0 +1,6 @@
+{
+  "status": "completed",
+  "agentId": 555,
+  "agentName": "Prices",
+  "sessionId": "sess-0001"
+}

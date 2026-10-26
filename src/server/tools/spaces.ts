@@ -6,26 +6,26 @@
  * dispatch-map refactor (see agents.ts for the original TODO reference).
  */
 import type { ToolHandler } from "./types.js";
-import { jsonResult } from "./types.js";
+import { structuredResult, withStructured } from "./types.js";
 import { validateJsonString, validateNumber, validateString } from "../../utils/validation.js";
 
 const list_spaces: ToolHandler = async (_args, { apiClient }) => {
   const spaces = await apiClient.getAllSpaces();
-  return jsonResult(spaces);
+  return structuredResult(spaces);
 };
 
 const get_space: ToolHandler = async (args, { apiClient }) => {
   const params = args;
   const spaceId = validateNumber(params, "spaceId", { min: 1, integer: true })!;
   const space = await apiClient.getSpace(spaceId);
-  return jsonResult(space);
+  return structuredResult(space);
 };
 
 const get_space_agents: ToolHandler = async (args, { apiClient }) => {
   const params = args;
   const spaceId = validateNumber(params, "spaceId", { min: 1, integer: true })!;
   const agents = await apiClient.getSpaceAgents(spaceId);
-  return jsonResult(agents);
+  return structuredResult(agents);
 };
 
 /**
@@ -36,14 +36,14 @@ const get_space_agent_count: ToolHandler = async (args, { apiClient }) => {
   const params = args;
   const spaceId = validateNumber(params, "spaceId", { min: 1, integer: true })!;
   const count = await apiClient.getSpaceAgentCount(spaceId);
-  return jsonResult(count);
+  return structuredResult(count);
 };
 
 const search_space_by_name: ToolHandler = async (args, { apiClient }) => {
   const params = args;
   const name = validateString(params, "name")!;
   const space = await apiClient.searchSpaceByName(name);
-  return jsonResult(space);
+  return structuredResult(space);
 };
 
 const run_space_agents: ToolHandler = async (args, { apiClient }) => {
@@ -51,14 +51,10 @@ const run_space_agents: ToolHandler = async (args, { apiClient }) => {
   const spaceId = validateNumber(params, "spaceId", { min: 1, integer: true })!;
   const inputParameters = validateJsonString(params, "inputParameters", false);
   const result = await apiClient.runSpaceAgents(spaceId, inputParameters);
-  return {
-    content: [
-      {
-        type: "text",
-        text: `Started agents in space.\n\n${JSON.stringify(result, null, 2)}`,
-      },
-    ],
-  };
+  return withStructured(
+    { content: [{ type: "text", text: `Started agents in space.\n\n${JSON.stringify(result, null, 2)}` }] },
+    result
+  );
 };
 
 export const spaceToolHandlers: Record<string, ToolHandler> = {
