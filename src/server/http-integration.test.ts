@@ -893,6 +893,11 @@ describe("per-tool scope challenge on /mcp", () => {
     return mint({ scope, clientId: "https://client.example.test/cimd.json", token_type: "authorization_code" });
   }
 
+  /** An agent token as Control Center mints it for a claimed agent registration: no clientId. */
+  function agentToken(scope: string): Promise<string> {
+    return mint({ scope, token_type: "agent" });
+  }
+
   function callTool(token: string, name: string, era: "modern" | "legacy") {
     const modern = era === "modern";
     return fetch(`${base}/mcp`, {
@@ -1016,6 +1021,24 @@ describe("per-tool scope challenge on /mcp", () => {
 
     expect(res.status).toBe(403);
     expect(res.headers.get("www-authenticate")).toContain('scope="agents:read runs:read"');
+  });
+
+  it("challenges an agent token missing the tool's scope, as it does a user token", async () => {
+    const token = await agentToken("runs:read");
+
+    const res = await callTool(token, "list_agents", "modern");
+
+    expect(res.status).toBe(403);
+    expect(res.headers.get("www-authenticate")).toContain('error="insufficient_scope"');
+    expect(res.headers.get("www-authenticate")).toContain('scope="runs:read agents:read"');
+    expect(apiCalls).toEqual([]);
+  });
+
+  it("dispatches an agent token that holds the tool's scope", async () => {
+    const res = await callTool(await agentToken("agents:read"), "list_agents", "modern");
+
+    expect(res.status).toBe(200);
+    expect(apiCalls).toEqual(["GET /api/v1/agent/all"]);
   });
 
   it("does not challenge a client_credentials token, which the Control Center exempts", async () => {

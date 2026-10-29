@@ -277,6 +277,10 @@ and consent, loopback callback, PKCE), then calls the V1 API directly and throug
 with tokens of three scope profiles and checks CloudWatch for the Control Center's scope-check
 lines. See [docs/oauth-scope-probe.md](./docs/oauth-scope-probe.md).
 
+The server checks each tool's and resource's scopes before dispatch for user tokens and for
+tokens issued to an agent registered through the Control Center. Client-credentials tokens are
+exempt, as they are on the Control Center itself.
+
 
 | Error | Solution |
 |-------|----------|
