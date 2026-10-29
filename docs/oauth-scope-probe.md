@@ -123,7 +123,9 @@ pnpm run probe --env qa --mode enforce                              # after the 
 | `enforce` | V1 2xx, MCP tool ok | V1 **403** with `errorCode: insufficient_scope` and `WWW-Authenticate: Bearer error="insufficient_scope", scope="X"`, and a `Scope check denied …` line; MCP **403** scope challenge |
 
 The mode describes the Control Center only. The MCP server also checks each
-tool's scope itself, before dispatch and whatever the Control Center's mode: a mismatched
+tool's scope itself, before dispatch and whatever the Control Center's mode, for user tokens
+and for tokens issued to a registered agent (`token_type` `agent`); server keys are exempt, as
+they are on the Control Center. A mismatched
 `tools/call` gets HTTP 403 with `WWW-Authenticate: Bearer error="insufficient_scope",
 scope="…"` naming the scopes the token holds plus the missing one, and never reaches V1, so it
 adds no CloudWatch line.
