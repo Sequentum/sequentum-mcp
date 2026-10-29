@@ -263,8 +263,8 @@ async function passesAuthGate(req: Request, res: Response, keys: JwksKeySource):
 }
 
 /**
- * Hand a verified user token to the SDK as `req.auth`, which `toNodeHandler` forwards as
- * `authInfo` so each tool's and resource's scope challenge can run before dispatch.
+ * Hand a verified user or agent token to the SDK as `req.auth`, which `toNodeHandler`
+ * forwards as `authInfo` so each tool's and resource's scope challenge can run before dispatch.
  *
  * Only user tokens (`authorization_code`) and agent tokens (`agent`, issued to an agent the
  * user registered) get one; the Control Center checks the scopes of both. It exempts
