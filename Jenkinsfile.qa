@@ -17,7 +17,6 @@ pipeline {
     }
 
     environment {
-        CREDENTIALS = credentials('jira-jenkins-bot')
         AWS_REGION = 'us-east-1'
     }
 
