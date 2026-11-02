@@ -46,7 +46,10 @@ export interface Claims {
   readonly scopes: readonly string[];
   /** The `clientId` claim (camelCase, as Control Center mints it), when it is a string. */
   readonly clientId?: string;
-  /** The `token_type` claim: `authorization_code` for user tokens, `client_credentials` for server keys. */
+  /**
+   * The `token_type` claim: `authorization_code` for user tokens, `agent` for tokens issued to a
+   * registered agent, `client_credentials` for server keys.
+   */
   readonly tokenType?: string;
 }
 

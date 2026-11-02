@@ -263,16 +263,17 @@ async function passesAuthGate(req: Request, res: Response, keys: JwksKeySource):
 }
 
 /**
- * Hand a verified user token to the SDK as `req.auth`, which `toNodeHandler` forwards as
- * `authInfo` so each tool's and resource's scope challenge can run before dispatch.
+ * Hand a verified user or agent token to the SDK as `req.auth`, which `toNodeHandler`
+ * forwards as `authInfo` so each tool's and resource's scope challenge can run before dispatch.
  *
- * Only `authorization_code` (user) tokens get one. The Control Center exempts
+ * Only user tokens (`authorization_code`) and agent tokens (`agent`, issued to an agent the
+ * user registered) get one; the Control Center checks the scopes of both. It exempts
  * client-credentials tokens from scope checks, and they may carry no `scope` claim at all,
  * so challenging them would deny what the API allows. Without `req.auth` the challenge
  * lets the request through, as it does on the unverifiable and REQUIRE_AUTH=false paths.
  */
 function attachAuthInfo(req: Request & { auth?: AuthInfo }, token: string, claims: Claims): void {
-  if (claims.tokenType !== "authorization_code") return;
+  if (claims.tokenType !== "authorization_code" && claims.tokenType !== "agent") return;
   req.auth = {
     token,
     clientId: claims.clientId ?? "",
