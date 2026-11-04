@@ -63,7 +63,10 @@ const start_agent_build: ToolHandler = async (args, { apiClient, sendProgress, s
     const status = await apiClient.getAgentBuildStatus(sessionId);
 
     if (status.status === "completed" || status.status === "ready") {
-      return structuredResult({ status: status.status, agentId: status.agentId, agentName: status.agentName, sessionId });
+      // Keep the Plan, report, partial flag and summary: they tell the caller what the build
+      // guessed and which questions to put to the user. `error` is never set on these statuses.
+      const { error: _unused, ...finished } = status;
+      return structuredResult({ ...finished, sessionId });
     }
 
     if (status.status === "error") {

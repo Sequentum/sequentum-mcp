@@ -754,4 +754,27 @@ export interface ExternalSessionStatusResponse {
   agentName?: string;
   /** Error message when status is "error". */
   error?: string;
+  /** True when the build stopped early but delivered a working Agent; `summary` says what is missing. */
+  partial?: boolean;
+  /** What the Agent collects, what is missing and why the build stopped. Present only when `partial` is true. */
+  summary?: string;
+  /**
+   * What the build set out to deliver. Each line carries a provenance: `user` (the request said it),
+   * `site` (seen on the page), `assumption` (the builder's guess) or `default` (a product default).
+   */
+  plan?: Record<string, unknown> | null;
+  /** The Plan checked against the finished Agent, with up to 3 open questions. */
+  report?: AgentBuildReport | null;
+}
+
+/** The `report` of a finished build: Plan lines graded met, partial or unmet, plus open questions. */
+export interface AgentBuildReport {
+  lines?: Record<string, { status: string; evidence?: string | null }>;
+  met?: number;
+  partial?: number;
+  unmet?: number;
+  total?: number;
+  /** Up to 3 questions. The first reply is the default the build already used. */
+  questions?: { text: string; replies: string[] }[];
+  reportedAt?: string;
 }

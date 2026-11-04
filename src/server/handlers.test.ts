@@ -506,6 +506,32 @@ describe("agent builder handler dispatch", () => {
       }
     });
 
+    it("waitForCompletion=true: returns the plan, report and partial flag with the agent", async () => {
+      vi.useFakeTimers();
+      try {
+        const plan = { item: { text: "a book", provenance: "user" }, fields: [] };
+        const report = { met: 1, total: 1, questions: [{ text: "Every page?", replies: ["First page only", "Every page"] }] };
+        vi.mocked(mockApiClient.startAgentBuild).mockResolvedValueOnce({ sessionId: "sess-plan-1" });
+        vi.mocked(mockApiClient.getAgentBuildStatus).mockResolvedValueOnce({
+          status: "completed", agentId: 9, agentName: "Plan Agent", partial: true, summary: "No prices.", plan, report,
+        } as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>);
+
+        const resultPromise = client.callTool({
+          name: "start_agent_build",
+          arguments: { prompt: "scrape book titles from https://books.toscrape.com" },
+        });
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+
+        expect(result.isError).toBeFalsy();
+        const parsed = JSON.parse((result.content[0] as { text: string }).text);
+        expect(parsed).toMatchObject({ status: "completed", agentId: 9, sessionId: "sess-plan-1", partial: true, summary: "No prices.", plan, report });
+        expect(result.structuredContent).toMatchObject({ plan, report });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("waitForCompletion=true: sanitizes raw backend error and returns isError", async () => {
       vi.useFakeTimers();
       try {
