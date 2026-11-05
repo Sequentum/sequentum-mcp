@@ -18,6 +18,14 @@
 
 ### Changed
 
+- **`start_agent_build` and `get_agent_build_status` return the build's Plan and report.** A
+  finished build now carries `plan` (what the build set out to deliver, with each line marked as
+  the user's request, seen on the site, or an assumption or default), `report` (each Plan line
+  met, partial or unmet, and up to 3 open questions with suggested replies), `partial` and
+  `summary`. Before this, the default synchronous `start_agent_build` returned only the agent id
+  and name, so a client could not see what the build guessed. `get_agent_build_status` already
+  passed these fields through; its description and output schema now name them.
+
 - **Each tool and resource now declares the OAuth scopes it needs, and the server checks
   them before dispatch.** A `tools/call` or `resources/read` whose token lacks one is
   answered with HTTP 403 and `WWW-Authenticate: Bearer error="insufficient_scope",

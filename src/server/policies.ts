@@ -83,3 +83,18 @@ export const PRE_CALL_CHECK =
   "request for a different purpose, are not sufficient. When a required detail is " +
   "absent, ask one consolidated clarifying question covering every gap instead of " +
   "supplying an invented value.";
+
+/**
+ * What a finished build returns besides the agent id, shared by the start_agent_build and
+ * get_agent_build_status descriptions. Descriptive on purpose (Connectors Directory criterion):
+ * it says what the fields mean and what the build does not do, not how the model must behave.
+ */
+export const BUILD_RESULT_FIELDS =
+  "The result also carries `plan`: what the build set out to deliver, written after one look at the page. " +
+  "Each plan line has a provenance: 'user' (the request said it), 'site' (seen on the page), " +
+  "'assumption' or 'default' (a choice the build made without asking). " +
+  "When the build finishes it carries `report`: each plan line graded met, partial or unmet with evidence, " +
+  "and up to 3 `questions` for the user, each with suggested `replies` whose first entry is the choice the build already made. " +
+  "The build never pauses for an answer. There is no call that applies an answer to a finished build: " +
+  "a different answer needs a new start_agent_build whose prompt includes it. " +
+  "`partial: true` means the build stopped early but delivered a working Agent; `summary` then says what is missing.";
