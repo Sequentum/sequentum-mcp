@@ -2016,8 +2016,8 @@ packages:
     peerDependencies:
       zod: ^3.25.28 || ^4
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
 snapshots:
 
@@ -2234,11 +2234,11 @@ snapshots:
       eventsource-parser: 3.1.1
       jose: 6.2.8
       pkce-challenge: 5.0.1
-      zod: 4.4.3
+      zod: 4.6.7
 
   '@modelcontextprotocol/conformance@0.2.0-alpha.12(supports-color@7.2.0)':
     dependencies:
-      '@modelcontextprotocol/sdk': 1.30.0(supports-color@7.2.0)(zod@4.4.3)
+      '@modelcontextprotocol/sdk': 1.30.0(supports-color@7.2.0)(zod@4.6.7)
       '@octokit/rest': 22.0.1
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
@@ -2248,14 +2248,14 @@ snapshots:
       jose: 6.2.8
       undici: 7.30.1
       yaml: 2.9.0
-      zod: 4.4.3
+      zod: 4.6.7
     transitivePeerDependencies:
       - '@cfworker/json-schema'
       - supports-color
 
   '@modelcontextprotocol/core@2.2.0':
     dependencies:
-      zod: 4.4.3
+      zod: 4.6.7
 
   '@modelcontextprotocol/node@2.1.0(@modelcontextprotocol/server@2.2.0)(hono@4.13.1)':
     dependencies:
@@ -2264,7 +2264,7 @@ snapshots:
     optionalDependencies:
       hono: 4.13.1
 
-  '@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@4.4.3)':
+  '@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@4.6.7)':
     dependencies:
       '@hono/node-server': 1.19.17(hono@4.13.1)
       ajv: 8.20.0
@@ -2281,15 +2281,15 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 4.4.3
-      zod-to-json-schema: 3.25.2(zod@4.4.3)
+      zod: 4.6.7
+      zod-to-json-schema: 3.25.2(zod@4.6.7)
     transitivePeerDependencies:
       - supports-color
 
   '@modelcontextprotocol/server@2.2.0':
     dependencies:
       '@modelcontextprotocol/core': 2.2.0
-      zod: 4.4.3
+      zod: 4.6.7
 
   '@napi-rs/wasm-runtime@1.1.5(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
     dependencies:
@@ -3993,8 +3993,8 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
-  zod-to-json-schema@3.25.2(zod@4.4.3):
+  zod-to-json-schema@3.25.2(zod@4.6.7):
     dependencies:
-      zod: 4.4.3
+      zod: 4.6.7
 
-  zod@4.4.3: {}
+  zod@4.6.7: {}
