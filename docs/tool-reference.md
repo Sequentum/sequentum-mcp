@@ -1350,9 +1350,35 @@ Poll the current status of an agent building session. Call this repeatedly until
 {
   "status": "completed",
   "agentId": 42,
-  "agentName": "Amazon Laptop Scraper"
+  "agentName": "Amazon Laptop Scraper",
+  "partial": false,
+  "plan": {
+    "item": { "text": "a laptop listing", "provenance": "user" },
+    "fields": [
+      { "name": "title", "required": true, "source": "list", "example": "Acer Aspire 5", "provenance": "user" },
+      { "name": "rating", "required": false, "source": "list", "example": "4.4", "provenance": "site" }
+    ],
+    "scope": { "count": null, "text": "first page only", "provenance": "default" },
+    "exclusions": [],
+    "navigation": [],
+    "output": { "text": "one table", "provenance": "default" }
+  },
+  "report": {
+    "lines": { "field:title": { "status": "met", "evidence": "24 of 24 rows" } },
+    "met": 4, "partial": 0, "unmet": 0, "total": 4,
+    "questions": [
+      { "text": "Do you want every results page?", "replies": ["First page only", "Every page"] }
+    ]
+  }
 }
 ```
+
+- `plan` appears while the build is still `processing`, once the builder has seen the page. Each line's `provenance` is `user` (the request said it), `site` (seen on the page), `assumption` or `default` (a choice the build made without asking).
+- `report` appears when a build that wrote a Plan finishes: each Plan line graded `met`, `partial` or `unmet`, and up to 3 `questions`. The first reply of each question is the choice the build already made.
+- The build never pauses for an answer, and no tool applies an answer to a finished build. A different answer needs a new `start_agent_build` whose prompt includes it.
+- `partial: true` means the build stopped early but delivered a working Agent; `summary` says what is missing.
+
+A finished `start_agent_build` (the default `waitForCompletion: true`) returns the same fields plus `sessionId`.
 
 ---
 
