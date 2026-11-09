@@ -33,6 +33,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Fails on a high or critical advisory in production dependencies so
+      # they do not drift again. Dev-only packages are not audited.
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level high
+
       - name: Run tests
         run: pnpm test
 

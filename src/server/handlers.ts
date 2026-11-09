@@ -13,7 +13,7 @@ import {
   type JsonSchemaType,
 } from "@modelcontextprotocol/server";
 import { SERVER_INSTRUCTIONS } from "./policies.js";
-import { AGENT_BUILD_ERROR_MESSAGE, LIST_CACHE_TTL_MS } from "./constants.js";
+import { AGENT_BUILD_ERROR_MESSAGE, LIST_CACHE_TTL_MS, MAX_TOOL_INPUT_ELEMENTS } from "./constants.js";
 import { SequentumApiClient } from "../api/api-client.js";
 import { ApiRequestError, RateLimitError, AuthenticationError } from "../api/types.js";
 import { tools } from "./tools.js";
@@ -203,6 +203,8 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
       // policies.ts (SERVER_INSTRUCTIONS); keep these in sync if the policy's
       // name or scope changes.
       instructions: SERVER_INSTRUCTIONS,
+      // Caps elements + members in one tools/call `arguments` payload.
+      maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS,
       // Cache hints for the 2026-07-28 cacheable result types (`ttlMs`/`cacheScope`).
       // List-shaped results (and server/discover) are safe to cache publicly: they
       // carry no per-caller data and are only invalidated by a deploy.
