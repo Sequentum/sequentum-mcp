@@ -568,7 +568,7 @@ BODYEOF
                                 cat "$WORK/login.json" 2>/dev/null || true
                                 exit 1
                             fi
-                            jq --arg registry "${REGISTRY}" '{token: .registry_token, method: "dns", registry: $registry}' \
+                            jq --arg registry "${REGISTRY}" '{token: (.registry_token // error("login response has no registry_token")), method: "dns", registry: $registry}' \
                                 "$WORK/login.json" > "$HOME/.config/mcp-publisher/token.json"
 
                             # Publish.
