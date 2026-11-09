@@ -18,6 +18,13 @@
 
 ### Changed
 
+- **Production dependencies upgraded to clear `pnpm audit --prod`.** `@modelcontextprotocol/server`
+  and `client` (with `core`) 2.2.0 to 2.4.0, `@modelcontextprotocol/node` 2.1.0 to 2.1.2,
+  `express` to 4.22.3, `express-rate-limit` to 8.7.2, and the transitive `proxy-addr`, `zod`,
+  `hono`, `@hono/node-server` and `qs`. Fixes the memory-exhaustion advisory in the SDK's request
+  validation and the rate limiter that collapsed all IPv4 clients into one bucket. A `tools/call`
+  whose `arguments` hold more than 1,000 array elements and object members is now rejected
+  (SDK `maxToolInputElements`). CI now fails on a high or critical production advisory.
 - **`start_agent_build` and `get_agent_build_status` return the build's Plan and report.** A
   finished build now carries `plan` (what the build set out to deliver, with each line marked as
   the user's request, seen on the site, or an assumption or default), `report` (each Plan line
