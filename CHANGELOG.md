@@ -16,6 +16,14 @@
 - **The `SequentumApiClient` constructor dropped its `apiKey` parameter.** It is now
   `(baseUrl, requestTimeoutMs, maxRetries)`; authenticate with `setAccessToken()`.
 
+### Added
+
+- **`/auth.md` and `/.well-known/auth.md` redirect to the Control Center's auth.md manifest.**
+  An agent that only knows the MCP origin can now find how to register and claim a token; the
+  server keeps no copy of the manifest, as with the authorization-server metadata redirect. The
+  landing page links to it, and `oauth-scope-probe` gained an `--auth-md-email` mode that runs the
+  claim flow end to end against QA.
+
 ### Changed
 
 - **Production dependencies upgraded to clear `pnpm audit --prod`.** `@modelcontextprotocol/server`

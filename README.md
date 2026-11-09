@@ -114,6 +114,17 @@ Use the server URL `https://mcp.sequentum.com/mcp` in your client's MCP configur
 
 The server supports [Client ID Metadata Documents (CIMD)](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document-00) as the preferred client identification method, with [Dynamic Client Registration (RFC 7591)](https://datatracker.ietf.org/doc/html/rfc7591) as a fallback. MCP clients that support CIMD (such as Cursor) can use their own URL as a `client_id` without any prior registration.
 
+### Agents (auth.md)
+
+An autonomous agent with no browser can register itself on behalf of a user instead of running the OAuth flow above. The server publishes no registration endpoint of its own: `GET https://mcp.sequentum.com/auth.md` (and `/.well-known/auth.md`) redirects to the manifest served by the Sequentum Control Center, which is the authorization server and holds the users, the claim page and the signing key. The agent follows that manifest:
+
+1. Register with the user's email and the scopes it needs.
+2. Show the user the verification link and code. The user signs in to Sequentum, enters the code and approves.
+3. Poll until the claim completes, then exchange the identity assertion for an access token, passing `resource=https://mcp.sequentum.com`.
+4. Call `/mcp` with that token as a bearer. Scope enforcement is the same as for any other token, so a tool outside the granted scopes is answered with an HTTP 403 `insufficient_scope` challenge.
+
+There are no refresh tokens in this flow: when the access token expires, exchange the identity assertion again. To try it against QA, see [docs/oauth-scope-probe.md](./docs/oauth-scope-probe.md#the-authmd-path).
+
 ## Local stdio mode (removed)
 
 Running the server locally over stdio with `SEQUENTUM_API_KEY` (`npx sequentum-mcp`) was removed in 3.0.0.

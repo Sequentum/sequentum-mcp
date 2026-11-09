@@ -587,6 +587,17 @@ export async function startHttpServer(
     res.redirect(302, `${issuer}/.well-known/oauth-authorization-server`);
   });
 
+  // auth.md manifest. An agent that only knows this origin looks for /auth.md here, but
+  // registration, claims and tokens all belong to the Control Center: this server has no
+  // users, no sign-in page and no signing key. So, exactly like the authorization-server
+  // metadata above, point at the issuer's document instead of keeping a copy that would
+  // drift. Both the bare path and the well-known path are accepted because agents are
+  // not consistent about which they probe first. 302 for the same reason as above: the
+  // target is environment-specific.
+  app.get(["/auth.md", "/.well-known/auth.md"], (_req: Request, res: Response) => {
+    res.redirect(302, `${issuer}/auth.md`);
+  });
+
   // RFC 9728 - Protected Resource Metadata (required by MCP spec 2025-06-18)
   // This tells MCP clients which authorization server to use for this resource.
   // Per MCP spec, the resource MUST be the MCP server's own canonical URL,
