@@ -7,6 +7,7 @@ import {
   validateScheduleStartTime,
   AGENT_BUILD_ERROR_MESSAGE,
 } from "./handlers.js";
+import { MAX_TOOL_INPUT_ELEMENTS } from "./constants.js";
 import { tools } from "./tools.js";
 import { resources, resourceTemplates } from "./resources.js";
 import { getPromptMessages, prompts } from "./prompts.js";
@@ -1048,6 +1049,28 @@ describe("createMcpServer via SDK v2", () => {
         expect(listed.description).toBe(declared.description);
         expect(listed.inputSchema).toEqual(declared.inputSchema);
       }
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("rejects a tools/call whose arguments exceed MAX_TOOL_INPUT_ELEMENTS", async () => {
+    const apiClient = {} as unknown as SequentumApiClient;
+    const server = createMcpServer(apiClient, "9.9.9");
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    try {
+      const result = await client.callTool({
+        name: tools[0]!.name,
+        arguments: { pad: new Array(MAX_TOOL_INPUT_ELEMENTS + 1).fill(0) },
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toMatch(
+        new RegExp(`more than the maximum of ${MAX_TOOL_INPUT_ELEMENTS} elements`)
+      );
     } finally {
       await client.close();
       await server.close();
