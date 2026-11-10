@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server as HttpServer } from "node:http";
 import { startHttpServer } from "./http-server.js";
 import glamaClaim from "./well-known/glama.json" with { type: "json" };
-import { RATE_LIMIT_ERROR_CODE } from "./constants.js";
+import { MCP_RATE_LIMIT_MAX, RATE_LIMIT_ERROR_CODE } from "./constants.js";
 import { connect } from "node:net";
 import { SUPPORTED_SCOPES } from "../utils/oauth-metadata.js";
 import type { ResourceScopesSource } from "../utils/resource-scopes.js";
+import { API_CONTENT_SECURITY_POLICY } from "./csp.js";
+import { LANDING_PAGE_CSP } from "./landing-page.js";
+import { createHash } from "node:crypto";
 
 const ENVELOPE = {
   "io.modelcontextprotocol/protocolVersion": "2026-07-28",
@@ -252,6 +255,13 @@ describe("POST /mcp authentication", () => {
     const challenge = res.headers.get("www-authenticate") ?? "";
     expect(challenge).toContain("Bearer");
     expect(challenge).toContain("resource_metadata=");
+  });
+
+  it("sends the API Content-Security-Policy on the 401 challenge (IT-2272)", async () => {
+    // With auth on, the 401 is what an anonymous scanner actually receives from /mcp.
+    const res = await fetch(`${base}/mcp`, { method: "GET" });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("content-security-policy")).toBe(API_CONTENT_SECURITY_POLICY);
   });
 
   it("passes the caller's bearer token through to the upstream API", async () => {
@@ -572,6 +582,155 @@ describe("GET / landing page", () => {
     const res = await rawRequest(base, "GET / HTTP/1.0\r\n\r\n");
     expect(res).toContain("400 Bad Request");
     expect(res).not.toContain("undefined");
+  });
+});
+
+// IT-2272: Qualys QID 48001 flagged the missing header on GET / behind both NLBs.
+// Every response must carry a policy — the scanner may probe any path.
+describe("Content-Security-Policy on every response (IT-2272)", () => {
+  let server: HttpServer;
+  let base: string;
+
+  beforeEach(async () => {
+    process.env.REQUIRE_AUTH = "false";
+    server = await startHttpServer(
+      "https://api.example.test",
+      "https://issuer.example.test",
+      "9.9.9",
+      0,
+      "127.0.0.1"
+    );
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    base = `http://127.0.0.1:${addr.port}`;
+  });
+
+  afterEach(async () => {
+    delete process.env.REQUIRE_AUTH;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("gives the landing page a policy whose style hash matches the stylesheet actually served", async () => {
+    // Hash recomputed from the bytes on the wire: this is the check a browser makes.
+    const res = await fetch(`${base}/`);
+    expect(res.status).toBe(200);
+    const csp = res.headers.get("content-security-policy");
+    expect(csp).toBe(LANDING_PAGE_CSP);
+
+    const style = (await res.text()).match(/<style>([\s\S]*?)<\/style>/)?.[1];
+    if (style === undefined) throw new Error("expected a <style> block on the landing page");
+    const hash = createHash("sha256").update(style, "utf8").digest("base64");
+    expect(csp).toContain(`style-src 'sha256-${hash}'`);
+    expect(csp).toContain("frame-ancestors 'none'");
+  });
+
+  it("sends the API policy on the landing page's 400 for an unparseable Host", async () => {
+    // That body is text/plain with no stylesheet, so it gets the strict policy.
+    const res = await rawRequest(base, "GET / HTTP/1.1\r\nHost: a<b\r\nConnection: close\r\n\r\n");
+    expect(res).toContain("400 Bad Request");
+    expect(res).toContain(`Content-Security-Policy: ${API_CONTENT_SECURITY_POLICY}\r\n`);
+  });
+
+  it("sends the API policy on every protocol and discovery route", async () => {
+    const responses: [string, Response][] = [
+      ["GET /health", await fetch(`${base}/health`)],
+      ["GET /.well-known/oauth-protected-resource", await fetch(`${base}/.well-known/oauth-protected-resource`)],
+      [
+        "GET /.well-known/oauth-authorization-server",
+        await fetch(`${base}/.well-known/oauth-authorization-server`, { redirect: "manual" }),
+      ],
+      ["GET /.well-known/glama.json", await fetch(`${base}/.well-known/glama.json`)],
+      [
+        "POST /mcp",
+        await fetch(`${base}/mcp`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            "Mcp-Method": "tools/list",
+            "Mcp-Protocol-Version": "2026-07-28",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { _meta: ENVELOPE } }),
+        }),
+      ],
+      ["GET /mcp", await fetch(`${base}/mcp`)],
+      ["DELETE /mcp", await fetch(`${base}/mcp`, { method: "DELETE" })],
+      ["OPTIONS /mcp", await fetch(`${base}/mcp`, { method: "OPTIONS" })],
+    ];
+    for (const [route, res] of responses) {
+      expect({ route, csp: res.headers.get("content-security-policy") }).toEqual({
+        route,
+        csp: API_CONTENT_SECURITY_POLICY,
+      });
+    }
+  });
+
+  it("sends the API policy on the 403 for a non-allowlisted browser origin", async () => {
+    // The CORS middleware answers this before any route runs, so the header must be
+    // set ahead of it, not by the routes.
+    const res = await rawRequest(
+      base,
+      "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: https://evil.example.test\r\n" +
+        "Content-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    expect(res).toContain("403 Forbidden");
+    expect(res).toContain(`Content-Security-Policy: ${API_CONTENT_SECURITY_POLICY}\r\n`);
+  });
+
+  it("sends the API policy on the 429 from the /mcp rate limiter", async () => {
+    // The limiter answers before the route handler, so its response needs the header set ahead of it.
+    let limited: Response | undefined;
+    for (let i = 0; i < MCP_RATE_LIMIT_MAX + 5; i++) {
+      const res = await fetch(`${base}/mcp`);
+      if (res.status === 429) {
+        limited = res;
+        break;
+      }
+      await res.arrayBuffer();
+    }
+    if (!limited) throw new Error("expected the /mcp rate limiter to answer 429");
+    expect(limited.headers.get("content-security-policy")).toBe(API_CONTENT_SECURITY_POLICY);
+  });
+
+  it("sends the API policy on a 400 for a malformed JSON body to /mcp", async () => {
+    // The MCP handler rejects the body with a JSON-RPC parse error inside the route, so its 400
+    // must still carry the header set by the first middleware.
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "Mcp-Method": "tools/list",
+        "Mcp-Protocol-Version": "2026-07-28",
+      },
+      body: "{not json",
+    });
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-security-policy")).toBe(API_CONTENT_SECURITY_POLICY);
+  });
+
+  it("still sends a locked-down policy on an unknown path's 404", async () => {
+    // Express's finalhandler replaces the header with its own `default-src 'none'` on
+    // its 404 page — narrower than ours but still a policy, which is what QID 48001
+    // checks for. Asserting the shared core, not our exact string.
+    const res = await fetch(`${base}/no-such-route`);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-security-policy")).toMatch(/^default-src 'none'/);
+  });
+
+  it("sends the API policy on the openai-apps-challenge route's own 404", async () => {
+    // Unlike finalhandler's 404 above, this route's handler answers 404 itself with
+    // res.status(404).end(), so the first middleware's full API policy must survive.
+    const prior = process.env.OPENAI_APPS_CHALLENGE_TOKEN;
+    delete process.env.OPENAI_APPS_CHALLENGE_TOKEN;
+    try {
+      const res = await fetch(`${base}/.well-known/openai-apps-challenge`);
+      expect(res.status).toBe(404);
+      expect(res.headers.get("content-security-policy")).toBe(API_CONTENT_SECURITY_POLICY);
+    } finally {
+      if (prior === undefined) delete process.env.OPENAI_APPS_CHALLENGE_TOKEN;
+      else process.env.OPENAI_APPS_CHALLENGE_TOKEN = prior;
+    }
   });
 });
 
