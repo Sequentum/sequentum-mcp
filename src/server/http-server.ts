@@ -551,8 +551,9 @@ export async function startHttpServer(
     }
 
     // `private`, never `public`. The body varies by Host AND by req.protocol, which
-    // Express reads from X-Forwarded-Proto whenever it trusts the connecting hop —
-    // client-supplied when nothing in front overwrites it (see parseTrustProxy).
+    // Express reads from the leftmost X-Forwarded-Proto whenever TRUST_PROXY trusts
+    // the connecting hop, at any hop count — client-supplied when nothing in front
+    // overwrites it.
     // Host is part of a shared cache's key; the forwarded scheme is not, and is not
     // in Vary, so `public` would let one anonymous request pin an hour of "connect
     // over http://" onto the canonical page for every visitor.

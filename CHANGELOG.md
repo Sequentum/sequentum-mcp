@@ -61,7 +61,8 @@
   longer evades the `/mcp` rate limiter.** Under `true`, Express took `req.ip` from the
   leftmost, client-supplied entry of that header, so each new value opened a fresh rate-limit
   bucket. One trusted hop takes it from the entry the reverse proxy wrote. An unparseable
-  `TRUST_PROXY` now also falls back to `1`. `true` is still accepted when set explicitly.
+  `TRUST_PROXY` now also falls back to `1`. `true` is still accepted when set explicitly,
+  but keeps the bypass, as does the default with no proxy in front (set `false` there).
   Deployments behind more than one proxy must set the hop count or an allowlist.
 - **A token naming a signing key Control Center does not publish is now rejected with
   `401`.** It used to pass through unverified as `unknown-kid`, so a forged token with

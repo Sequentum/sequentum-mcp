@@ -34,9 +34,14 @@ function rawRequest(base: string, raw: string): Promise<string> {
 describe("POST /mcp through the real Express app", () => {
   let server: HttpServer;
   let base: string;
+  let savedTrustProxy: string | undefined;
 
   beforeEach(async () => {
     process.env.REQUIRE_AUTH = "false";
+    // Unset so the X-Forwarded-For test below exercises the default, not
+    // whatever TRUST_PROXY the shell running the suite happens to export.
+    savedTrustProxy = process.env.TRUST_PROXY;
+    delete process.env.TRUST_PROXY;
     server = await startHttpServer("https://api.example.test", "https://api.example.test", "9.9.9", 0, "127.0.0.1");
     const addr = server.address();
     if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
@@ -45,6 +50,8 @@ describe("POST /mcp through the real Express app", () => {
 
   afterEach(async () => {
     delete process.env.REQUIRE_AUTH;
+    if (savedTrustProxy === undefined) delete process.env.TRUST_PROXY;
+    else process.env.TRUST_PROXY = savedTrustProxy;
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
