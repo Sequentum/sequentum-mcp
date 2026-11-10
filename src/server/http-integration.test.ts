@@ -388,6 +388,24 @@ describe("/.well-known/oauth-protected-resource", () => {
     expect(text).not.toContain("registration_endpoint");
   });
 
+  it.each(["/auth.md", "/.well-known/auth.md"])(
+    "redirects %s to the issuer's own manifest",
+    async (path) => {
+      const res = await fetch(`${base}${path}`, { redirect: "manual" });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("https://issuer.example.test/auth.md");
+    }
+  );
+
+  it("serves no auth.md body of its own", async () => {
+    // Registration, claims and tokens live on the Control Center; a local copy of the
+    // manifest would drift, exactly as the authorization-server metadata copy did.
+    const res = await fetch(`${base}/auth.md`, { redirect: "manual" });
+    const text = await res.text();
+    expect(text).not.toContain("registration");
+    expect(res.headers.get("content-type") ?? "").not.toMatch(/markdown/);
+  });
+
   it("serves the SUPPORTED_SCOPES fallback when no scope source is injected (default wiring)", async () => {
     // No mock apiBaseUrl in this suite ever resolves to a real Control Center, so this is the
     // server's real default behaviour, not a stub standing in for it.
@@ -500,6 +518,12 @@ describe("GET / landing page", () => {
     const body = await (await fetch(`${base}/`)).text();
     expect(body).toContain(`${base}/mcp`);
     expect(body).not.toContain("mcp.sequentum.com");
+  });
+
+  it("links the auth.md manifest and says agents can register through it", async () => {
+    const body = await (await fetch(`${base}/`)).text();
+    expect(body).toContain('href="/auth.md"');
+    expect(body).toMatch(/agents can register/i);
   });
 
   it("does not shadow the protocol routes", async () => {
@@ -640,6 +664,8 @@ describe("Content-Security-Policy on every response (IT-2272)", () => {
         await fetch(`${base}/.well-known/oauth-authorization-server`, { redirect: "manual" }),
       ],
       ["GET /.well-known/glama.json", await fetch(`${base}/.well-known/glama.json`)],
+      ["GET /auth.md", await fetch(`${base}/auth.md`, { redirect: "manual" })],
+      ["GET /.well-known/auth.md", await fetch(`${base}/.well-known/auth.md`, { redirect: "manual" })],
       [
         "POST /mcp",
         await fetch(`${base}/mcp`, {
@@ -847,6 +873,23 @@ describe("token validation on /mcp (SE4-3856)", () => {
     const res = await post(`${input}.${Buffer.from(sig).toString("base64url")}`);
 
     expect(res.status).toBe(401);
+  });
+
+  it("answers a forged token naming a kid the JWKS lacks with 401, including inside the refetch cooldown", async () => {
+    // RS256, an invented kid, a future exp and a garbage signature used to
+    // reach tools/list unauthenticated. The first request triggers the JWKS fetch;
+    // the second lands inside the 60 s cooldown, which must not reopen the gate.
+    const forged = `${segment({ alg: "RS256", kid: "attacker-chosen" })}.${segment({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: process.env.MCP_CANONICAL_ORIGIN,
+    })}.${Buffer.from("not-a-signature").toString("base64url")}`;
+
+    for (const attempt of [1, 2]) {
+      const res = await post(forged);
+
+      expect(res.status, `attempt ${attempt}`).toBe(401);
+      expect(res.headers.get("www-authenticate"), `attempt ${attempt}`).toContain('error="invalid_token"');
+    }
   });
 
   it("answers a non-JWT bearer value with 401", async () => {

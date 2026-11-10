@@ -16,6 +16,14 @@
 - **The `SequentumApiClient` constructor dropped its `apiKey` parameter.** It is now
   `(baseUrl, requestTimeoutMs, maxRetries)`; authenticate with `setAccessToken()`.
 
+### Added
+
+- **`/auth.md` and `/.well-known/auth.md` redirect to the Control Center's auth.md manifest.**
+  An agent that only knows the MCP origin can now find how to register and claim a token; the
+  server keeps no copy of the manifest, as with the authorization-server metadata redirect. The
+  landing page links to it, and `oauth-scope-probe` gained an `--auth-md-email` mode that runs the
+  claim flow end to end against QA.
+
 ### Changed
 
 - **Production dependencies upgraded to clear `pnpm audit --prod`.** `@modelcontextprotocol/server`
@@ -53,6 +61,12 @@
 
 ### Fixed
 
+- **A token naming a signing key Control Center does not publish is now rejected with
+  `401`.** It used to pass through unverified as `unknown-kid`, so a forged token with
+  any key id and a future expiry reached the MCP handlers without credentials. When the
+  latest JWKS fetch succeeded and lacks the key id, the token is now rejected with reason
+  `unknown-kid`. Validation still fails open, as `jwks-unreachable`, when no usable key
+  set has been fetched or the latest fetch failed.
 - **Glama's browser-based MCP inspector can now reach the server.** `https://glama.ai` and
   its subdomains are in the built-in CORS origin allowlist (`src/server/cors.ts`).
   Requests from the inspector previously got a 403 on `/mcp`, and the preflight carried no

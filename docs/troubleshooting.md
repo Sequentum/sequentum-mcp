@@ -49,14 +49,19 @@ token:
 
     [MCP] auth=rejected reason=expired kid="STXjwgTe" age=417s client="claude-desktop"
 
-`reason` is one of `expired`, `bad-signature`, `malformed` or `bad-alg`.
+`reason` is one of `expired`, `bad-signature`, `malformed`, `bad-alg` or
+`unknown-kid`. `unknown-kid` means the latest fetch of the signing keys succeeded
+and none of them matches the token's key id: the token was not signed with Control
+Center's current key. After a signing-key change it also hits tokens signed with
+the previous key until they expire, and, for up to a minute, genuine new-key
+tokens until the next key fetch picks up the new key.
 
 Lines reading `auth=unverifiable` are **not** rejections — the request was passed
-through and the API decided it. Three reasons appear there:
+through and the API decided it. Two reasons appear there:
 
-- `jwks-unreachable` — the signing keys could not be fetched.
-- `unknown-kid` — the token was signed by a key we do not recognise, usually a
-  rotation we have not picked up yet.
+- `jwks-unreachable` — the signing keys could not be fetched, the fetched
+  document held no usable RS256 key, or the latest fetch failed and the token's
+  key is not among those cached.
 - `wrong-audience` — the token was minted for a different origin. This is
   recorded rather than rejected on purpose: a refresh reuses the original
   resource, so rejecting it would put the client in a 401/refresh loop it could
@@ -113,14 +118,19 @@ token:
 
     [MCP] auth=rejected reason=expired kid="STXjwgTe" age=417s client="claude-desktop"
 
-`reason` is one of `expired`, `bad-signature`, `malformed` or `bad-alg`.
+`reason` is one of `expired`, `bad-signature`, `malformed`, `bad-alg` or
+`unknown-kid`. `unknown-kid` means the latest fetch of the signing keys succeeded
+and none of them matches the token's key id: the token was not signed with Control
+Center's current key. After a signing-key change it also hits tokens signed with
+the previous key until they expire, and, for up to a minute, genuine new-key
+tokens until the next key fetch picks up the new key.
 
 Lines reading `auth=unverifiable` are **not** rejections — the request was passed
-through and the API decided it. Three reasons appear there:
+through and the API decided it. Two reasons appear there:
 
-- `jwks-unreachable` — the signing keys could not be fetched.
-- `unknown-kid` — the token was signed by a key we do not recognise, usually a
-  rotation we have not picked up yet.
+- `jwks-unreachable` — the signing keys could not be fetched, the fetched
+  document held no usable RS256 key, or the latest fetch failed and the token's
+  key is not among those cached.
 - `wrong-audience` — the token was minted for a different origin. This is
   recorded rather than rejected on purpose: a refresh reuses the original
   resource, so rejecting it would put the client in a 401/refresh loop it could
