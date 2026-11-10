@@ -154,6 +154,30 @@ describe("POST /mcp through the real Express app", () => {
     expect(RATE_LIMIT_ERROR_CODE).toBeGreaterThanOrEqual(-32019);
     expect(RATE_LIMIT_ERROR_CODE).toBeLessThanOrEqual(-32000);
   });
+
+  it("keys the rate limit on the proxy-written X-Forwarded-For entry, not the client's", async () => {
+    // A reverse proxy appends the address it saw to whatever X-Forwarded-For the
+    // client sent, so only the rightmost entry is trustworthy. Here the test
+    // client plays the proxy: the rightmost entry stays fixed while the leftmost,
+    // client-chosen one rotates. If rotating it opened a fresh bucket, a client
+    // could send unlimited requests per window.
+    const post = (forwardedFor: string) =>
+      fetch(`${base}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "x-forwarded-for": forwardedFor,
+        },
+        body: "{}",
+      });
+
+    const first = await post("203.0.113.10, 192.0.2.1");
+    const second = await post("198.51.100.77, 192.0.2.1");
+
+    const remaining = (res: Response) => Number(res.headers.get("ratelimit-remaining"));
+    expect(remaining(second)).toBe(remaining(first) - 1);
+  });
 });
 
 // Auth is the one behaviour on this route whose regression would be both silent
@@ -551,10 +575,10 @@ describe("GET / landing page", () => {
 
   it("is cacheable privately but never by a shared cache", async () => {
     // The body varies by Host (which a shared cache keys on) AND by the leftmost
-    // X-Forwarded-Proto (which it does not, and which is client-supplied under the
-    // default trust proxy: true). `public` would let one anonymous request pin an
-    // hour of "connect over http://" onto the canonical page; `private` keeps the
-    // browser cache without exposing a shared one. The absence of `public` is the
+    // X-Forwarded-Proto (which it does not, and which is client-supplied whenever
+    // nothing in front of the server overwrites it). `public` would let one
+    // anonymous request pin an hour of "connect over http://" onto the canonical
+    // page; `private` keeps the browser cache without exposing a shared one. The absence of `public` is the
     // security property here — assert it directly, not just the happy string.
     const res = await fetch(`${base}/`);
     expect(res.headers.get("cache-control")).toBe("private, max-age=3600");
