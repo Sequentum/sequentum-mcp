@@ -329,7 +329,7 @@ down. `MAX_SESSIONS` is no longer read.
 | `LIST_CACHE_TTL_MS` | `3600000` (1 hour) | Freshness hint (`ttlMs`) attached to cacheable list-shaped results (`tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`, `server/discover`). Must be a non-negative integer string; a malformed value fails fast at startup instead of being silently truncated. |
 | `MCP_RATE_LIMIT_WINDOW_MS` | `60000` (1 minute) | Rate-limit window applied to the `/mcp` endpoint. |
 | `MCP_RATE_LIMIT_MAX` | `100` | Maximum `/mcp` requests per window, per process, per IP. See "Rate limiting across replicas" below before scaling horizontally. |
-| `TRUST_PROXY` | `true` | Passed to Express's `trust proxy` setting. Accepts `true`, `false`, a hop count (e.g. `1`), or a comma-separated CIDR/IP allowlist. See "TRUST_PROXY and rate-limit evasion" below — the default has a known weakness. |
+| `TRUST_PROXY` | `1` | Passed to Express's `trust proxy` setting. Accepts `true`, `false`, a hop count (e.g. `1`), or a comma-separated CIDR/IP allowlist. The default trusts exactly one reverse proxy; see "TRUST_PROXY and rate-limit evasion" below before changing it, and never set it to `true` in production. |
 | `REQUIRE_AUTH` | `true` | Set to `false` to bypass the OAuth Bearer-token requirement on `/mcp`. For local testing only: the connection succeeds, but tools still fail without a valid backend token. |
 
 ### Rate limiting across replicas
@@ -343,19 +343,22 @@ rate, divide `MCP_RATE_LIMIT_MAX` by your replica count.
 
 ### TRUST_PROXY and rate-limit evasion
 
-With the default `TRUST_PROXY=true`, Express trusts every proxy hop and resolves
-`req.ip` from the client-supplied, leftmost entry of the `X-Forwarded-For` header.
-Because the rate limiter keys on `req.ip`, a client that simply rotates that header
-value can evade rate limiting entirely. Running behind a reverse proxy does not fix
-this by itself: tunnels such as cloudflared and ngrok **append** to `X-Forwarded-For`
-rather than overwrite it, so the attacker-controlled leftmost entry survives unless
-`TRUST_PROXY` is configured correctly.
+The rate limiter keys on `req.ip`, which Express derives from `X-Forwarded-For`
+according to `TRUST_PROXY`. Reverse proxies, including load balancers and tunnels such
+as cloudflared and ngrok, **append** the address they saw to that header rather than
+overwrite it, so its leftmost entries are whatever the client sent and only the
+entries added by your own proxies are trustworthy.
 
-The remediation is to set `TRUST_PROXY` to the exact number of trusted reverse-proxy
-hops in front of the server (e.g. `1`), or to a comma-separated CIDR/IP allowlist of
-your trusted proxies, so Express derives `req.ip` from the correct hop instead of
-trusting a client-supplied header. This repository does not know your deployment
-topology, so it deliberately does not choose a safer default for you.
+The default, `TRUST_PROXY=1`, trusts exactly one reverse proxy: Express takes `req.ip`
+from the rightmost entry, the one that proxy wrote. If more proxies sit in front of
+the server, set `TRUST_PROXY` to the exact number of hops, or to a comma-separated
+CIDR/IP allowlist of your trusted proxies. Run directly with no proxy, the default
+trusts a header the client wrote; set `TRUST_PROXY=false` there if the rate limit
+matters.
+
+`TRUST_PROXY=true` trusts every hop, so Express resolves `req.ip` from the
+client-supplied leftmost entry, and a client that simply rotates that header value can
+evade rate limiting entirely. It remains accepted, but only as an explicit opt-in.
 
 **Severity:** this is an abuse/DoS-protection bypass, not an authentication or data
 exposure issue — no account data is exposed, and no tool call succeeds that would

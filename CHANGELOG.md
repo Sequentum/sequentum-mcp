@@ -54,9 +54,20 @@
   "Insufficient Scope" tool error remains as the fallback for a 403 from the API itself.
 - Tool errors for a 401 or 403 from the Sequentum API no longer mention API keys. A 401
   now says to disconnect and reconnect the Sequentum MCP server to sign in again.
+- **Every HTTP response now carries a `Content-Security-Policy` header.** The policy is
+  `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`. The landing
+  page at `/` extends it with a SHA-256 hash that allows only its own inline stylesheet. MCP
+  clients are unaffected.
 
 ### Fixed
 
+- **`TRUST_PROXY` now defaults to `1` instead of `true`, so rotating `X-Forwarded-For` no
+  longer evades the `/mcp` rate limiter.** Under `true`, Express took `req.ip` from the
+  leftmost, client-supplied entry of that header, so each new value opened a fresh rate-limit
+  bucket. One trusted hop takes it from the entry the reverse proxy wrote. An unparseable
+  `TRUST_PROXY` now also falls back to `1`. `true` is still accepted when set explicitly,
+  but keeps the bypass, as does the default with no proxy in front (set `false` there).
+  Deployments behind more than one proxy must set the hop count or an allowlist.
 - **A token naming a signing key Control Center does not publish is now rejected with
   `401`.** It used to pass through unverified as `unknown-kid`, so a forged token with
   any key id and a future expiry reached the MCP handlers without credentials. When the

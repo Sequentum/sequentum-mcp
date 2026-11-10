@@ -12,7 +12,8 @@ import express, { NextFunction, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import { buildAuthChallenge } from "../utils/oauth-metadata.js";
 import { buildAllowedOrigins, isAllowedOrigin } from "./cors.js";
-import { renderLandingPage } from "./landing-page.js";
+import { LANDING_PAGE_CSP, renderLandingPage } from "./landing-page.js";
+import { API_CONTENT_SECURITY_POLICY } from "./csp.js";
 import { MCP_RATE_LIMIT_MAX, MCP_RATE_LIMIT_WINDOW_MS, RATE_LIMIT_ERROR_CODE } from "./constants.js";
 import { createJwksCache, type JwksKeySource } from "../utils/jwks-cache.js";
 import { createResourceScopesSource, type ResourceScopesSource } from "../utils/resource-scopes.js";
@@ -325,27 +326,30 @@ export function jsonRpcErrorMiddleware(err: unknown, _req: Request, res: Respons
   });
 }
 
+/** Trust exactly one reverse proxy unless TRUST_PROXY says otherwise. */
+const DEFAULT_TRUST_PROXY = 1;
+
 /**
  * Parse TRUST_PROXY into the value Express's `app.set("trust proxy", ...)`
  * expects: a boolean, a hop count, or a comma-separated CIDR/IP allowlist
- * (which Express accepts as a plain string). Defaults to `true` — identical
- * behaviour to the previous boolean-only `!== "false"` check when the env
- * var is unset.
+ * (which Express accepts as a plain string).
  *
- * KNOWN WEAKNESS at the default: `trust proxy: true` trusts every hop, so
- * Express resolves `req.ip` to the client-supplied leftmost X-Forwarded-For
- * entry. Because the rate limiter keys on `req.ip`, a client that simply
- * rotates that header can evade it entirely. The remediation is to set
- * TRUST_PROXY to the exact number of trusted reverse-proxy hops (e.g. "1")
- * or to a comma-separated CIDR/IP list of the trusted proxies — but the
- * correct value depends on deployment topology this repository does not
- * know, so it is deliberately NOT the default here.
+ * Defaults to `1`: trust exactly one reverse proxy. Express then resolves
+ * `req.ip` from the rightmost X-Forwarded-For entry, the one that proxy wrote,
+ * so a client cannot choose the address the rate limiter keys on. Set a larger
+ * hop count or an allowlist when more proxies sit in front of the server.
+ *
+ * `true` remains available as an explicit opt-in, with a known weakness: it
+ * trusts every hop, so `req.ip` becomes the client-supplied leftmost
+ * X-Forwarded-For entry and a client that rotates that header evades the rate
+ * limiter. Proxies append to the header rather than replace it, so running
+ * behind one does not help.
  */
 export function parseTrustProxy(raw: string | undefined): boolean | number | string {
-  if (raw === undefined) return true;
+  if (raw === undefined) return DEFAULT_TRUST_PROXY;
   const trimmed = raw.trim();
   // Empty/whitespace reads as "not configured", not as an empty allowlist.
-  if (trimmed === "") return true;
+  if (trimmed === "") return DEFAULT_TRUST_PROXY;
   // Case-insensitive: before SE4-3723 this was `TRUST_PROXY !== "false"`, so
   // "True" and " true " both meant true and booted. Treating them as an IP
   // allowlist instead makes Express throw and the server never start.
@@ -362,7 +366,7 @@ export function parseTrustProxy(raw: string | undefined): boolean | number | str
  * Express compiles an allowlist inside `app.set` and throws synchronously on anything
  * proxy-addr cannot parse, so an unparseable value left uncaught kills startup. Since we
  * cannot reliably out-guess that parser, catch it here: warn loudly and fall back to the
- * documented default, which is also the pre-SE4-3723 behaviour for such values.
+ * default, so a typo neither stops the server nor reopens the rate-limit bypass.
  */
 export function applyTrustProxy(app: express.Application, raw: string | undefined): void {
   const value = parseTrustProxy(raw);
@@ -371,10 +375,11 @@ export function applyTrustProxy(app: express.Application, raw: string | undefine
   } catch (err) {
     console.error(
       `[MCP] TRUST_PROXY=${JSON.stringify(raw)} is not a valid Express 'trust proxy' setting ` +
-        `(${err instanceof Error ? err.message : String(err)}). Falling back to true. Use ` +
+        `(${err instanceof Error ? err.message : String(err)}). Falling back to ` +
+        `${DEFAULT_TRUST_PROXY}. Use ` +
         `'true', 'false', a hop count, or a comma-separated CIDR/IP allowlist.`
     );
-    app.set("trust proxy", true);
+    app.set("trust proxy", DEFAULT_TRUST_PROXY);
   }
 }
 
@@ -442,8 +447,8 @@ export async function startHttpServer(
 
   // Trust X-Forwarded-Proto from reverse proxies (cloudflared, ngrok, etc.)
   // This ensures req.protocol returns 'https' when behind a TLS-terminating proxy.
-  // See parseTrustProxy's doc comment for the req.ip / rate-limiter evasion risk
-  // at the default and how to remediate it (hop count or CIDR/IP allowlist).
+  // See parseTrustProxy's doc comment for why the default is one hop and the
+  // req.ip / rate-limiter evasion risk of setting it to true.
   applyTrustProxy(app, process.env.TRUST_PROXY);
 
   // Deliberately NO express.json(). toNodeHandler reads the raw request stream;
@@ -453,6 +458,16 @@ export async function startHttpServer(
   // rather than reordered.
 
   const ALLOWED_ORIGINS = buildAllowedOrigins(process.env, DEBUG);
+
+  // Content-Security-Policy on every response (IT-2272, Qualys QID 48001). Mounted
+  // first so that responses answered by middleware — the CORS preflight and 403
+  // below, the auth gate's 401 — carry it too, not just the routes. The landing page
+  // overrides it with LANDING_PAGE_CSP to allow its own stylesheet. Express's own 404
+  // page (finalhandler) replaces it with `default-src 'none'`, still a policy.
+  app.use((_req: Request, res: Response, next) => {
+    res.setHeader("Content-Security-Policy", API_CONTENT_SECURITY_POLICY);
+    next();
+  });
 
   // CORS middleware - required for browser-based clients like MCP Inspector.
   // Reflects allowlisted origins; blocks /mcp requests from non-allowlisted browser origins.
@@ -547,19 +562,24 @@ export async function startHttpServer(
     }
 
     // `private`, never `public`. The body varies by Host AND by req.protocol, which
-    // Express reads from the leftmost X-Forwarded-Proto — client-supplied under the
-    // default `trust proxy: true` (see parseTrustProxy). Host is part of a shared
-    // cache's key; the forwarded scheme is not, and is not in Vary, so `public` would
-    // let one anonymous request pin an hour of "connect over http://" onto the
-    // canonical page for every visitor.
+    // Express reads from the leftmost X-Forwarded-Proto whenever TRUST_PROXY trusts
+    // the connecting hop, at any hop count — client-supplied when nothing in front
+    // overwrites it.
+    // Host is part of a shared cache's key; the forwarded scheme is not, and is not
+    // in Vary, so `public` would let one anonymous request pin an hour of "connect
+    // over http://" onto the canonical page for every visitor.
     //
     // `private` bars shared caches — where that attack lives — while still letting the
     // visitor's own browser cache: a browser does not send X-Forwarded-Proto, and no
     // one can reach another user's private cache. The 400s above stay no-store; an
     // error is never worth storing.
+    // The strict API policy (set by the first middleware) would block the page's
+    // inline stylesheet; LANDING_PAGE_CSP allows exactly that stylesheet by hash. Set
+    // only here, on the 200, so the text/plain 400 above keeps the strict policy.
     res
       .type("html")
       .set("Cache-Control", "private, max-age=3600")
+      .set("Content-Security-Policy", LANDING_PAGE_CSP)
       .send(renderLandingPage(origin));
   });
 
