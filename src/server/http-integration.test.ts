@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server as HttpServer } from "node:http";
 import { startHttpServer } from "./http-server.js";
 import glamaClaim from "./well-known/glama.json" with { type: "json" };
-import { RATE_LIMIT_ERROR_CODE } from "./constants.js";
+import { MCP_RATE_LIMIT_MAX, RATE_LIMIT_ERROR_CODE } from "./constants.js";
 import { connect } from "node:net";
 import { SUPPORTED_SCOPES } from "../utils/oauth-metadata.js";
 import type { ResourceScopesSource } from "../utils/resource-scopes.js";
@@ -677,6 +677,38 @@ describe("Content-Security-Policy on every response (IT-2272)", () => {
     expect(res).toContain(`Content-Security-Policy: ${API_CONTENT_SECURITY_POLICY}\r\n`);
   });
 
+  it("sends the API policy on the 429 from the /mcp rate limiter", async () => {
+    // The limiter answers before the route handler, so its response needs the header set ahead of it.
+    let limited: Response | undefined;
+    for (let i = 0; i < MCP_RATE_LIMIT_MAX + 5; i++) {
+      const res = await fetch(`${base}/mcp`);
+      if (res.status === 429) {
+        limited = res;
+        break;
+      }
+      await res.arrayBuffer();
+    }
+    if (!limited) throw new Error("expected the /mcp rate limiter to answer 429");
+    expect(limited.headers.get("content-security-policy")).toBe(API_CONTENT_SECURITY_POLICY);
+  });
+
+  it("sends the API policy on a 400 for a malformed JSON body to /mcp", async () => {
+    // The MCP handler rejects the body with a JSON-RPC parse error inside the route, so its 400
+    // must still carry the header set by the first middleware.
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "Mcp-Method": "tools/list",
+        "Mcp-Protocol-Version": "2026-07-28",
+      },
+      body: "{not json",
+    });
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-security-policy")).toBe(API_CONTENT_SECURITY_POLICY);
+  });
+
   it("still sends a locked-down policy on an unknown path's 404", async () => {
     // Express's finalhandler replaces the header with its own `default-src 'none'` on
     // its 404 page — narrower than ours but still a policy, which is what QID 48001
@@ -684,6 +716,21 @@ describe("Content-Security-Policy on every response (IT-2272)", () => {
     const res = await fetch(`${base}/no-such-route`);
     expect(res.status).toBe(404);
     expect(res.headers.get("content-security-policy")).toMatch(/^default-src 'none'/);
+  });
+
+  it("sends the API policy on the openai-apps-challenge route's own 404", async () => {
+    // Unlike finalhandler's 404 above, this route's handler answers 404 itself with
+    // res.status(404).end(), so the first middleware's full API policy must survive.
+    const prior = process.env.OPENAI_APPS_CHALLENGE_TOKEN;
+    delete process.env.OPENAI_APPS_CHALLENGE_TOKEN;
+    try {
+      const res = await fetch(`${base}/.well-known/openai-apps-challenge`);
+      expect(res.status).toBe(404);
+      expect(res.headers.get("content-security-policy")).toBe(API_CONTENT_SECURITY_POLICY);
+    } finally {
+      if (prior === undefined) delete process.env.OPENAI_APPS_CHALLENGE_TOKEN;
+      else process.env.OPENAI_APPS_CHALLENGE_TOKEN = prior;
+    }
   });
 });
 

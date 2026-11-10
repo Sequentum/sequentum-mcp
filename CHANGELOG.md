@@ -46,6 +46,10 @@
   "Insufficient Scope" tool error remains as the fallback for a 403 from the API itself.
 - Tool errors for a 401 or 403 from the Sequentum API no longer mention API keys. A 401
   now says to disconnect and reconnect the Sequentum MCP server to sign in again.
+- **Every HTTP response now carries a `Content-Security-Policy` header.** The policy is
+  `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`. The landing
+  page at `/` extends it with a SHA-256 hash that allows only its own inline stylesheet. MCP
+  clients are unaffected.
 
 ### Fixed
 
