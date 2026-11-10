@@ -153,15 +153,12 @@ function getMcpServerOrigin(req: Request): string {
  * `http://undefined`. HTTP/1.0 allows no Host at all; the protocol routes have always
  * tolerated that, but the landing page puts the result in front of a human, so a
  * caller that cannot tell us who we are gets a 400 rather than a page of nonsense.
- * With `MCP_CANONICAL_ORIGIN` set we already know who we are, so Host is not read and
- * the 400 cannot happen.
+ * With `MCP_CANONICAL_ORIGIN` set to a parseable value we already know who we are, so
+ * Host is not read and the 400 cannot happen; a set but unparseable value is Host mode.
  */
 function requireOrigin(req: Request): string {
-  const configured = configuredOrigin();
-  if (configured) return configured;
-  const host = req.get("host");
-  if (!host) throw new Error("missing Host header");
-  return new URL(`${req.protocol}://${host}`).origin;
+  if (configuredOrigin() === null && !req.get("host")) throw new Error("missing Host header");
+  return getMcpServerOrigin(req);
 }
 
 /**
@@ -215,7 +212,7 @@ export function auditCanonicalOrigin(): void {
 
   if (parseOrigin(configured) === null) {
     console.error(
-      `[MCP] Warning: MCP_CANONICAL_ORIGIN=${JSON.stringify(configured)} is not a valid URL; ` +
+      `[MCP] Warning: MCP_CANONICAL_ORIGIN=${JSON.stringify(configured)} is not a valid http(s) URL; ` +
       "the OAuth metadata, auth challenges and token audience validation will use " +
       "the caller-supplied Host header"
     );
@@ -562,7 +559,7 @@ export async function startHttpServer(
   // them, so it belongs here and not in the ingress.
   app.get("/", (req: Request, res: Response) => {
     // Resolve the origin BEFORE touching the response. In Host mode (MCP_CANONICAL_ORIGIN
-    // unset) `requireOrigin` throws on a missing Host or one the URL parser rejects
+    // unset or unparseable) `requireOrigin` throws on a missing Host or one the URL parser rejects
     // (`a<b`, an embedded space), and if the headers are already set by then the error
     // middleware ships a JSON-RPC body still labelled text/html, logged against /mcp on a
     // request that never went there.
@@ -574,11 +571,11 @@ export async function startHttpServer(
       return;
     }
 
-    // `private`, never `public`. With MCP_CANONICAL_ORIGIN unset the body varies by Host
-    // AND by req.protocol (set, it varies by neither, and `private` is kept so both modes
-    // send one header). Express reads req.protocol from the leftmost X-Forwarded-Proto
-    // whenever TRUST_PROXY trusts the connecting hop, at any hop count — client-supplied
-    // when nothing in front overwrites it.
+    // `private`, never `public`. In Host mode the body varies by Host AND by req.protocol
+    // (with a parseable MCP_CANONICAL_ORIGIN it varies by neither, and `private` is kept
+    // so both modes send one header). Express reads req.protocol from the leftmost
+    // X-Forwarded-Proto whenever TRUST_PROXY trusts the connecting hop, at any hop
+    // count — client-supplied when nothing in front overwrites it.
     // Host is part of a shared cache's key; the forwarded scheme is not, and is not
     // in Vary, so `public` would let one anonymous request pin an hour of "connect
     // over http://" onto the canonical page for every visitor.

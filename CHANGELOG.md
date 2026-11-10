@@ -71,13 +71,14 @@
 - **A spoofed `Host` header no longer changes the origin the server advertises.** With
   `MCP_CANONICAL_ORIGIN` set, it is now also the `resource` in
   `/.well-known/oauth-protected-resource`, the `realm` and `resource_metadata` of the 401
-  and 403 `WWW-Authenticate` challenges, and the endpoint on the landing page, which
+  `WWW-Authenticate` challenge, the `resource_metadata` of the 403 one, and the endpoint
+  on the landing page, which
   previously all echoed the caller's `Host` (and scheme from `X-Forwarded-Proto`). With it
   set, the landing page no longer answers `400` to a request without `Host`. Unset, behaviour
   is unchanged. A value that is not an `http(s)` URL, such as a scheme-less `localhost:3000`,
   now counts as unparseable and falls back to `Host` with the startup warning, instead of
-  being taken as the origin `null`. The challenge `realm` also drops `"` and `,`, which a
-  `Host` could use to break out of the quoted value.
+  being taken as the origin `null`. The challenge `realm` also drops `"`, which a `Host`
+  could use to break out of the quoted value, and `,`, which naive parsers split on.
 - **A token naming a signing key Control Center does not publish is now rejected with
   `401`.** It used to pass through unverified as `unknown-kid`, so a forged token with
   any key id and a future expiry reached the MCP handlers without credentials. When the

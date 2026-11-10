@@ -34,6 +34,27 @@ function rawRequest(base: string, raw: string): Promise<string> {
   });
 }
 
+// MCP_CANONICAL_ORIGIN now decides the advertised resource, the challenges and the landing
+// page, so a value left exported in the shell running the suite would fail every Host-mode
+// test below. TRUST_PROXY decides whether a spoofed X-Forwarded-Proto reaches req.protocol,
+// so a shell `TRUST_PROXY=false` would make the spoof tests pass vacuously. Suites that need
+// either set it themselves; this restores the shell's values after.
+const SCRUBBED_ENV = ["MCP_CANONICAL_ORIGIN", "TRUST_PROXY"] as const;
+const savedEnv: Partial<Record<(typeof SCRUBBED_ENV)[number], string>> = {};
+beforeEach(() => {
+  for (const name of SCRUBBED_ENV) {
+    savedEnv[name] = process.env[name];
+    delete process.env[name];
+  }
+});
+afterEach(() => {
+  for (const name of SCRUBBED_ENV) {
+    const saved = savedEnv[name];
+    if (saved === undefined) delete process.env[name];
+    else process.env[name] = saved;
+  }
+});
+
 describe("POST /mcp through the real Express app", () => {
   let server: HttpServer;
   let base: string;
@@ -533,11 +554,15 @@ describe("MCP_CANONICAL_ORIGIN pins the advertised origin", () => {
   });
 
   it("ignores a spoofed X-Forwarded-Proto when the canonical origin is set", async () => {
+    // The connection is plain http, so the spoof must claim https to change anything:
+    // the default one-hop TRUST_PROXY trusts loopback, so req.protocol becomes "https"
+    // and an origin that took its scheme from the request would advertise https.
+    process.env.MCP_CANONICAL_ORIGIN = "http://mcp.example.test";
     const res = await fetch(`${base}/.well-known/oauth-protected-resource`, {
-      headers: { "x-forwarded-proto": "http" },
+      headers: { "x-forwarded-proto": "https" },
     });
     const body = (await res.json()) as { resource: string };
-    expect(body.resource).toBe(CANONICAL);
+    expect(body.resource).toBe("http://mcp.example.test");
   });
 
   it("points the 401 challenge at the canonical origin whatever Host says", async () => {
@@ -722,6 +747,15 @@ describe("GET / landing page", () => {
   });
 
   it("rejects a request with no Host rather than rendering http://undefined", async () => {
+    const res = await rawRequest(base, "GET / HTTP/1.0\r\n\r\n");
+    expect(res).toContain("400 Bad Request");
+    expect(res).not.toContain("undefined");
+  });
+
+  it("still rejects a request with no Host when MCP_CANONICAL_ORIGIN is set but unparseable", async () => {
+    // A set but unparseable value is Host mode, so the guard must test the parsed
+    // origin, not whether the variable is present.
+    process.env.MCP_CANONICAL_ORIGIN = "localhost:3000";
     const res = await rawRequest(base, "GET / HTTP/1.0\r\n\r\n");
     expect(res).toContain("400 Bad Request");
     expect(res).not.toContain("undefined");
@@ -1192,11 +1226,12 @@ describe("token validation on /mcp (SE4-3856)", () => {
       expect(errors.some((line) => line.includes("wrong-audience"))).toBe(false);
       // The per-request path stays quiet; auditCanonicalOrigin owns the warning.
       // Without this, reinstating a per-request warn would go unnoticed.
-      expect(errors.some((line) => line.includes("not a valid URL"))).toBe(false);
+      expect(errors.some((line) => line.includes("not a valid http(s) URL"))).toBe(false);
     });
 
     it("still rejects an expired token, so the fallback does not weaken the gate", async () => {
-      // The fallback must only affect which origin `aud` is compared against.
+      // The fallback changes which origin is advertised and which `aud` is expected,
+      // never whether the token is checked.
       // Expiry is checked before the audience, so a malformed env value must not
       // turn the SE4-3856 regression guard back into a 200.
       const token = await mint({

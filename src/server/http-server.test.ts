@@ -365,8 +365,8 @@ describe("shutdownInstance", () => {
 });
 
 describe("auditCanonicalOrigin", () => {
-  // The audience-comparison mode is reported once here rather than on every
-  // request: MCP_CANONICAL_ORIGIN comes from the task definition and cannot
+  // The origin mode (for the metadata, the challenges and the aud check) is reported
+  // once here rather than on every request: MCP_CANONICAL_ORIGIN comes from the task definition and cannot
   // change while the process lives, so a per-request warning would repeat one
   // unchanging fact forever. That makes startup the only place an operator
   // learns the server fell back to the spoofable Host header -- and the only
@@ -408,7 +408,7 @@ describe("auditCanonicalOrigin", () => {
 
     auditCanonicalOrigin();
 
-    expect(lines.join(" ")).toMatch(/not a valid URL/);
+    expect(lines.join(" ")).toMatch(/not a valid http\(s\) URL/);
     // The bad value is echoed so the operator can see the typo, not just that
     // one exists.
     expect(lines.join(" ")).toContain("mcp.sequentum.com");
@@ -420,7 +420,7 @@ describe("auditCanonicalOrigin", () => {
 
     auditCanonicalOrigin();
 
-    expect(lines.join(" ")).toMatch(/not a valid URL/);
+    expect(lines.join(" ")).toMatch(/not a valid http\(s\) URL/);
   });
 
   it("stays silent on a valid origin, including one carrying a path", () => {
