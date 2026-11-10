@@ -340,13 +340,17 @@ describe("validateToken", () => {
     });
   });
 
-  it("reports unknown-kid as unverifiable for an otherwise fresh token", async () => {
+  it("rejects a token whose kid a successful JWKS fetch does not hold", async () => {
+    // the key source answers "unknown" only after a fetch that completed,
+    // so the kid is definitely not Control Center's. Passing it through skipped the
+    // signature check entirely.
     const pair = await generatePair();
     const token = await signJwt(pair.privateKey, { alg: "RS256", kid: "rotated" }, { exp: future(), aud: ORIGIN });
 
-    expect(await validateToken(token, ORIGIN, keySource({}))).toMatchObject({
-      kind: "unverifiable",
+    expect(await validateToken(token, ORIGIN, keySource({}))).toEqual({
+      kind: "rejected",
       reason: "unknown-kid",
+      kid: "rotated",
     });
   });
 

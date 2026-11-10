@@ -714,6 +714,23 @@ describe("token validation on /mcp (SE4-3856)", () => {
     expect(res.status).toBe(401);
   });
 
+  it("answers a forged token naming a kid the JWKS lacks with 401, including inside the refetch cooldown", async () => {
+    // RS256, an invented kid, a future exp and a garbage signature used to
+    // reach tools/list unauthenticated. The first request triggers the JWKS fetch;
+    // the second lands inside the 60 s cooldown, which must not reopen the gate.
+    const forged = `${segment({ alg: "RS256", kid: "attacker-chosen" })}.${segment({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: process.env.MCP_CANONICAL_ORIGIN,
+    })}.${Buffer.from("not-a-signature").toString("base64url")}`;
+
+    for (const attempt of [1, 2]) {
+      const res = await post(forged);
+
+      expect(res.status, `attempt ${attempt}`).toBe(401);
+      expect(res.headers.get("www-authenticate"), `attempt ${attempt}`).toContain('error="invalid_token"');
+    }
+  });
+
   it("answers a non-JWT bearer value with 401", async () => {
     const res = await post("sk-not-a-jwt");
     expect(res.status).toBe(401);

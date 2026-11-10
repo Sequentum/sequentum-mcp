@@ -90,6 +90,86 @@ describe("createJwksCache", () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps reporting an unknown kid inside the cooldown after a successful fetch", async () => {
+    // the fetch that just completed is a definite negative for any kid it
+    // lacked. If the cooldown downgraded this to "could not check", a caller could
+    // spend one request on the fetch and pass the gate with the next.
+    const { jwk } = await keyFixture("k1");
+    const fetchFn = vi.fn().mockResolvedValue(jwksResponse([jwk]));
+    const cache = createJwksCache(API, { fetchFn: fetchFn as unknown as typeof fetch, now: () => 1_000_000 });
+
+    await cache.getKey("bogus-1");
+    const result = await cache.getKey("bogus-2");
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ kind: "unknown" });
+  });
+
+  it("reports unreachable for an uncached kid when the latest refetch failed", async () => {
+    // Stale keys are still cached, but the refetch that could have produced this kid
+    // never landed, so its absence proves nothing.
+    const { jwk } = await keyFixture("k1");
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(jwksResponse([jwk]))
+      .mockRejectedValue(new Error("ECONNREFUSED"));
+    let clock = 1_000_000;
+    const cache = createJwksCache(API, { fetchFn: fetchFn as unknown as typeof fetch, now: () => clock });
+
+    await cache.getKey("k1");
+    clock += JWKS_TTL_MS + 1;
+
+    expect(await cache.getKey("rotated")).toEqual({ kind: "unreachable" });
+  });
+
+  it("keeps reporting unreachable inside the cooldown after a failed refetch", async () => {
+    const { jwk } = await keyFixture("k1");
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(jwksResponse([jwk]))
+      .mockResolvedValue(new Response("nope", { status: 503 }));
+    let clock = 1_000_000;
+    const cache = createJwksCache(API, { fetchFn: fetchFn as unknown as typeof fetch, now: () => clock });
+
+    await cache.getKey("k1");
+    clock += JWKS_TTL_MS + 1;
+    await cache.getKey("rotated");
+    const result = await cache.getKey("rotated");
+
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ kind: "unreachable" });
+  });
+
+  it("treats a refetch that would empty a populated cache as failed", async () => {
+    const { jwk } = await keyFixture("k1");
+    const fetchFn = vi.fn().mockResolvedValueOnce(jwksResponse([jwk])).mockResolvedValue(jwksResponse([]));
+    let clock = 1_000_000;
+    const cache = createJwksCache(API, { fetchFn: fetchFn as unknown as typeof fetch, now: () => clock });
+
+    await cache.getKey("k1");
+    clock += JWKS_TTL_MS + 1;
+
+    expect(await cache.getKey("rotated")).toEqual({ kind: "unreachable" });
+  });
+
+  it("reports unknown again once a refetch succeeds after a failure", async () => {
+    const { jwk } = await keyFixture("k1");
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(jwksResponse([jwk]))
+      .mockRejectedValueOnce(new Error("ECONNREFUSED"))
+      .mockResolvedValue(jwksResponse([jwk]));
+    let clock = 1_000_000;
+    const cache = createJwksCache(API, { fetchFn: fetchFn as unknown as typeof fetch, now: () => clock });
+
+    await cache.getKey("k1");
+    clock += JWKS_TTL_MS + 1;
+    await cache.getKey("rotated");
+    clock += JWKS_REFETCH_COOLDOWN_MS + 1;
+
+    expect(await cache.getKey("rotated")).toEqual({ kind: "unknown" });
+  });
+
   it("reports unreachable when the fetch rejects and nothing is cached", async () => {
     const fetchFn = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
     const cache = createJwksCache(API, { fetchFn: fetchFn as unknown as typeof fetch });
@@ -120,8 +200,10 @@ describe("createJwksCache", () => {
   });
 
   it("ignores non-RS256 and malformed JWKS entries", async () => {
+    const { jwk } = await keyFixture("k1");
     const fetchFn = vi.fn().mockResolvedValue(
       jwksResponse([
+        jwk,
         { kty: "oct", kid: "sym", k: "AAAA" },
         { kty: "RSA", kid: "no-modulus", alg: "RS256", e: "AQAB" },
         { kty: "RSA", kid: "wrong-alg", alg: "RS512", n: "AAAA", e: "AQAB" },
@@ -132,6 +214,15 @@ describe("createJwksCache", () => {
     expect(await cache.getKey("sym")).toEqual({ kind: "unknown" });
     expect(await cache.getKey("no-modulus")).toEqual({ kind: "unknown" });
     expect(await cache.getKey("wrong-alg")).toEqual({ kind: "unknown" });
+  });
+
+  it("reports unreachable when the JWKS holds no usable key at all", async () => {
+    // A document with nothing importable says nothing about any kid. Calling every kid
+    // "unknown" here would reject every token if key import ever broke.
+    const fetchFn = vi.fn().mockResolvedValue(jwksResponse([{ kty: "oct", kid: "sym", k: "AAAA" }]));
+    const cache = createJwksCache(API, { fetchFn: fetchFn as unknown as typeof fetch });
+
+    expect(await cache.getKey("sym")).toEqual({ kind: "unreachable" });
   });
 
   it("imports a key whose n/e use the standard base64 alphabet, matching what Control Center actually serves", async () => {
@@ -146,7 +237,7 @@ describe("createJwksCache", () => {
     // This currently works only because Node's crypto.subtle.importKey happens to
     // accept the standard alphabet for a JWK import too. Nothing pins that. If it
     // ever stops, every JWKS entry silently fails to import, the cache stays empty,
-    // and every request degrades to unverifiable: unknown-kid -- with no test here
+    // and every request degrades to unverifiable: jwks-unreachable -- with no test here
     // failing to say why.
     const { jwk } = await keyFixture("k1");
     const standardJwk = {
