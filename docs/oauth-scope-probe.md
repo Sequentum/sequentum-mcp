@@ -137,21 +137,29 @@ MCP build that dispatches a mismatched call instead of challenging it.
    run proves enforcement as well as acceptance.
 4. **Claim.** Prints the verification URI and the code (and opens the URI in your browser when it
    is on the environment under test). Sign in as that email and enter the code on that page. The
-   probe polls the claim grant at the interval the server asks for, backs off on `slow_down`, and
-   asks for a fresh code if the first expires. It gives up after five minutes. The code goes from
-   the terminal to the browser, never back.
+   probe polls the claim grant at the interval the server asks for, backs off on `slow_down`,
+   polls through a `5xx` or a dropped connection, and asks for a fresh code if the first expires.
+   It gives up after five minutes. The code goes from the terminal to the browser, never back.
 5. **Exchange.** Trades the identity assertion for an access token with
    `resource=<MCP origin>` and checks the token carries exactly the requested scopes and an
-   audience the MCP server accepts.
+   audience on the MCP origin. When a response has no `scope`, the token's own `scope` claim is
+   judged instead, since that is what the MCP server enforces; only if neither exists is the
+   requested scope assumed. The claim grant's token is checked the same way.
 6. **Call `/mcp`.** `list_agents` and `get_agent_runs` must succeed; `list_spaces` and
    `get_credits_balance` must be answered `403 insufficient_scope` naming the missing scope.
-7. **Re-exchange.** Exchanges the new assertion the first exchange returned, then repeats the
-   calls with the second token. `--skip-mcp` skips both rounds of calls.
-8. **Revoke.** Ends the registration with the assertion, which the run's last report row
-   confirms.
+   `get_agent_runs` needs an agent: pass `--agent-id`, or the first agent the token can list is
+   used, and the row reads `skipped` when there is none.
+7. **Re-exchange.** Exchanges the new assertion the first exchange returned, checks its scope
+   again, then repeats the calls with the second token. `--skip-mcp` skips both rounds of calls.
+8. **Revoke.** Ends the registration with the assertion. The run's last report row shows what the
+   Control Center answered; a `200` cannot prove the assertion was recognised (RFC 7009 answers
+   `200` for unknown tokens too). If the metadata advertises no `revocation_endpoint`, or the claim
+   poll failed so there is no assertion to revoke with, the row fails as `not attempted` and the
+   registration may be left live.
 
 Residue: one registration, revoked at the end. If the run dies between the claim and the
-revoke, the registration is left until its user revokes it in the Control Center.
+revoke, or the revoke row fails, the registration is left until its user revokes it in the
+Control Center.
 
 ## Reading the result
 
