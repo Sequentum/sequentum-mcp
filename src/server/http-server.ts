@@ -12,7 +12,8 @@ import express, { NextFunction, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import { buildAuthChallenge } from "../utils/oauth-metadata.js";
 import { buildAllowedOrigins, isAllowedOrigin } from "./cors.js";
-import { renderLandingPage } from "./landing-page.js";
+import { LANDING_PAGE_CSP, renderLandingPage } from "./landing-page.js";
+import { API_CONTENT_SECURITY_POLICY } from "./csp.js";
 import { MCP_RATE_LIMIT_MAX, MCP_RATE_LIMIT_WINDOW_MS, RATE_LIMIT_ERROR_CODE } from "./constants.js";
 import { createJwksCache, type JwksKeySource } from "../utils/jwks-cache.js";
 import { createResourceScopesSource, type ResourceScopesSource } from "../utils/resource-scopes.js";
@@ -454,6 +455,16 @@ export async function startHttpServer(
 
   const ALLOWED_ORIGINS = buildAllowedOrigins(process.env, DEBUG);
 
+  // Content-Security-Policy on every response (IT-2272, Qualys QID 48001). Mounted
+  // first so that responses answered by middleware — the CORS preflight and 403
+  // below, the auth gate's 401 — carry it too, not just the routes. The landing page
+  // overrides it with LANDING_PAGE_CSP to allow its own stylesheet. Express's own 404
+  // page (finalhandler) replaces it with `default-src 'none'`, still a policy.
+  app.use((_req: Request, res: Response, next) => {
+    res.setHeader("Content-Security-Policy", API_CONTENT_SECURITY_POLICY);
+    next();
+  });
+
   // CORS middleware - required for browser-based clients like MCP Inspector.
   // Reflects allowlisted origins; blocks /mcp requests from non-allowlisted browser origins.
   app.use((req: Request, res: Response, next) => {
@@ -557,9 +568,13 @@ export async function startHttpServer(
     // visitor's own browser cache: a browser does not send X-Forwarded-Proto, and no
     // one can reach another user's private cache. The 400s above stay no-store; an
     // error is never worth storing.
+    // The strict API policy (set by the first middleware) would block the page's
+    // inline stylesheet; LANDING_PAGE_CSP allows exactly that stylesheet by hash. Set
+    // only here, on the 200, so the text/plain 400 above keeps the strict policy.
     res
       .type("html")
       .set("Cache-Control", "private, max-age=3600")
+      .set("Content-Security-Policy", LANDING_PAGE_CSP)
       .send(renderLandingPage(origin));
   });
 

@@ -6,6 +6,9 @@
  * and the origin it passes in; this module owns only the markup.
  */
 
+import { createHash } from "node:crypto";
+import { API_CONTENT_SECURITY_POLICY } from "./csp.js";
+
 /**
  * Escape the five HTML metacharacters.
  *
@@ -32,42 +35,14 @@ export function escapeHtml(value: string): string {
 }
 
 /**
- * The document served at the bare origin. See the `GET /` route for why it exists.
+ * The page's entire stylesheet: the exact text of its single `<style>` element.
  *
- * Styling follows the two existing sources of record rather than inventing a look:
- *   - se4-main `SeSharedClient/ClientApp/src/styles/tokens.css` — the product token
- *     contract (radius, spacing, elevation, the electric/spark brand pair)
- *   - sequentum-docs `docs.json` — the Mintlify theme behind docs.sequentum.com
- *     (primary #5248f9, light #7c74fb, dark #14163b)
- * Where the two disagree the docs win, because this page sits next to the docs site
- * rather than inside the product shell: the navy here is the docs' #14163b, which
- * tokens.css also records as a retone it has deferred for the product apps.
- *
- * The dark-mode ramp (#1f2250, #31365d, #a9abbc) is derived here rather than quoted:
- * neither source defines a dark surface set, so don't go looking for these in
- * tokens.css.
- *
- * Inter leads the font stack to match the token vocabulary but is never fetched — a
- * webfont would mean an external request from a protocol server, so this falls back
- * to the system face when Inter is not installed locally. The wordmark is likewise
- * not embedded: the brand signature here is the spark dot and the electric accent,
- * not 9KB of SVG path data inlined into a TypeScript file.
- *
- * The endpoint is interpolated from the request rather than hardcoded so QA and a
- * local run advertise themselves: a page telling a QA user to connect to production
- * would be worse than the 404 it replaces. Everything else is static — no version
- * string, no scripts, no external assets, nothing to keep in sync.
+ * Kept as its own constant, with nothing interpolated, because `LANDING_PAGE_CSP`
+ * allows it by SHA-256 hash. A browser hashes the element's text byte for byte, so
+ * the policy and the markup must be built from this one string — and it must not
+ * vary by request, or one precomputed hash could not match every host.
  */
-export function renderLandingPage(origin: string): string {
-  const endpoint = escapeHtml(`${origin}/mcp`);
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sequentum MCP Server</title>
-<meta name="description" content="Turn the web into structured, reliable, actionable enterprise data for AI Agents.">
-<style>
+const LANDING_PAGE_STYLE = `
   :root {
     --navy: #14163b;
     --electric: #5248f9;
@@ -183,7 +158,59 @@ export function renderLandingPage(origin: string): string {
     box-shadow: 0 0 0 2px rgba(82, 72, 249, 0.20);
   }
   p a { color: var(--link); }
-</style>
+`;
+
+/**
+ * The Content-Security-Policy sent with the landing page (IT-2272).
+ *
+ * The API policy alone sets `default-src 'none'`, which also blocks inline styles and
+ * would serve this page unstyled. So it is extended by exactly one source: the SHA-256
+ * hash of `LANDING_PAGE_STYLE`. That is tighter than `'unsafe-inline'` — an injected
+ * `<style>` or `style=` attribute still would not apply — and the page has no script,
+ * image, font or external asset to allow. Computed once at module load.
+ */
+export const LANDING_PAGE_CSP =
+  `${API_CONTENT_SECURITY_POLICY}; style-src ` +
+  `'sha256-${createHash("sha256").update(LANDING_PAGE_STYLE, "utf8").digest("base64")}'`;
+
+/**
+ * The document served at the bare origin. See the `GET /` route for why it exists.
+ *
+ * Styling follows the two existing sources of record rather than inventing a look:
+ *   - se4-main `SeSharedClient/ClientApp/src/styles/tokens.css` — the product token
+ *     contract (radius, spacing, elevation, the electric/spark brand pair)
+ *   - sequentum-docs `docs.json` — the Mintlify theme behind docs.sequentum.com
+ *     (primary #5248f9, light #7c74fb, dark #14163b)
+ * Where the two disagree the docs win, because this page sits next to the docs site
+ * rather than inside the product shell: the navy here is the docs' #14163b, which
+ * tokens.css also records as a retone it has deferred for the product apps.
+ *
+ * The dark-mode ramp (#1f2250, #31365d, #a9abbc) is derived here rather than quoted:
+ * neither source defines a dark surface set, so don't go looking for these in
+ * tokens.css.
+ *
+ * Inter leads the font stack to match the token vocabulary but is never fetched — a
+ * webfont would mean an external request from a protocol server, so this falls back
+ * to the system face when Inter is not installed locally. The wordmark is likewise
+ * not embedded: the brand signature here is the spark dot and the electric accent,
+ * not 9KB of SVG path data inlined into a TypeScript file.
+ *
+ * The endpoint is interpolated from the request rather than hardcoded so QA and a
+ * local run advertise themselves: a page telling a QA user to connect to production
+ * would be worse than the 404 it replaces. Everything else is static — no version
+ * string, no scripts, no external assets, nothing to keep in sync. The stylesheet in
+ * particular must stay static: see `LANDING_PAGE_STYLE`.
+ */
+export function renderLandingPage(origin: string): string {
+  const endpoint = escapeHtml(`${origin}/mcp`);
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sequentum MCP Server</title>
+<meta name="description" content="Turn the web into structured, reliable, actionable enterprise data for AI Agents.">
+<style>${LANDING_PAGE_STYLE}</style>
 </head>
 <body>
 <div class="wordmark"><span class="dot"></span>Sequentum</div>
