@@ -395,6 +395,9 @@ describe("auditCanonicalOrigin", () => {
 
     expect(lines.join(" ")).toMatch(/MCP_CANONICAL_ORIGIN is unset/);
     expect(lines.join(" ")).toMatch(/Host header/);
+    // The fallback now covers more than the aud check, and the line is how an
+    // operator tells which mode a task runs in.
+    expect(lines.join(" ")).toMatch(/OAuth metadata/);
   });
 
   it("warns when set to a value new URL cannot parse", () => {
@@ -409,6 +412,15 @@ describe("auditCanonicalOrigin", () => {
     // The bad value is echoed so the operator can see the typo, not just that
     // one exists.
     expect(lines.join(" ")).toContain("mcp.sequentum.com");
+  });
+
+  it("warns on a scheme-less host:port, whose URL origin is the opaque \"null\"", () => {
+    process.env.MCP_CANONICAL_ORIGIN = "localhost:3000";
+    const lines = captureWarnings();
+
+    auditCanonicalOrigin();
+
+    expect(lines.join(" ")).toMatch(/not a valid URL/);
   });
 
   it("stays silent on a valid origin, including one carrying a path", () => {

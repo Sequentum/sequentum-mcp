@@ -77,7 +77,9 @@ export interface AuthChallenge {
 
 export function buildAuthChallenge(mcpServerOrigin: string): AuthChallenge {
   const prmUrl = `${mcpServerOrigin}/.well-known/oauth-protected-resource`;
-  const realm = new URL(mcpServerOrigin).host;
+  // `new URL` accepts `"` and `,` in a host, and a Host-derived origin can carry them:
+  // either would end the quoted realm early and inject parameters into the header.
+  const realm = new URL(mcpServerOrigin).host.replace(/[",]/g, "");
   return {
     wwwAuthenticate: `Bearer realm="${realm}", error="invalid_token", resource_metadata="${prmUrl}"`,
     body: {
