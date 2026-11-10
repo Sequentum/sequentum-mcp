@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { judgeGrant, judgeMcp, judgeV1, expectedLogLine, linesForToken, judgeTokenError, tokenExchangeRow, GENERIC_INVALID_GRANT } from "../scripts/oauth-scope-probe.mjs";
+import { judgeAuthMdRedirect, classifyClaimPoll, judgeRequestedScope, jwtAudience, judgeAudience } from "../scripts/oauth-scope-probe.mjs";
 
 // The MCP server answers a scope mismatch itself, before dispatch, in either mode.
 describe("judgeMcp — pre-dispatch scope challenge", () => {
@@ -265,5 +266,102 @@ describe("linesForToken — only this profile's lines", () => {
   it("matches a line whose values the logger quoted", () => {
     const quoted = `Scope check denied for GET /api/v1/spaces: required="spaces:read" granted="${SIX}" clientId="mcp-abc"`;
     expect(linesForToken([quoted], SIX, "mcp-abc")).toEqual([quoted]);
+  });
+});
+
+// the auth.md path.
+const MANIFEST = "https://dashboard-qa.sequentum.com/auth.md";
+const res = (status: number, text = "", headers: Record<string, string> = {}) => ({ status, text, headers: new Headers(headers) });
+
+describe("judgeAuthMdRedirect", () => {
+  it("passes a 302 to the issuer's manifest", () => {
+    expect(judgeAuthMdRedirect(res(302, "", { location: MANIFEST }), MANIFEST)).toMatchObject({ ok: true, note: "" });
+  });
+
+  it("fails a redirect to the wrong place, naming both", () => {
+    const j = judgeAuthMdRedirect(res(302, "", { location: "https://other.example/auth.md" }), MANIFEST);
+    expect(j.ok).toBe(false);
+    expect(j.note).toContain("other.example");
+    expect(j.note).toContain(MANIFEST);
+  });
+
+  it("fails a permanent redirect: the target is environment-specific", () => {
+    expect(judgeAuthMdRedirect(res(301, "", { location: MANIFEST }), MANIFEST).ok).toBe(false);
+  });
+
+  it("fails a 404, as an MCP build without the route answers", () => {
+    expect(judgeAuthMdRedirect(res(404), MANIFEST)).toMatchObject({ ok: false, observed: "HTTP 404" });
+  });
+});
+
+describe("classifyClaimPoll", () => {
+  const success = { access_token: "a", identity_assertion: "b", scope: "agents:read" };
+
+  it("recognises a completed claim", () => {
+    expect(classifyClaimPoll(res(200, JSON.stringify(success)))).toMatchObject({ kind: "success", body: success });
+  });
+
+  it("does not treat a 200 without an identity_assertion as success", () => {
+    expect(classifyClaimPoll(res(200, JSON.stringify({ access_token: "a" }))).kind).toBe("error");
+  });
+
+  it.each([
+    ["authorization_pending", "pending"],
+    ["slow_down", "slow_down"],
+    ["expired_token", "expired"],
+  ])("maps %s to %s", (error, kind) => {
+    expect(classifyClaimPoll(res(400, JSON.stringify({ error }))).kind).toBe(kind);
+  });
+
+  it("treats HTTP 429 as slow_down and carries Retry-After", () => {
+    expect(classifyClaimPoll(res(429, "", { "retry-after": "12" }))).toEqual({ kind: "slow_down", retryAfterSec: 12 });
+  });
+
+  it("reports an unknown error instead of polling forever", () => {
+    const poll = classifyClaimPoll(res(400, JSON.stringify({ error: "invalid_grant" })));
+    expect(poll.kind).toBe("error");
+    expect(poll.note).toContain("invalid_grant");
+  });
+});
+
+describe("judgeRequestedScope", () => {
+  it("passes exactly the requested scopes, in any order", () => {
+    expect(judgeRequestedScope(["agents:read", "runs:read"], "runs:read agents:read").ok).toBe(true);
+  });
+
+  it("fails a widened grant", () => {
+    expect(judgeRequestedScope(["agents:read"], "agents:read billing:read")).toMatchObject({ ok: false, note: "extra: billing:read" });
+  });
+
+  it("fails a narrowed grant", () => {
+    expect(judgeRequestedScope(["agents:read", "runs:read"], "agents:read")).toMatchObject({ ok: false, note: "missing: runs:read" });
+  });
+});
+
+describe("jwtAudience / judgeAudience", () => {
+  const jwt = (claims: object) => `h.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.s`;
+  const origin = "https://mcp-qa.sequentum.com";
+
+  it("reads a string or array audience", () => {
+    expect(jwtAudience(jwt({ aud: origin }))).toEqual([origin]);
+    expect(jwtAudience(jwt({ aud: [origin, "x"] }))).toEqual([origin, "x"]);
+  });
+
+  it("returns null for a token that is not a readable JWT", () => {
+    expect(jwtAudience("opaque")).toBeNull();
+    expect(jwtAudience(jwt({ sub: "no-aud" }))).toBeNull();
+  });
+
+  it("accepts the bare origin and the origin with /mcp, as the validator does", () => {
+    expect(judgeAudience([origin], origin).ok).toBe(true);
+    expect(judgeAudience([`${origin}/mcp`], origin).ok).toBe(true);
+  });
+
+  it("rejects an audience that is the Control Center, not the MCP origin", () => {
+    expect(judgeAudience(["https://dashboard-qa.sequentum.com"], origin).ok).toBe(false);
+  });
+
+  it("does not fail an unreadable token: the /mcp calls are the real test", () => {
+    expect(judgeAudience(null, origin).ok).toBe(true);
   });
 });

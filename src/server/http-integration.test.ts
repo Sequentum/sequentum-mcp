@@ -378,6 +378,24 @@ describe("/.well-known/oauth-protected-resource", () => {
     expect(text).not.toContain("registration_endpoint");
   });
 
+  it.each(["/auth.md", "/.well-known/auth.md"])(
+    "redirects %s to the issuer's own manifest",
+    async (path) => {
+      const res = await fetch(`${base}${path}`, { redirect: "manual" });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("https://issuer.example.test/auth.md");
+    }
+  );
+
+  it("serves no auth.md body of its own", async () => {
+    // Registration, claims and tokens live on the Control Center; a local copy of the
+    // manifest would drift, exactly as the authorization-server metadata copy did.
+    const res = await fetch(`${base}/auth.md`, { redirect: "manual" });
+    const text = await res.text();
+    expect(text).not.toContain("registration");
+    expect(res.headers.get("content-type") ?? "").not.toMatch(/markdown/);
+  });
+
   it("serves the SUPPORTED_SCOPES fallback when no scope source is injected (default wiring)", async () => {
     // No mock apiBaseUrl in this suite ever resolves to a real Control Center, so this is the
     // server's real default behaviour, not a stub standing in for it.
@@ -490,6 +508,12 @@ describe("GET / landing page", () => {
     const body = await (await fetch(`${base}/`)).text();
     expect(body).toContain(`${base}/mcp`);
     expect(body).not.toContain("mcp.sequentum.com");
+  });
+
+  it("links the auth.md manifest and says agents can register through it", async () => {
+    const body = await (await fetch(`${base}/`)).text();
+    expect(body).toContain('href="/auth.md"');
+    expect(body).toMatch(/agents can register/i);
   });
 
   it("does not shadow the protocol routes", async () => {

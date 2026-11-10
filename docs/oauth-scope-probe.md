@@ -46,6 +46,7 @@ pnpm run probe --env qa --mode log-only --preflight-only            # no side ef
 pnpm run probe --env qa --mode log-only                             # full run: login, three consent clicks, one revoke click
 pnpm run probe --env qa --mode log-only --profile read --skip-3896  # quickest real signal, one consent click
 pnpm run probe --env qa --mode enforce                              # after the flip
+pnpm run probe --env qa --mode enforce --auth-md-email you@example.com  # auth.md claim flow, one claim in the browser
 ```
 
 | Flag | Meaning |
@@ -63,6 +64,7 @@ pnpm run probe --env qa --mode enforce                              # after the 
 | `--keep-client` | Leave the DCR client Active at the end for inspection in Admin › MCP Integrations. |
 | `--no-login-prompt` | Don't open the login page and wait before the first consent (you're already logged in). |
 | `--preflight-only` | Check both metadata documents and CloudWatch access, register nothing, exit. |
+| `--auth-md-email EMAIL` | Run the [auth.md path](#the-authmd-path) instead of the authorization-code scenarios. Cannot be combined with `--profile` or `--reuse-client`. With `--preflight-only` it checks the redirects and metadata and registers nothing. |
 
 ## What a run does
 
@@ -114,6 +116,42 @@ pnpm run probe --env qa --mode enforce                              # after the 
    page again and asks you to revoke it, then verifies the same way. A client left Active, or
    an agent run that could not be deleted, is a failed row so the run exits non-zero. The
    summary table is printed even if the run aborts on an unexpected error.
+
+## The auth.md path
+
+`--auth-md-email` runs the agent registration flow that the Control Center describes at
+`/auth.md`, reached through this server's origin. It registers an agent for the email you pass,
+so use an address you can sign in with on the target environment. It uses no DCR client, no
+loopback listener and no CloudWatch; you complete one claim in the browser and everything else
+is plain HTTP. `--mode` is still required and is used the same way: it only matters to an older
+MCP build that dispatches a mismatched call instead of challenging it.
+
+1. **Redirects.** `GET /auth.md` and `GET /.well-known/auth.md` on the MCP origin must answer
+   `302` to the Control Center's `/auth.md`, and following the redirect must return
+   `text/markdown`.
+2. **Metadata.** Reads the authorization server's `agent_auth` endpoints, and checks that the
+   MCP server's protected-resource metadata names the MCP origin as `resource` and lists the
+   scopes this run requests.
+3. **Register.** `POST` to the identity endpoint with `type=service_auth`, your email, and the
+   scopes `agents:read runs:read`. These are a strict subset of the API scopes on purpose, so the
+   run proves enforcement as well as acceptance.
+4. **Claim.** Prints the verification URI and the code (and opens the URI in your browser when it
+   is on the environment under test). Sign in as that email and enter the code on that page. The
+   probe polls the claim grant at the interval the server asks for, backs off on `slow_down`, and
+   asks for a fresh code if the first expires. It gives up after five minutes. The code goes from
+   the terminal to the browser, never back.
+5. **Exchange.** Trades the identity assertion for an access token with
+   `resource=<MCP origin>` and checks the token carries exactly the requested scopes and an
+   audience the MCP server accepts.
+6. **Call `/mcp`.** `list_agents` and `get_agent_runs` must succeed; `list_spaces` and
+   `get_credits_balance` must be answered `403 insufficient_scope` naming the missing scope.
+7. **Re-exchange.** Exchanges the new assertion the first exchange returned, then repeats the
+   calls with the second token. `--skip-mcp` skips both rounds of calls.
+8. **Revoke.** Ends the registration with the assertion, which the run's last report row
+   confirms.
+
+Residue: one registration, revoked at the end. If the run dies between the claim and the
+revoke, the registration is left until its user revokes it in the Control Center.
 
 ## Reading the result
 

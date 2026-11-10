@@ -181,6 +181,11 @@ export function renderLandingPage(origin: string): string {
     outline: none;
     box-shadow: 0 0 0 2px rgba(82, 72, 249, 0.20);
   }
+  p a { color: var(--link); }
+  p a:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(82, 72, 249, 0.20);
+  }
 </style>
 </head>
 <body>
@@ -197,6 +202,7 @@ there is nothing to install.</p>
 </div>
 <p>It is an API rather than a web app, so point an MCP client at that URL instead of a
 browser.</p>
+<p>AI agents can register through <a href="/auth.md">auth.md</a> instead of a browser sign-in.</p>
 <h2>Documentation</h2>
 <ul>
 <li><a href="https://docs.sequentum.com/mcp/overview">MCP overview<span class="desc">What the server does and where it fits in a pipeline</span></a></li>
