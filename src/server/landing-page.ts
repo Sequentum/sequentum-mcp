@@ -177,15 +177,12 @@ export function renderLandingPage(origin: string): string {
   }
   footer a { color: var(--link); text-decoration: none; }
   footer a:hover { text-decoration: underline; }
-  footer a:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px rgba(82, 72, 249, 0.20);
-  }
-  p a { color: var(--link); }
+  footer a:focus-visible,
   p a:focus-visible {
     outline: none;
     box-shadow: 0 0 0 2px rgba(82, 72, 249, 0.20);
   }
+  p a { color: var(--link); }
 </style>
 </head>
 <body>

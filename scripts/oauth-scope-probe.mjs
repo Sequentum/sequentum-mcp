@@ -1021,6 +1021,9 @@ function classifyClaimPoll(res) {
   const body = tryJson(res.text);
   if (res.status === 200 && typeof body?.access_token === "string" && typeof body?.identity_assertion === "string") return { kind: "success", body };
   if (res.status === 429) return { kind: "slow_down", retryAfterSec: Number(res.headers?.get?.("retry-after")) || 0 };
+  // A 5xx is the server, not the claim: a Control Center deploy during the wait must not throw
+  // away the tester's claim. The deadline still bounds how long this can go on.
+  if (res.status >= 500) return { kind: "transient", note: `HTTP ${res.status} ${short(res.text, 100)}` };
   switch (body?.error) {
     case "authorization_pending": return { kind: "pending" };
     case "slow_down": return { kind: "slow_down", retryAfterSec: 0 };
@@ -1029,11 +1032,38 @@ function classifyClaimPoll(res) {
   }
 }
 
+// The scope a token response grants: the response's own `scope` when it states one. Otherwise the
+// access token's `scope` claim, which is what the MCP server enforces, so an omitted or null
+// response scope cannot hide a widened or empty token. Only when neither is readable does RFC 6749
+// section 5.1 apply: an omitted `scope` means the requested one.
+function effectiveScope(requested, responseScope, tokenScopeClaim = null) {
+  if (typeof responseScope === "string") return responseScope;
+  if (typeof tokenScopeClaim === "string") return tokenScopeClaim;
+  return requested.join(" ");
+}
+
+// The payload of a JWT, read WITHOUT verifying it (see jwtAudience). null when not decodable.
+function jwtClaims(token) {
+  const part = String(token ?? "").split(".")[1];
+  if (!part) return null;
+  const claims = tryJson(Buffer.from(part, "base64url").toString("utf8"));
+  return claims !== null && typeof claims === "object" ? claims : null;
+}
+
+// The `scope` claim of a JWT, unverified. null when the token is unreadable. A readable JWT with no
+// string `scope` gives "", as the validator's Claims.scopes grants such a token nothing: it must
+// fail the scope row rather than fall through to the assumed requested scope.
+function jwtScope(token) {
+  const claims = jwtClaims(token);
+  if (claims === null) return null;
+  return typeof claims.scope === "string" ? claims.scope : "";
+}
+
 // The token's scope must be exactly what the registration asked for: an explicit scope is never
 // widened or narrowed. Compares as sets over API_SCOPES; identity scopes carry no API meaning.
 function judgeRequestedScope(requested, tokenScope) {
   const want = new Set(requested);
-  const got = new Set((tokenScope ?? "").split(/\s+/).filter((s) => API_SCOPES.includes(s)));
+  const got = new Set(effectiveScope(requested, tokenScope).split(/\s+/).filter((s) => API_SCOPES.includes(s)));
   const missing = [...want].filter((s) => !got.has(s));
   const extra = [...got].filter((s) => !want.has(s));
   if (!missing.length && !extra.length) return { expected: "requested scope", ok: true, note: "" };
@@ -1044,20 +1074,31 @@ function judgeRequestedScope(requested, tokenScope) {
 }
 
 // The audience of a JWT, read WITHOUT verifying it: this is a diagnostic of what the Control
-// Center issued, not a trust decision. null when the token is not a decodable JWT.
+// Center issued, not a trust decision. null when the token is not a decodable JWT. A readable
+// JWT with no `aud` gives [], as the validator's audienceList does: that token is rejected as
+// wrong-audience there, so it must fail the row here rather than pass as unreadable.
 function jwtAudience(token) {
-  const part = String(token ?? "").split(".")[1];
-  if (!part) return null;
-  const aud = tryJson(Buffer.from(part, "base64url").toString("utf8"))?.aud;
-  if (aud === undefined) return null;
-  return Array.isArray(aud) ? aud : [aud];
+  const claims = jwtClaims(token);
+  if (claims === null) return null;
+  const aud = claims.aud;
+  if (typeof aud === "string") return [aud];
+  return Array.isArray(aud) ? aud.filter((a) => typeof a === "string") : [];
 }
 
-// The validator accepts the bare origin or the origin with the /mcp path (see the token
-// validation tests in http-integration.test.ts), so the probe accepts the same two.
+// The validator compares each `aud` entry by URL origin (audienceMatches in
+// src/utils/token-validator.ts), so `${origin}/mcp` and `${origin}/` both pass; the probe does
+// the same. The validator's legacy audience is deliberately not accepted: an auth.md token that
+// carries it means the Control Center ignored `resource`.
 function judgeAudience(aud, mcpOrigin) {
   if (aud === null) return { ok: true, observed: "not a readable JWT", note: "audience not checked; the /mcp calls below are the real test" };
-  const ok = aud.some((a) => a === mcpOrigin || a === `${mcpOrigin}/mcp`);
+  const want = new URL(mcpOrigin).origin;
+  const ok = aud.some((a) => {
+    try {
+      return new URL(a).origin === want;
+    } catch {
+      return false;
+    }
+  });
   return { ok, observed: `aud=${JSON.stringify(aud)}`, note: ok ? "" : `want ${mcpOrigin}` };
 }
 
@@ -1082,52 +1123,126 @@ function showClaim(env, claim) {
 }
 
 // Poll the claim grant until the tester approves. Honors `interval`, backs off on slow_down, and
-// asks the claim endpoint for a fresh code when the first one expires.
+// asks the claim endpoint for a fresh code when the first one expires. Every wait is clamped to
+// the deadline: the interval and Retry-After come from the server and are never trusted to be
+// short. A 5xx or a transport failure is logged and polled through, not fatal.
 async function pollClaim(env, endpoints, claimToken, claim, email) {
   const deadline = Date.now() + CONSENT_TIMEOUT_MS;
   let intervalMs = Math.max(1, Number(claim.interval) || 5) * 1000;
+  // The last server or transport failure polled through. The claim grant is single-use, so a
+  // delivery lost to a 5xx or a dropped response makes the next poll fail with an unrelated-looking
+  // invalid_grant; carrying this into the final error keeps the real cause in the summary. The
+  // cause is cut first and the message gets the rest, so the whole fits runAuthMdMain's
+  // 100-character row (short() may add one "…") and the message keeps the server's error code.
+  let lastTransient = null;
+  const withCause = (msg) => {
+    if (!lastTransient) return msg;
+    const cause = `; earlier: ${short(lastTransient, 24)}`;
+    return `${short(msg, 99 - cause.length)}${cause}`;
+  };
+  // Set when a fresh-code request failed. That request may still have replaced the attempt, after
+  // which every poll answers authorization_pending and never expired_token again, so the next tick
+  // asks the claim endpoint again instead of polling (it re-mints for any pending registration).
+  let needFreshCode = false;
+  // Asks the claim endpoint for a fresh code. true when one is shown, false on a 5xx or a transport
+  // failure (retried on the next tick); throws when the Control Center refuses.
+  const requestFreshCode = async () => {
+    let r;
+    try {
+      r = await fetchTimed(endpoints.claim, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ claim_token: claimToken, email }),
+      });
+    } catch (e) {
+      if (!isTransportError(e)) throw e;
+      lastTransient = `fresh code: no response (${short(String(e?.message ?? e), 60)})`;
+      log(`${lastTransient}; asking again`);
+      return false;
+    }
+    if (r.status >= 500) {
+      lastTransient = `fresh code: HTTP ${r.status} ${short(r.text, 60)}`;
+      log(`${lastTransient}; asking again`);
+      return false;
+    }
+    const fresh = tryJson(r.text)?.claim_attempt;
+    if (!fresh?.user_code) {
+      log(`claim endpoint answered HTTP ${r.status} ${short(r.text, 300)}`);
+      throw new ProbeExit(withCause(`no fresh code: HTTP ${r.status} ${short(r.text, 100)}`));
+    }
+    showClaim(env, fresh);
+    intervalMs = Math.max(1, Number(fresh.interval) || 5) * 1000;
+    return true;
+  };
   while (Date.now() < deadline) {
-    await sleep(intervalMs);
-    const poll = classifyClaimPoll(await formPost(endpoints.token, { grant_type: CLAIM_GRANT, claim_token: claimToken }));
+    await sleep(Math.min(intervalMs, Math.max(0, deadline - Date.now())));
+    if (needFreshCode) {
+      needFreshCode = !(await requestFreshCode());
+      continue;
+    }
+    let res;
+    try {
+      res = await formPost(endpoints.token, { grant_type: CLAIM_GRANT, claim_token: claimToken });
+    } catch (e) {
+      if (!isTransportError(e)) throw e;
+      lastTransient = `no response (${short(String(e?.message ?? e), 80)})`;
+      log(`claim poll did not reach the server: ${lastTransient}; polling again`);
+      continue;
+    }
+    const poll = classifyClaimPoll(res);
     if (poll.kind === "success") return poll.body;
     if (poll.kind === "pending") continue;
+    if (poll.kind === "transient") {
+      lastTransient = poll.note;
+      log(`claim poll answered ${poll.note}; polling again`);
+      continue;
+    }
     if (poll.kind === "slow_down") {
       intervalMs = Math.max(intervalMs + 5000, (poll.retryAfterSec || 0) * 1000);
       continue;
     }
     if (poll.kind === "expired") {
       log("the code expired; asking for a fresh one");
-      const r = await fetchTimed(endpoints.claim, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ claim_token: claimToken, email }),
-      });
-      const fresh = tryJson(r.text)?.claim_attempt;
-      if (!fresh?.user_code) throw new ProbeExit(`claim endpoint gave no fresh code: HTTP ${r.status} ${short(r.text, 100)}`);
-      showClaim(env, fresh);
-      intervalMs = Math.max(1, Number(fresh.interval) || 5) * 1000;
+      needFreshCode = !(await requestFreshCode());
       continue;
     }
-    throw new ProbeExit(`claim poll failed: ${poll.note}`);
+    throw new ProbeExit(withCause(`claim poll failed: ${poll.note}`));
   }
-  throw new ProbeExit(`the claim was not completed within ${CONSENT_TIMEOUT_MS / 1000}s`);
+  throw new ProbeExit(withCause(`the claim was not completed within ${CONSENT_TIMEOUT_MS / 1000}s`));
+}
+
+// The agent id get_agent_runs needs: --agent-id, else the first agent the token can list.
+async function authMdAgentId(opts, env, token) {
+  if (opts.agentId != null) return opts.agentId;
+  const listed = await new V1(env, token).listAgents();
+  return listed.ok2xx ? firstId(listed.body) : null;
 }
 
 // Calls the MCP tools with `token` and judges each against the scope the token carries. `step`
 // labels the rows ("1" before the re-exchange, "2" after it).
-async function authMdMcpRows(step, token, scope, opts, env, report, disc) {
-  if (opts.skipMcp) return;
-  if (disc.agentId === undefined) {
-    const listed = await new V1(env, token).listAgents();
-    disc.agentId = opts.agentId ?? (listed.ok2xx ? firstId(listed.body) : null);
-  }
+async function authMdMcpRows(step, token, scope, opts, env, report, agentId) {
   const granted = grantedApiScopes(scope);
   const mcp = new Mcp(env, token);
-  for (const [tool, required, args] of mcpToolTable(disc.agentId)) {
+  for (const [tool, required, args] of mcpToolTable(agentId)) {
     const call = await mcp.callTool(tool, required, args);
     const j = judgeMcp(call, granted, opts.mode);
     report.add(row(AUTH_MD_PROFILE, `mcp[${step}] ${tool}`, required, j.expected, j.observed, j.ok, j.note));
   }
+  // mcpToolTable leaves get_agent_runs out without an agent id; say so, as runProfile does, so
+  // a run that never exercised runs:read does not read as one that did.
+  if (agentId == null) report.add(row(AUTH_MD_PROFILE, `mcp[${step}] get_agent_runs`, "runs:read", "-", "skipped", true, "no agent id known; pass --agent-id"));
+}
+
+// The scope of a token response (claim grant, exchange or re-exchange), judged against the
+// registration's request: the exchange sends no scope, so every token must carry exactly what the
+// registration asked for. Returns the effective scope, which the /mcp rows are judged against.
+function authMdScopeRow(report, label, body) {
+  const claim = jwtScope(body.access_token);
+  const scope = effectiveScope(AUTH_MD_SCOPES, body.scope, claim);
+  const j = judgeRequestedScope(AUTH_MD_SCOPES, scope);
+  const source = typeof body.scope === "string" ? "" : claim !== null ? " (from the token; response had none)" : " (assumed; response and token had none)";
+  report.add(row(AUTH_MD_PROFILE, label, "-", j.expected, `scope='${scope}'${source}`, j.ok, j.note));
+  return scope;
 }
 
 // The exchange of Step 5: the assertion for a fresh access token, scoped to the MCP origin.
@@ -1155,8 +1270,8 @@ async function runAuthMd(opts, env, report) {
   const prm = await fetchMetadata(`${env.mcpOrigin}/.well-known/oauth-protected-resource`);
   const aa = meta.agent_auth ?? {};
   const endpoints = { identity: aa.identity_endpoint, claim: aa.claim_endpoint, token: meta.token_endpoint, revoke: meta.revocation_endpoint };
-  if (!endpoints.identity || !endpoints.token) {
-    throw new ProbeExit("authorization server metadata has no agent_auth.identity_endpoint / token_endpoint; is the auth.md build deployed here?");
+  if (!endpoints.identity || !endpoints.claim || !endpoints.token) {
+    throw new ProbeExit("authorization server metadata has no agent_auth.identity_endpoint / agent_auth.claim_endpoint / token_endpoint; is the auth.md build deployed here?");
   }
   // The resource an agent passes at exchange must be the MCP origin, and the scopes it can ask for
   // must cover what this run requests, or the validator would reject the token's aud or scope.
@@ -1185,29 +1300,37 @@ async function runAuthMd(opts, env, report) {
   try {
     const claimed = await pollClaim(env, endpoints, reg.claim_token, reg.claim, opts.authMdEmail);
     assertion = claimed.identity_assertion;
-    const claimJudge = judgeRequestedScope(AUTH_MD_SCOPES, claimed.scope);
-    report.add(row(P, "claim grant", "-", claimJudge.expected, `scope='${claimed.scope ?? ""}'`, claimJudge.ok, claimJudge.note));
+    authMdScopeRow(report, "claim grant", claimed);
 
     // 5. Exchange with resource = the MCP origin, then call /mcp.
     const first = await exchangeAssertion(endpoints, assertion, prm.resource);
     report.add(row(P, "assertion exchange", "-", "200 + new assertion", `HTTP ${first.r.status}`, first.ok, first.ok ? "" : short(first.r.text, 100)));
     if (!first.ok) return;
     assertion = first.body.identity_assertion;
+    const firstScope = authMdScopeRow(report, "exchange scope", first.body);
     const aud = judgeAudience(jwtAudience(first.body.access_token), env.mcpOrigin);
     report.add(row(P, "access token audience", "-", "MCP origin", aud.observed, aud.ok, aud.note));
-    const disc = { agentId: undefined };
-    await authMdMcpRows("1", first.body.access_token, first.body.scope ?? "", opts, env, report, disc);
+    const agentId = opts.skipMcp ? null : await authMdAgentId(opts, env, first.body.access_token);
+    if (!opts.skipMcp) await authMdMcpRows("1", first.body.access_token, firstScope, opts, env, report, agentId);
 
     // 6. Re-exchange the assertion the first exchange returned (the one sent is now replaced).
     const second = await exchangeAssertion(endpoints, assertion, prm.resource);
     report.add(row(P, "assertion re-exchange", "-", "200 + new assertion", `HTTP ${second.r.status}`, second.ok, second.ok ? "" : short(second.r.text, 100)));
     if (!second.ok) return;
     assertion = second.body.identity_assertion;
-    await authMdMcpRows("2", second.body.access_token, second.body.scope ?? "", opts, env, report, disc);
+    const secondScope = authMdScopeRow(report, "re-exchange scope", second.body);
+    if (!opts.skipMcp) await authMdMcpRows("2", second.body.access_token, secondScope, opts, env, report, agentId);
   } finally {
     // Residue: an unrevoked registration keeps a usable assertion alive. End it, as the manifest
-    // says an agent may, and report whether the Control Center agreed.
-    if (assertion && endpoints.revoke) {
+    // says an agent may, and report what the Control Center answered. A 200 is all RFC 7009 lets
+    // the probe see: the endpoint answers 200 for a token it did not recognise as well.
+    if (!assertion) {
+      // The claim poll failed, so there is nothing to revoke with. A delivery lost to a 5xx or a
+      // dropped response leaves a claimed registration behind; say so rather than stay silent.
+      report.add(row(P, "revoke registration", "-", "200", "not attempted", false, "no assertion to revoke with; if the claim was completed, revoke the registration in the Control Center"));
+    } else if (!endpoints.revoke) {
+      report.add(row(P, "revoke registration", "-", "200", "not attempted", false, "metadata has no revocation_endpoint; the registration is still live, revoke it in the Control Center"));
+    } else {
       try {
         const rv = await formPost(endpoints.revoke, { token: assertion });
         report.add(row(P, "revoke registration", "-", "200", `HTTP ${rv.status}`, rv.status === 200, rv.status === 200 ? "" : short(rv.text, 100)));
@@ -1467,6 +1590,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 
 // Exported for tests/oauth-scope-probe.test.ts: pure functions, no I/O, no process access.
 export { judgeGrant, judgeMcp, judgeV1, expectedLogLine, linesForToken, judgeTokenError, tokenExchangeRow, GENERIC_INVALID_GRANT };
-export { judgeAuthMdRedirect, classifyClaimPoll, judgeRequestedScope, jwtAudience, judgeAudience };
+export { judgeAuthMdRedirect, classifyClaimPoll, judgeRequestedScope, effectiveScope, jwtAudience, jwtScope, judgeAudience };
+// Not pure: polls with the global fetch. Exported so its retry and deadline logic is tested
+// against a stubbed fetch and fake timers.
+export { pollClaim };
 // Reused by scripts/output-schema-contract.mjs for the same browser OAuth flow.
 export { ENVS, CallbackListener, OAuthClient, pkcePair, b64url, openBrowser, log, pressEnter };
