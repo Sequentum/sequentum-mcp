@@ -51,15 +51,17 @@ token:
 
 `reason` is one of `expired`, `bad-signature`, `malformed`, `bad-alg` or
 `unknown-kid`. `unknown-kid` means the latest fetch of the signing keys succeeded
-and none of them matches the token's key id: the token was not signed by Control
-Center. Right after a signing-key change it can also hit genuine tokens for up to
-a minute, until the next key fetch picks up the new key.
+and none of them matches the token's key id: the token was not signed with Control
+Center's current key. After a signing-key change it also hits tokens signed with
+the previous key until they expire, and, for up to a minute, genuine new-key
+tokens until the next key fetch picks up the new key.
 
 Lines reading `auth=unverifiable` are **not** rejections — the request was passed
 through and the API decided it. Two reasons appear there:
 
-- `jwks-unreachable` — the signing keys could not be fetched, or the latest
-  fetch failed and the token's key is not among those cached.
+- `jwks-unreachable` — the signing keys could not be fetched, the fetched
+  document held no usable RS256 key, or the latest fetch failed and the token's
+  key is not among those cached.
 - `wrong-audience` — the token was minted for a different origin. This is
   recorded rather than rejected on purpose: a refresh reuses the original
   resource, so rejecting it would put the client in a 401/refresh loop it could
@@ -118,15 +120,17 @@ token:
 
 `reason` is one of `expired`, `bad-signature`, `malformed`, `bad-alg` or
 `unknown-kid`. `unknown-kid` means the latest fetch of the signing keys succeeded
-and none of them matches the token's key id: the token was not signed by Control
-Center. Right after a signing-key change it can also hit genuine tokens for up to
-a minute, until the next key fetch picks up the new key.
+and none of them matches the token's key id: the token was not signed with Control
+Center's current key. After a signing-key change it also hits tokens signed with
+the previous key until they expire, and, for up to a minute, genuine new-key
+tokens until the next key fetch picks up the new key.
 
 Lines reading `auth=unverifiable` are **not** rejections — the request was passed
 through and the API decided it. Two reasons appear there:
 
-- `jwks-unreachable` — the signing keys could not be fetched, or the latest
-  fetch failed and the token's key is not among those cached.
+- `jwks-unreachable` — the signing keys could not be fetched, the fetched
+  document held no usable RS256 key, or the latest fetch failed and the token's
+  key is not among those cached.
 - `wrong-audience` — the token was minted for a different origin. This is
   recorded rather than rejected on purpose: a refresh reuses the original
   resource, so rejecting it would put the client in a 401/refresh loop it could

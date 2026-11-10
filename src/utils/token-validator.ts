@@ -59,7 +59,8 @@ export interface Claims {
  * The three-way split is the core of the design.
  *
  * - `rejected` — a definite verdict. Send 401 + WWW-Authenticate.
- * - `unverifiable` — infrastructure failure (JWKS unreachable). Pass the
+ * - `unverifiable` — infrastructure failure (JWKS unreachable), or an audience
+ *   mismatch tolerated on purpose (see {@link UnverifiableReason}). Pass the
  *   request through to the API, behaving exactly as before this change. Failing
  *   closed here would 401 every user during a JWKS blip, and since their refresh
  *   would succeed but still not validate, it would escalate a brief outage into

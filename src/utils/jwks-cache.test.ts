@@ -62,7 +62,7 @@ describe("createJwksCache", () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
-  it("reports an unknown kid after a refetch fails to produce it", async () => {
+  it("reports an unknown kid when a successful fetch lacks it", async () => {
     const { jwk } = await keyFixture("k1");
     const fetchFn = vi.fn().mockResolvedValue(jwksResponse([jwk]));
     const cache = createJwksCache(API, { fetchFn: fetchFn as unknown as typeof fetch });
@@ -91,7 +91,7 @@ describe("createJwksCache", () => {
   });
 
   it("keeps reporting an unknown kid inside the cooldown after a successful fetch", async () => {
-    // the fetch that just completed is a definite negative for any kid it
+    // The fetch that just completed is a definite negative for any kid it
     // lacked. If the cooldown downgraded this to "could not check", a caller could
     // spend one request on the fetch and pass the gate with the next.
     const { jwk } = await keyFixture("k1");
@@ -150,6 +150,8 @@ describe("createJwksCache", () => {
     clock += JWKS_TTL_MS + 1;
 
     expect(await cache.getKey("rotated")).toEqual({ kind: "unreachable" });
+    // The empty document must not have replaced the working key set.
+    expect((await cache.getKey("k1")).kind).toBe("key");
   });
 
   it("reports unknown again once a refetch succeeds after a failure", async () => {
@@ -267,5 +269,39 @@ describe("createJwksCache", () => {
 
     expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(results.every((r) => r.kind === "key")).toBe(true);
+  });
+
+  it("gives every caller sharing a successful in-flight fetch the unknown verdict", async () => {
+    // Cold start: concurrent forged tokens wait on the fetch the first one started.
+    // Each must read that fetch's outcome, not the "nothing fetched yet" state.
+    const { jwk } = await keyFixture("k1");
+    const fetchFn = vi.fn().mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve(jwksResponse([jwk])), 10))
+    );
+    const cache = createJwksCache(API, { fetchFn: fetchFn as unknown as typeof fetch });
+
+    const results = await Promise.all([cache.getKey("bogus-1"), cache.getKey("bogus-2"), cache.getKey("bogus-3")]);
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(results).toEqual([{ kind: "unknown" }, { kind: "unknown" }, { kind: "unknown" }]);
+  });
+
+  it("gives every caller sharing a failed in-flight refetch the unreachable verdict", async () => {
+    // The reverse: after a good fetch, callers sharing a refetch that fails must not
+    // read the earlier success and reject uncached kids during an outage.
+    const { jwk } = await keyFixture("k1");
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(jwksResponse([jwk]))
+      .mockImplementation(() => new Promise((_, reject) => setTimeout(() => reject(new Error("ECONNREFUSED")), 10)));
+    let clock = 1_000_000;
+    const cache = createJwksCache(API, { fetchFn: fetchFn as unknown as typeof fetch, now: () => clock });
+
+    await cache.getKey("k1");
+    clock += JWKS_TTL_MS + 1;
+    const results = await Promise.all([cache.getKey("new-1"), cache.getKey("new-2"), cache.getKey("new-3")]);
+
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(results).toEqual([{ kind: "unreachable" }, { kind: "unreachable" }, { kind: "unreachable" }]);
   });
 });
