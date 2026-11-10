@@ -30,7 +30,7 @@
  *                  resources/templates/list) and server/discover.
  *   MCP_RATE_LIMIT_WINDOW_MS - Rate-limit window (ms) for the /mcp endpoint.
  *   MCP_RATE_LIMIT_MAX - Max requests per window per IP for the /mcp endpoint.
- *   TRUST_PROXY - Express 'trust proxy' setting: 'true'/'false', a hop count, or a
+ *   TRUST_PROXY - Express 'trust proxy' setting (default 1): 'true'/'false', a hop count, or a
  *                  comma-separated CIDR/IP allowlist of trusted reverse proxies.
  *   ALLOWED_ORIGINS - Comma-separated list of additional exact-match Origins to
  *                  allow via CORS, appended to the built-in defaults.

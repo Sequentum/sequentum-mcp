@@ -135,8 +135,12 @@ describe("/.well-known/glama.json", () => {
 // ---------------------------------------------------------------------------
 
 describe("parseTrustProxy", () => {
-  it("defaults to true (unset), identical to the previous boolean-only behaviour", () => {
-    expect(parseTrustProxy(undefined)).toBe(true);
+  // Trusting one hop makes Express take req.ip from the rightmost
+  // X-Forwarded-For entry, which the proxy wrote. `true` would take the
+  // leftmost, client-supplied entry and let a client rotate past the rate
+  // limiter, so the default must never be `true`.
+  it("defaults to one trusted hop when unset", () => {
+    expect(parseTrustProxy(undefined)).toBe(1);
   });
 
   it("parses the literal strings 'true' and 'false'", () => {
@@ -166,8 +170,8 @@ describe("parseTrustProxy", () => {
   });
 
   it("treats an empty or whitespace-only value as unset rather than an allowlist", () => {
-    expect(parseTrustProxy("")).toBe(true);
-    expect(parseTrustProxy("   ")).toBe(true);
+    expect(parseTrustProxy("")).toBe(1);
+    expect(parseTrustProxy("   ")).toBe(1);
   });
 
   it("trims a hop count and an allowlist", () => {
@@ -189,12 +193,13 @@ describe("applyTrustProxy", () => {
 
   // Express compiles the allowlist inside app.set and throws on anything
   // proxy-addr cannot parse. Left uncaught that is a boot failure, so an
-  // unparseable value must degrade to the documented default instead.
-  it("falls back to true and warns rather than throwing on an unparseable value", () => {
+  // unparseable value must degrade to the documented default instead -- the
+  // safe one, so a typo cannot reopen the X-Forwarded-For rate-limit bypass.
+  it("falls back to one trusted hop and warns rather than throwing on an unparseable value", () => {
     const app = express();
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(() => applyTrustProxy(app, "not-an-ip")).not.toThrow();
-    expect(app.get("trust proxy")).toBe(true);
+    expect(app.get("trust proxy")).toBe(1);
     expect(spy.mock.calls.flat().join(" ")).toMatch(/TRUST_PROXY/);
     spy.mockRestore();
   });
