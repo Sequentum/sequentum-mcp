@@ -123,7 +123,7 @@ An autonomous agent with no browser can register itself on behalf of a user inst
 3. Poll until the claim completes, then exchange the identity assertion for an access token, passing `resource=https://mcp.sequentum.com`.
 4. Call `/mcp` with that token as a bearer. Scope enforcement is the same as for any other token, so a tool outside the granted scopes is answered with an HTTP 403 `insufficient_scope` challenge.
 
-There are no refresh tokens in this flow: when the access token expires, exchange the identity assertion again. To try it against QA, see [docs/oauth-scope-probe.md](./docs/oauth-scope-probe.md#the-authmd-path).
+There are no refresh tokens in this flow: when the access token expires, exchange the identity assertion again. Each exchange returns a new identity assertion and replaces the one you sent, so store the new one every time; the old one stops working shortly after. To try it against QA, see [docs/oauth-scope-probe.md](./docs/oauth-scope-probe.md#the-authmd-path).
 
 ## Local stdio mode (removed)
 
