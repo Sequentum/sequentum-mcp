@@ -1,5 +1,25 @@
 import { describe, it, expect } from "vitest";
-import { escapeHtml, renderLandingPage } from "./landing-page.js";
+import { createHash } from "node:crypto";
+import { escapeHtml, LANDING_PAGE_CSP, renderLandingPage } from "./landing-page.js";
+import { API_CONTENT_SECURITY_POLICY } from "./csp.js";
+
+/**
+ * Every `<style>` element's text in a rendered page, exactly as a browser sees it.
+ * Pulled from the rendered HTML rather than from the module's constant, so a test
+ * built on it notices if the two ever stop being the same string.
+ */
+function styleBlocksOf(html: string): string[] {
+  return [...html.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((m) => m[1]);
+}
+
+/**
+ * The CSP hash source a browser computes for an inline element: SHA-256 over the
+ * element's exact UTF-8 text, base64-encoded. One changed byte of whitespace and the
+ * browser computes a different value and refuses the stylesheet.
+ */
+function cspHashOf(text: string): string {
+  return `'sha256-${createHash("sha256").update(text, "utf8").digest("base64")}'`;
+}
 
 describe("escapeHtml", () => {
   it("escapes all five metacharacters", () => {
@@ -57,5 +77,31 @@ describe("renderLandingPage", () => {
     expect(html).not.toMatch(/<link\b/i);
     expect(html).not.toMatch(/<img\b/i);
     expect(html).not.toMatch(/fonts\.googleapis|fonts\.gstatic|cdn\./i);
+  });
+});
+
+describe("LANDING_PAGE_CSP (IT-2272)", () => {
+  it("is the API lockdown plus a style-src for the page's own stylesheet, by hash", () => {
+    // The API policy alone (`default-src 'none'`) would block the inline <style> and
+    // ship the page unstyled; allowing it by hash keeps everything else locked down.
+    const [style] = styleBlocksOf(renderLandingPage("https://mcp.example.test"));
+    expect(LANDING_PAGE_CSP).toBe(`${API_CONTENT_SECURITY_POLICY}; style-src ${cspHashOf(style)}`);
+  });
+
+  it("never falls back to 'unsafe-inline'", () => {
+    expect(LANDING_PAGE_CSP).not.toContain("unsafe-inline");
+  });
+
+  it("has exactly one style block, so the single hash covers all of the page's CSS", () => {
+    // A second <style> would hash differently and be silently blocked by the browser.
+    expect(styleBlocksOf(renderLandingPage("https://mcp.example.test"))).toHaveLength(1);
+  });
+
+  it("keeps the stylesheet independent of the origin, so one constant policy fits every host", () => {
+    // The policy is computed once at module load; if the origin ever leaked into the
+    // CSS, QA and Prod would serve a hash that matches neither.
+    const qa = styleBlocksOf(renderLandingPage("https://mcp-qa.example.test"))[0];
+    const prod = styleBlocksOf(renderLandingPage("https://mcp.example.test"))[0];
+    expect(qa).toBe(prod);
   });
 });
