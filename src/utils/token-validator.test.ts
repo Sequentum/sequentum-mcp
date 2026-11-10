@@ -202,9 +202,9 @@ describe("validateToken", () => {
     expect((await validateToken(token, ORIGIN, keySource({ k1: pair.publicKey }))).kind).toBe("valid");
   });
 
-  it("rejects an expired token even when the kid is unknown", async () => {
-    // Regression guard: with exp checked after the key lookup, a rotation
-    // window would fail open and resurrect SE4-3856.
+  it("rejects an expired token even while the JWKS is unreachable", async () => {
+    // Regression guard: with exp checked after the key lookup, a JWKS outage
+    // would fail open and resurrect SE4-3856.
     const pair = await generatePair();
     const token = await signJwt(
       pair.privateKey,
@@ -212,7 +212,7 @@ describe("validateToken", () => {
       { exp: past(3600), aud: ORIGIN }
     );
 
-    const verdict = await validateToken(token, ORIGIN, keySource({}));
+    const verdict = await validateToken(token, ORIGIN, keySource({}, { kind: "unreachable" }));
 
     expect(verdict).toMatchObject({ kind: "rejected", reason: "expired" });
   });
@@ -340,13 +340,17 @@ describe("validateToken", () => {
     });
   });
 
-  it("reports unknown-kid as unverifiable for an otherwise fresh token", async () => {
+  it("rejects a token whose kid a successful JWKS fetch does not hold", async () => {
+    // The key source answers "unknown" only after a fetch that succeeded,
+    // so the kid is definitely not Control Center's. Passing it through skipped the
+    // signature check entirely.
     const pair = await generatePair();
     const token = await signJwt(pair.privateKey, { alg: "RS256", kid: "rotated" }, { exp: future(), aud: ORIGIN });
 
-    expect(await validateToken(token, ORIGIN, keySource({}))).toMatchObject({
-      kind: "unverifiable",
+    expect(await validateToken(token, ORIGIN, keySource({}))).toEqual({
+      kind: "rejected",
       reason: "unknown-kid",
+      kid: "rotated",
     });
   });
 

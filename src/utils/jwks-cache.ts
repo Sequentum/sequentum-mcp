@@ -18,6 +18,13 @@ export const JWKS_REFETCH_COOLDOWN_MS = 60_000;
 
 const JWKS_FETCH_TIMEOUT_MS = 5_000;
 
+/**
+ * - `key` — the kid's verification key, possibly stale if the latest refetch failed.
+ * - `unknown` — the latest fetch attempt succeeded and its key set lacks the kid: a
+ *   definite negative.
+ * - `unreachable` — no usable key set yet, or the latest attempt failed, so the kid's
+ *   absence proves nothing.
+ */
 export type KeyLookup =
   | { kind: "key"; key: CryptoKey }
   | { kind: "unknown" }
@@ -77,18 +84,25 @@ export function createJwksCache(apiBaseUrl: string, options: JwksCacheOptions = 
   let keys = new Map<string, CryptoKey>();
   let fetchedAt = 0;
   let lastAttemptAt = 0;
+  /**
+   * Whether the most recent fetch attempt produced a usable key set. Only
+   * then is a missing kid a definite negative; after a failed attempt the cache may
+   * simply be behind a key rotation it could not observe.
+   */
+  let lastFetchSucceeded = false;
   let inFlight: Promise<void> | null = null;
 
-  async function fetchKeys(): Promise<void> {
+  /** One fetch attempt; `true` only when it replaced the cache with a usable key set. */
+  async function fetchKeys(): Promise<boolean> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), JWKS_FETCH_TIMEOUT_MS);
     try {
       const response = await fetchFn(url, { signal: controller.signal });
-      if (!response.ok) return;
+      if (!response.ok) return false;
 
       const body: unknown = await response.json();
       const entries = (body as { keys?: unknown })?.keys;
-      if (!Array.isArray(entries)) return;
+      if (!Array.isArray(entries)) return false;
 
       const next = new Map<string, CryptoKey>();
       for (const entry of entries as JwkEntry[]) {
@@ -97,15 +111,16 @@ export function createJwksCache(apiBaseUrl: string, options: JwksCacheOptions = 
         if (key) next.set(entry.kid, key);
       }
 
-      // Only replace a populated cache with a populated result, so a malformed
-      // document cannot silently empty a working cache.
-      if (next.size > 0 || keys.size === 0) {
-        keys = next;
-        fetchedAt = now();
-      }
+      // A document with no usable key is a failure, not an answer: it must neither
+      // empty a working cache nor turn every kid into a definite "unknown", which
+      // would reject every token if, say, the key import broke.
+      if (next.size === 0) return false;
+
+      keys = next;
+      fetchedAt = now();
+      return true;
     } catch {
-      // Swallowed: the caller distinguishes "no key" from "could not fetch" by
-      // whether the cache holds the kid afterwards.
+      return false;
     } finally {
       clearTimeout(timer);
     }
@@ -119,9 +134,13 @@ export function createJwksCache(apiBaseUrl: string, options: JwksCacheOptions = 
     if (lastAttemptAt !== 0 && elapsed < cooldownMs) return;
 
     lastAttemptAt = now();
-    inFlight = fetchKeys().finally(() => {
-      inFlight = null;
-    });
+    inFlight = fetchKeys()
+      .then((succeeded) => {
+        lastFetchSucceeded = succeeded;
+      })
+      .finally(() => {
+        inFlight = null;
+      });
     return inFlight;
   }
 
@@ -137,7 +156,11 @@ export function createJwksCache(apiBaseUrl: string, options: JwksCacheOptions = 
       // A stale-but-present key beats failing: a refetch that could not land is
       // no reason to reject a kid we have successfully verified before.
       if (afterFetch) return { kind: "key", key: afterFetch };
-      if (fetchedAt === 0) return { kind: "unreachable" };
+      // "unknown" is a definite negative, so it needs the latest attempt -- this
+      // call's or one inside the cooldown -- to have succeeded. Answering "unknown"
+      // only for a fetch made by this call would let a caller spend one request on
+      // the fetch and get the next one through as "could not check".
+      if (!lastFetchSucceeded) return { kind: "unreachable" };
       return { kind: "unknown" };
     },
   };
