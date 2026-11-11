@@ -1148,6 +1148,89 @@ describe("token validation on /mcp (SE4-3856)", () => {
     }
   });
 
+  it("logs a wrong-audience rejection without the audience value", async () => {
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    });
+    try {
+      const token = await mint({
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        aud: "https://someone-else.test/mcp",
+      });
+
+      const res = await post(token);
+
+      expect(res.status).toBe(401);
+      expect(errors.some((line) => line.includes("auth=rejected reason=wrong-audience"))).toBe(true);
+      // The audience is client-chosen and unbounded, so it never reaches the log.
+      expect(errors.some((line) => line.includes("someone-else.test"))).toBe(false);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("accepts a legacy-audience token when the origin is configured", async () => {
+    // Tokens minted without a resource parameter (and client-credentials tokens)
+    // carry this audience; enforcing the origin must not lock them out.
+    const token = await mint({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: "Sequentum Enterprise",
+    });
+
+    const res = await post(token);
+
+    expect(res.status).toBe(200);
+  });
+
+  it("answers a wrong-audience token on GET /mcp with 401", async () => {
+    const token = await mint({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: "https://someone-else.test",
+    });
+
+    const res = await fetch(`${base}/mcp`, {
+      method: "GET",
+      headers: { accept: "text/event-stream", authorization: `Bearer ${token}` },
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  describe("wrong-audience falls back to pass-through without a configured origin", () => {
+    // Without a configured origin the comparison target is the caller's own Host,
+    // so rejecting would add no security and could lock out every user behind a
+    // proxy whose Host differs from the public origin.
+    let errors: string[];
+
+    beforeEach(() => {
+      errors = [];
+      vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+        errors.push(args.map(String).join(" "));
+      });
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    for (const [label, value] of [["unset", undefined], ["unparseable", "mcp.sequentum.com"]] as const) {
+      it(`passes a wrong-audience token through when MCP_CANONICAL_ORIGIN is ${label}`, async () => {
+        if (value === undefined) delete process.env.MCP_CANONICAL_ORIGIN;
+        else process.env.MCP_CANONICAL_ORIGIN = value;
+        const token = await mint({
+          exp: Math.floor(Date.now() / 1000) + 3600,
+          aud: "https://someone-else.test",
+        });
+
+        const res = await post(token);
+
+        expect(res.status).toBe(200);
+        expect(errors.some((line) => line.includes("auth=unverifiable reason=wrong-audience"))).toBe(true);
+      });
+    }
+  });
+
   describe("MCP_CANONICAL_ORIGIN takes priority over the Host header", () => {
     // The outer beforeEach pins MCP_CANONICAL_ORIGIN to `${ORIGIN_ENV}:${addr.port}`,
     // which is byte-identical to what getMcpServerOrigin derives from the request's
@@ -1175,11 +1258,10 @@ describe("token validation on /mcp (SE4-3856)", () => {
       expect(res.status).toBe(200);
     });
 
-    it("fails open (200, not 401) for a token whose audience is the Host-derived origin instead of the pinned one", async () => {
+    it("rejects (401) a token whose audience is the Host-derived origin instead of the pinned one", async () => {
       // This token's aud matches what Host would derive, but MCP_CANONICAL_ORIGIN
-      // now points elsewhere, so it no longer matches. That must produce
-      // unverifiable: wrong-audience (fail-open), not a rejection -- and the
-      // request still reaches the handler and gets a real 200.
+      // now points elsewhere, so it no longer matches. With the origin configured
+      // that is a rejection: the challenge names the pinned origin, not Host.
       const token = await mint({
         exp: Math.floor(Date.now() / 1000) + 3600,
         aud: base,
@@ -1187,14 +1269,17 @@ describe("token validation on /mcp (SE4-3856)", () => {
 
       const res = await post(token);
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(401);
+      const challenge = res.headers.get("www-authenticate");
+      expect(challenge).toContain('error="invalid_token"');
+      expect(challenge).toContain(`resource_metadata="${CANONICAL}/.well-known/oauth-protected-resource"`);
     });
   });
 
   describe("an unparseable MCP_CANONICAL_ORIGIN falls back to the Host header", () => {
     // configuredOrigin()'s malformed-value path had no coverage: deleting it
     // would not fail a test. Status alone cannot pin it either, because
-    // wrong-audience is fail-open -- a fallback that resolved to the WRONG
+    // wrong-audience passes through whenever no origin is configured -- a fallback that resolved to the WRONG
     // origin also answers 200. The discriminating signal is the ABSENCE of a
     // wrong-audience log line, which only holds if the fallback really landed
     // on the Host-derived origin that this token's `aud` names.
@@ -1386,6 +1471,20 @@ describe("per-tool scope challenge on /mcp", () => {
     expect(res.headers.get("www-authenticate")).toContain(
       'resource_metadata="https://mcp.example.test/.well-known/oauth-protected-resource"'
     );
+  });
+
+  it("never forwards a wrong-audience token to the Control Center", async () => {
+    const token = await mint({
+      scope: "agents:read",
+      clientId: "https://client.example.test/cimd.json",
+      token_type: "authorization_code",
+      aud: "https://someone-else.test",
+    });
+
+    const res = await callTool(token, "list_agents", "modern");
+
+    expect(res.status).toBe(401);
+    expect(apiCalls).toEqual([]);
   });
 
   it("dispatches a tools/call whose token holds the tool's scope", async () => {

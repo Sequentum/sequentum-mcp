@@ -398,6 +398,8 @@ describe("auditCanonicalOrigin", () => {
     // The fallback now covers more than the aud check, and the line is how an
     // operator tells which mode a task runs in.
     expect(lines.join(" ")).toMatch(/OAuth metadata/);
+    // A token issued for another resource is only enforced against a configured origin.
+    expect(lines.join(" ")).toMatch(/not rejected/);
   });
 
   it("warns when set to a value new URL cannot parse", () => {
@@ -412,6 +414,7 @@ describe("auditCanonicalOrigin", () => {
     // The bad value is echoed so the operator can see the typo, not just that
     // one exists.
     expect(lines.join(" ")).toContain("mcp.sequentum.com");
+    expect(lines.join(" ")).toMatch(/not rejected/);
   });
 
   it("warns on a scheme-less host:port, whose URL origin is the opaque \"null\"", () => {

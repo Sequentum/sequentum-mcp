@@ -205,7 +205,8 @@ export function auditCanonicalOrigin(): void {
   if (!configured) {
     console.error(
       "[MCP] Warning: MCP_CANONICAL_ORIGIN is unset; the OAuth metadata, auth challenges " +
-      "and token audience validation will use the caller-supplied Host header"
+      "and token audience validation will use the caller-supplied Host header; " +
+      "a token issued for another resource is logged, not rejected"
     );
     return;
   }
@@ -214,7 +215,7 @@ export function auditCanonicalOrigin(): void {
     console.error(
       `[MCP] Warning: MCP_CANONICAL_ORIGIN=${JSON.stringify(configured)} is not a valid http(s) URL; ` +
       "the OAuth metadata, auth challenges and token audience validation will use " +
-      "the caller-supplied Host header"
+      "the caller-supplied Host header; a token issued for another resource is logged, not rejected"
     );
   }
 }
@@ -256,6 +257,13 @@ async function passesAuthGate(req: Request, res: Response, keys: JwksKeySource):
   const verdict = await validateToken(token, getMcpServerOrigin(req), keys);
 
   if (verdict.kind === "rejected") {
+    // Without MCP_CANONICAL_ORIGIN the audience was compared with the caller's own Host,
+    // so rejecting adds no security and would lock out every user whose Host differs
+    // from the public origin. Degrade to pass-through, as before enforcement existed.
+    if (verdict.reason === "wrong-audience" && configuredOrigin() === null) {
+      logAuthOutcome(req, "unverifiable", verdict.reason, verdict.kid);
+      return true;
+    }
     logAuthOutcome(req, "rejected", verdict.reason, verdict.kid, verdict.exp);
     sendAuthChallenge(req, res);
     return false;
