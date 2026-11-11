@@ -58,6 +58,15 @@
   `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`. The landing
   page at `/` extends it with a SHA-256 hash that allows only its own inline stylesheet. MCP
   clients are unaffected.
+- **A token issued for another resource is now rejected with `401`.** With
+  `MCP_CANONICAL_ORIGIN` set, a correctly signed token whose audience names a different
+  origin, or that has no audience at all, gets the `401` + `WWW-Authenticate` challenge instead
+  of being forwarded to the Control Center, as the MCP authorization spec requires (servers must
+  not accept or pass through tokens issued for another resource). A client holding such a token
+  sees one authentication error and must reconnect once to receive a token for this server.
+  Tokens with the legacy `Sequentum Enterprise` audience are still accepted. Without the
+  variable, or with a value that does not parse, behaviour is unchanged: the mismatch is logged
+  and the request passes through.
 
 ### Fixed
 
@@ -85,14 +94,6 @@
   latest JWKS fetch succeeded and lacks the key id, the token is now rejected with reason
   `unknown-kid`. Validation still fails open, as `jwks-unreachable`, when no usable key
   set has been fetched or the latest fetch failed.
-- **A token issued for another resource is now rejected with `401`.** With
-  `MCP_CANONICAL_ORIGIN` set, a correctly signed token whose audience names a different
-  origin gets the `401` + `WWW-Authenticate` challenge instead of being forwarded to the
-  Control Center, as the MCP authorization spec requires (servers must not accept or pass
-  through tokens issued for another resource). A client holding such a token reconnects once
-  and receives one for this server. Tokens with the legacy `Sequentum Enterprise` audience
-  are still accepted. Without the variable, or with a value that does not parse, behaviour
-  is unchanged: the mismatch is logged and the request passes through.
 - **Glama's browser-based MCP inspector can now reach the server.** `https://glama.ai` and
   its subdomains are in the built-in CORS origin allowlist (`src/server/cors.ts`).
   Requests from the inspector previously got a 403 on `/mcp`, and the preflight carried no
