@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { judgeGrant, judgeMcp, judgeV1, expectedLogLine, linesForToken, judgeTokenError, tokenExchangeRow, GENERIC_INVALID_GRANT } from "../scripts/oauth-scope-probe.mjs";
+import { judgeAuthMdRedirect, classifyClaimPoll, judgeRequestedScope, effectiveScope, jwtAudience, jwtScope, judgeAudience, pollClaim } from "../scripts/oauth-scope-probe.mjs";
 
 // The MCP server answers a scope mismatch itself, before dispatch, in either mode.
 describe("judgeMcp — pre-dispatch scope challenge", () => {
@@ -265,5 +266,275 @@ describe("linesForToken — only this profile's lines", () => {
   it("matches a line whose values the logger quoted", () => {
     const quoted = `Scope check denied for GET /api/v1/spaces: required="spaces:read" granted="${SIX}" clientId="mcp-abc"`;
     expect(linesForToken([quoted], SIX, "mcp-abc")).toEqual([quoted]);
+  });
+});
+
+// the auth.md path.
+const MANIFEST = "https://dashboard-qa.sequentum.com/auth.md";
+const res = (status: number, text = "", headers: Record<string, string> = {}) => ({ status, text, headers: new Headers(headers) });
+
+describe("judgeAuthMdRedirect", () => {
+  it("passes a 302 to the issuer's manifest", () => {
+    expect(judgeAuthMdRedirect(res(302, "", { location: MANIFEST }), MANIFEST)).toMatchObject({ ok: true, note: "" });
+  });
+
+  it("fails a redirect to the wrong place, naming both", () => {
+    const j = judgeAuthMdRedirect(res(302, "", { location: "https://other.example/auth.md" }), MANIFEST);
+    expect(j.ok).toBe(false);
+    expect(j.note).toContain("other.example");
+    expect(j.note).toContain(MANIFEST);
+  });
+
+  it("fails a permanent redirect: the target is environment-specific", () => {
+    expect(judgeAuthMdRedirect(res(301, "", { location: MANIFEST }), MANIFEST).ok).toBe(false);
+  });
+
+  it("fails a 404, as an MCP build without the route answers", () => {
+    expect(judgeAuthMdRedirect(res(404), MANIFEST)).toMatchObject({ ok: false, observed: "HTTP 404" });
+  });
+});
+
+describe("classifyClaimPoll", () => {
+  const success = { access_token: "a", identity_assertion: "b", scope: "agents:read" };
+
+  it("recognises a completed claim", () => {
+    expect(classifyClaimPoll(res(200, JSON.stringify(success)))).toMatchObject({ kind: "success", body: success });
+  });
+
+  it("does not treat a 200 without an identity_assertion as success", () => {
+    expect(classifyClaimPoll(res(200, JSON.stringify({ access_token: "a" }))).kind).toBe("error");
+  });
+
+  it.each([
+    ["authorization_pending", "pending"],
+    ["slow_down", "slow_down"],
+    ["expired_token", "expired"],
+  ])("maps %s to %s", (error, kind) => {
+    expect(classifyClaimPoll(res(400, JSON.stringify({ error }))).kind).toBe(kind);
+  });
+
+  it("treats HTTP 429 as slow_down and carries Retry-After", () => {
+    expect(classifyClaimPoll(res(429, "", { "retry-after": "12" }))).toEqual({ kind: "slow_down", retryAfterSec: 12 });
+  });
+
+  it("reports an unknown error instead of polling forever", () => {
+    const poll = classifyClaimPoll(res(400, JSON.stringify({ error: "invalid_grant" })));
+    expect(poll.kind).toBe("error");
+    expect(poll.note).toContain("invalid_grant");
+  });
+
+  it.each([500, 502, 503, 504])("keeps polling through a transient HTTP %i", (status) => {
+    // A Control Center deploy during the claim wait must not waste the tester's claim.
+    expect(classifyClaimPoll(res(status, "Bad Gateway"))).toMatchObject({ kind: "transient", note: expect.stringContaining(`HTTP ${status}`) });
+  });
+});
+
+describe("judgeRequestedScope", () => {
+  it("passes exactly the requested scopes, in any order", () => {
+    expect(judgeRequestedScope(["agents:read", "runs:read"], "runs:read agents:read").ok).toBe(true);
+  });
+
+  it("fails a widened grant", () => {
+    expect(judgeRequestedScope(["agents:read"], "agents:read billing:read")).toMatchObject({ ok: false, note: "extra: billing:read" });
+  });
+
+  it("fails a narrowed grant", () => {
+    expect(judgeRequestedScope(["agents:read", "runs:read"], "agents:read")).toMatchObject({ ok: false, note: "missing: runs:read" });
+  });
+
+  it("treats an omitted scope as the requested one (RFC 6749 section 5.1)", () => {
+    expect(judgeRequestedScope(["agents:read", "runs:read"], undefined).ok).toBe(true);
+    expect(judgeRequestedScope(["agents:read", "runs:read"], null).ok).toBe(true);
+  });
+});
+
+describe("effectiveScope", () => {
+  it("keeps a scope the response states, even an empty one", () => {
+    expect(effectiveScope(["agents:read"], "agents:read billing:read")).toBe("agents:read billing:read");
+    expect(effectiveScope(["agents:read"], "")).toBe("");
+  });
+
+  it("falls back to the requested scopes when the response omits scope", () => {
+    expect(effectiveScope(["agents:read", "runs:read"], undefined)).toBe("agents:read runs:read");
+  });
+
+  it("prefers the token's own scope claim over the requested scopes when the response has none", () => {
+    // The MCP server enforces the JWT claim, so an omitted or null response scope must not hide
+    // a widened or empty token behind the requested scopes.
+    expect(effectiveScope(["agents:read"], undefined, "agents:read billing:read")).toBe("agents:read billing:read");
+    expect(effectiveScope(["agents:read"], null, "")).toBe("");
+    expect(effectiveScope(["agents:read"], "agents:read", "agents:read billing:read")).toBe("agents:read");
+  });
+});
+
+describe("jwtScope", () => {
+  const jwt = (claims: object) => `h.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.s`;
+
+  it("reads the scope claim of a readable JWT", () => {
+    expect(jwtScope(jwt({ scope: "agents:read runs:read" }))).toBe("agents:read runs:read");
+    expect(jwtScope(jwt({ scope: "" }))).toBe("");
+  });
+
+  it("returns null for a token that is not a readable JWT", () => {
+    expect(jwtScope("opaque")).toBeNull();
+  });
+
+  it("returns an empty scope for a readable JWT with no string scope claim, as the validator grants nothing", () => {
+    expect(jwtScope(jwt({ sub: "x" }))).toBe("");
+    expect(jwtScope(jwt({ scope: ["agents:read"] }))).toBe("");
+  });
+});
+
+describe("pollClaim", () => {
+  const env = { baseUrl: "https://cc.example.test" };
+  const endpoints = { token: "https://cc.example.test/token", claim: "https://cc.example.test/claim" };
+  const done = { access_token: "a", identity_assertion: "b" };
+  const reply = (status: number, body: unknown, headers: Record<string, string> = {}) =>
+    () => Promise.resolve(new Response(typeof body === "string" ? body : JSON.stringify(body), { status, headers }));
+  const pending = reply(400, { error: "authorization_pending" });
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    fetchMock = vi.fn(pending);
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const run = () => pollClaim(env, endpoints, "claim-token", { interval: 1 }, "you@example.com");
+
+  it("polls through a 5xx and returns the completed claim", async () => {
+    fetchMock.mockImplementationOnce(reply(502, "Bad Gateway")).mockImplementationOnce(reply(200, done));
+    const p = run();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(p).resolves.toEqual(done);
+  });
+
+  it("polls through a transport failure and returns the completed claim", async () => {
+    fetchMock.mockImplementationOnce(() => Promise.reject(new TypeError("fetch failed"))).mockImplementationOnce(reply(200, done));
+    const p = run();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(p).resolves.toEqual(done);
+  });
+
+  it("does not let a server Retry-After outlast the five-minute deadline", async () => {
+    fetchMock.mockImplementationOnce(reply(429, "", { "retry-after": "3600" }));
+    const p = run();
+    const settled = expect(p).rejects.toThrow(/not completed within 300s/);
+    await vi.advanceTimersByTimeAsync(301_000);
+    await settled;
+  });
+
+  it("names the last server error when a persistent 5xx runs out the clock", async () => {
+    fetchMock.mockImplementation(reply(500, "boom"));
+    const p = run();
+    const settled = expect(p).rejects.toThrow(/HTTP 500/);
+    await vi.advanceTimersByTimeAsync(301_000);
+    await settled;
+  });
+
+  it("names the earlier server error when a retried delivery then fails", async () => {
+    fetchMock.mockImplementationOnce(reply(500, "mint failed")).mockImplementationOnce(reply(400, { error: "invalid_grant" }));
+    const p = run();
+    const settled = expect(p).rejects.toThrow(/invalid_grant[\s\S]*HTTP 500/);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await settled;
+  });
+
+  it("keeps both causes inside the summary's 100-character row", async () => {
+    // runAuthMdMain cuts the message at 100 characters; the earlier cause must survive that.
+    const delivered = { error: "invalid_grant", error_description: "This registration has already been delivered to its agent." };
+    fetchMock.mockImplementationOnce(reply(500, "mint failed")).mockImplementationOnce(reply(400, delivered));
+    const caught = run().catch((e: Error) => e);
+    await vi.advanceTimersByTimeAsync(5_000);
+    const message = String((await caught as Error).message);
+    expect(message.length).toBeLessThanOrEqual(100);
+    expect(message).toContain("invalid_grant");
+    expect(message).toContain("HTTP 500");
+  });
+
+  describe("when the code expires", () => {
+    // Off env.baseUrl, so showClaim prints it and never launches a browser during the test.
+    const fresh = { claim_attempt: { user_code: "NEW-CODE", verification_uri: "https://elsewhere.example.test/claim", interval: 1 } };
+    const expired = reply(400, { error: "expired_token" });
+    const claimCalls = () => fetchMock.mock.calls.filter(([url]) => url === endpoints.claim);
+
+    it("asks the claim endpoint for a fresh code and keeps polling", async () => {
+      fetchMock.mockImplementationOnce(expired).mockImplementationOnce(reply(200, fresh)).mockImplementationOnce(reply(200, done));
+      const p = run();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(p).resolves.toEqual(done);
+      expect(claimCalls()).toHaveLength(1);
+      expect(JSON.parse(String(claimCalls()[0][1].body))).toEqual({ claim_token: "claim-token", email: "you@example.com" });
+    });
+
+    it.each([
+      ["a 5xx", reply(502, "Bad Gateway")],
+      ["a transport failure", () => Promise.reject(new TypeError("fetch failed"))],
+    ])("asks the claim endpoint again after %s, without waiting for another expired_token", async (_label, failure) => {
+      // The failed request may already have replaced the attempt, after which every poll answers
+      // authorization_pending; only asking again shows the tester a code that works.
+      fetchMock
+        .mockImplementationOnce(expired).mockImplementationOnce(failure)
+        .mockImplementationOnce(reply(200, fresh))
+        .mockImplementationOnce(reply(200, done));
+      const p = run();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(p).resolves.toEqual(done);
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([endpoints.token, endpoints.claim, endpoints.claim, endpoints.token]);
+    });
+
+    it("keeps the refusal and the earlier cause inside the summary's 100-character row", async () => {
+      const refused = { error: "claimed_or_in_flight", error_description: "This registration has already been claimed." };
+      fetchMock.mockImplementationOnce(expired).mockImplementationOnce(reply(502, "Bad Gateway")).mockImplementationOnce(reply(400, refused));
+      const caught = run().catch((e: Error) => e);
+      await vi.advanceTimersByTimeAsync(10_000);
+      const message = String((await caught as Error).message);
+      expect(message.length).toBeLessThanOrEqual(100);
+      expect(message).toContain("claimed_or_in_flight");
+      expect(message).toContain("HTTP 502");
+    });
+  });
+});
+
+describe("jwtAudience / judgeAudience", () => {
+  const jwt = (claims: object) => `h.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.s`;
+  const origin = "https://mcp-qa.sequentum.com";
+
+  it("reads a string or array audience", () => {
+    expect(jwtAudience(jwt({ aud: origin }))).toEqual([origin]);
+    expect(jwtAudience(jwt({ aud: [origin, "x"] }))).toEqual([origin, "x"]);
+  });
+
+  it("returns null for a token that is not a readable JWT", () => {
+    expect(jwtAudience("opaque")).toBeNull();
+  });
+
+  it("returns an empty audience for a readable JWT with no aud, so the row fails", () => {
+    // The validator reads a missing aud as an empty list and rejects the token as
+    // wrong-audience; reporting it as unreadable would pass the row instead.
+    expect(jwtAudience(jwt({ sub: "no-aud" }))).toEqual([]);
+    expect(judgeAudience([], origin).ok).toBe(false);
+  });
+
+  it("matches by origin, as the validator does", () => {
+    expect(judgeAudience([origin], origin).ok).toBe(true);
+    expect(judgeAudience([`${origin}/mcp`], origin).ok).toBe(true);
+    expect(judgeAudience([`${origin}/`], origin).ok).toBe(true);
+    expect(judgeAudience(["not a url"], origin).ok).toBe(false);
+  });
+
+  it("rejects an audience that is the Control Center, not the MCP origin", () => {
+    expect(judgeAudience(["https://dashboard-qa.sequentum.com"], origin).ok).toBe(false);
+  });
+
+  it("does not fail an unreadable token: the /mcp calls are the real test", () => {
+    expect(judgeAudience(null, origin).ok).toBe(true);
   });
 });

@@ -114,6 +114,17 @@ Use the server URL `https://mcp.sequentum.com/mcp` in your client's MCP configur
 
 The server supports [Client ID Metadata Documents (CIMD)](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document-00) as the preferred client identification method, with [Dynamic Client Registration (RFC 7591)](https://datatracker.ietf.org/doc/html/rfc7591) as a fallback. MCP clients that support CIMD (such as Cursor) can use their own URL as a `client_id` without any prior registration.
 
+### Agents (auth.md)
+
+An autonomous agent with no browser can register itself on behalf of a user instead of running the OAuth flow above. The server publishes no registration endpoint of its own: `GET https://mcp.sequentum.com/auth.md` (and `/.well-known/auth.md`) redirects to the manifest served by the Sequentum Control Center, which is the authorization server and holds the users, the claim page and the signing key. The agent follows that manifest:
+
+1. Register with the user's email and the scopes it needs.
+2. Show the user the verification link and code. The user signs in to Sequentum, enters the code and approves.
+3. Poll until the claim completes, then exchange the identity assertion for an access token, passing `resource=https://mcp.sequentum.com`.
+4. Call `/mcp` with that token as a bearer. Scope enforcement is the same as for any other token, so a tool outside the granted scopes is answered with an HTTP 403 `insufficient_scope` challenge.
+
+There are no refresh tokens in this flow: when the access token expires, exchange the identity assertion again. Each exchange returns a new identity assertion and replaces the one you sent, so store the new one every time; the old one stops working shortly after. To try it against QA, see [docs/oauth-scope-probe.md](./docs/oauth-scope-probe.md#the-authmd-path).
+
 ## Local stdio mode (removed)
 
 Running the server locally over stdio with `SEQUENTUM_API_KEY` (`npx sequentum-mcp`) was removed in 3.0.0.
@@ -277,6 +288,10 @@ and consent, loopback callback, PKCE), then calls the V1 API directly and throug
 with tokens of three scope profiles and checks CloudWatch for the Control Center's scope-check
 lines. See [docs/oauth-scope-probe.md](./docs/oauth-scope-probe.md).
 
+The server checks each tool's and resource's scopes before dispatch for user tokens and for
+tokens issued to an agent registered through the Control Center. Client-credentials tokens are
+exempt, as they are on the Control Center itself.
+
 
 | Error | Solution |
 |-------|----------|
@@ -309,12 +324,12 @@ down. `MAX_SESSIONS` is no longer read.
 | `PORT` | `3000` | HTTP server port. |
 | `SEQUENTUM_API_URL` | `https://dashboard.sequentum.com` | Base URL of the Sequentum API this server proxies to. |
 | `SEQUENTUM_OAUTH_ISSUER` | Value of `SEQUENTUM_API_URL` | This deployment's OAuth issuer identifier, advertised in `/.well-known/oauth-protected-resource`. Must be an absolute `https` URL with no query, fragment or userinfo, and must match the authorization server's `issuer` exactly. Set it only when the API base URL and the public OAuth issuer differ; a malformed value refuses to start. |
-| `MCP_CANONICAL_ORIGIN` | derived from the request `Host` header | This server's resource identifier, used to check the `aud` claim of incoming OAuth tokens. Set it to the public origin, e.g. `https://mcp.sequentum.com`. Only the origin is used — the value is normalised through `new URL(...).origin`, so a trailing slash or a path is harmless, and an `aud` naming any path on this origin is accepted. Unset, or set to a value `new URL` cannot parse, the server warns once at startup and falls back to the caller-supplied `Host`. An `aud` on a different origin is logged, not rejected. |
+| `MCP_CANONICAL_ORIGIN` | derived from the request `Host` header | This server's resource identifier: the `resource` in `/.well-known/oauth-protected-resource`, the `realm` and `resource_metadata` of the 401 `WWW-Authenticate` challenge and the `resource_metadata` of the 403 one, the endpoint shown on the landing page, and the origin the `aud` claim of incoming OAuth tokens is checked against. Set it to the public origin clients connect to, e.g. `https://mcp.sequentum.com`; MCP clients reject the metadata when its `resource` differs from the URL they used (RFC 9728 Section 3.3), and when it is set, a spoofed `Host` or `X-Forwarded-Proto` no longer changes any of these. Only the origin is used — the value is normalised through `new URL(...).origin`, so a trailing slash or a path is harmless, and an `aud` naming any path on this origin is accepted. Unset, or set to anything but an `http(s)` URL `new URL` can parse (a scheme-less `localhost:3000` included), the server warns once at startup and falls back to the caller-supplied `Host`. An `aud` on a different origin is logged, not rejected. |
 | `HOST` | `0.0.0.0` | HTTP server bind address. |
 | `LIST_CACHE_TTL_MS` | `3600000` (1 hour) | Freshness hint (`ttlMs`) attached to cacheable list-shaped results (`tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`, `server/discover`). Must be a non-negative integer string; a malformed value fails fast at startup instead of being silently truncated. |
 | `MCP_RATE_LIMIT_WINDOW_MS` | `60000` (1 minute) | Rate-limit window applied to the `/mcp` endpoint. |
 | `MCP_RATE_LIMIT_MAX` | `100` | Maximum `/mcp` requests per window, per process, per IP. See "Rate limiting across replicas" below before scaling horizontally. |
-| `TRUST_PROXY` | `true` | Passed to Express's `trust proxy` setting. Accepts `true`, `false`, a hop count (e.g. `1`), or a comma-separated CIDR/IP allowlist. See "TRUST_PROXY and rate-limit evasion" below — the default has a known weakness. |
+| `TRUST_PROXY` | `1` | Passed to Express's `trust proxy` setting. Accepts `true`, `false`, a hop count (e.g. `1`), or a comma-separated CIDR/IP allowlist. The default trusts exactly one reverse proxy; see "TRUST_PROXY and rate-limit evasion" below before changing it, and never set it to `true` in production. |
 | `REQUIRE_AUTH` | `true` | Set to `false` to bypass the OAuth Bearer-token requirement on `/mcp`. For local testing only: the connection succeeds, but tools still fail without a valid backend token. |
 
 ### Rate limiting across replicas
@@ -328,19 +343,22 @@ rate, divide `MCP_RATE_LIMIT_MAX` by your replica count.
 
 ### TRUST_PROXY and rate-limit evasion
 
-With the default `TRUST_PROXY=true`, Express trusts every proxy hop and resolves
-`req.ip` from the client-supplied, leftmost entry of the `X-Forwarded-For` header.
-Because the rate limiter keys on `req.ip`, a client that simply rotates that header
-value can evade rate limiting entirely. Running behind a reverse proxy does not fix
-this by itself: tunnels such as cloudflared and ngrok **append** to `X-Forwarded-For`
-rather than overwrite it, so the attacker-controlled leftmost entry survives unless
-`TRUST_PROXY` is configured correctly.
+The rate limiter keys on `req.ip`, which Express derives from `X-Forwarded-For`
+according to `TRUST_PROXY`. Reverse proxies, including load balancers and tunnels such
+as cloudflared and ngrok, **append** the address they saw to that header rather than
+overwrite it, so its leftmost entries are whatever the client sent and only the
+entries added by your own proxies are trustworthy.
 
-The remediation is to set `TRUST_PROXY` to the exact number of trusted reverse-proxy
-hops in front of the server (e.g. `1`), or to a comma-separated CIDR/IP allowlist of
-your trusted proxies, so Express derives `req.ip` from the correct hop instead of
-trusting a client-supplied header. This repository does not know your deployment
-topology, so it deliberately does not choose a safer default for you.
+The default, `TRUST_PROXY=1`, trusts exactly one reverse proxy: Express takes `req.ip`
+from the rightmost entry, the one that proxy wrote. If more proxies sit in front of
+the server, set `TRUST_PROXY` to the exact number of hops, or to a comma-separated
+CIDR/IP allowlist of your trusted proxies. Run directly with no proxy, the default
+trusts a header the client wrote; set `TRUST_PROXY=false` there if the rate limit
+matters.
+
+`TRUST_PROXY=true` trusts every hop, so Express resolves `req.ip` from the
+client-supplied leftmost entry, and a client that simply rotates that header value can
+evade rate limiting entirely. It remains accepted, but only as an explicit opt-in.
 
 **Severity:** this is an abuse/DoS-protection bypass, not an authentication or data
 exposure issue — no account data is exposed, and no tool call succeeds that would

@@ -121,11 +121,31 @@ function extractBearerToken(req: Request): string | null {
 }
 
 /**
- * Return the MCP server's own canonical origin as observed for this request.
- * Honors X-Forwarded-Proto via Express's `trust proxy` setting.
+ * The origin `MCP_CANONICAL_ORIGIN` names, or null when it is unset or unparseable.
+ *
+ * Preferred over anything derived from the request because `Host` is caller-controlled:
+ * echoing it back let any caller rewrite the `resource` this server advertises and the
+ * challenge that points at it. The env value supplies the scheme as well, so a
+ * spoofed `X-Forwarded-Proto` cannot change it either.
+ *
+ * Read on every call rather than cached: the value is fixed for the life of the process
+ * in a deployment, and the tests set it per case. Deliberately silent;
+ * `auditCanonicalOrigin` reports the mode once, at startup.
+ */
+function configuredOrigin(): string | null {
+  const configured = process.env.MCP_CANONICAL_ORIGIN;
+  return configured ? parseOrigin(configured) : null;
+}
+
+/**
+ * Return the MCP server's own canonical origin: `MCP_CANONICAL_ORIGIN` when it parses,
+ * otherwise the origin observed for this request (honoring X-Forwarded-Proto via
+ * Express's `trust proxy` setting). The fallback keeps a deployment without the variable,
+ * local dev and the tests working exactly as before. It feeds the protected-resource
+ * metadata, both auth challenges and the token `aud` comparison.
  */
 function getMcpServerOrigin(req: Request): string {
-  return new URL(`${req.protocol}://${req.get("host")}`).origin;
+  return configuredOrigin() ?? new URL(`${req.protocol}://${req.get("host")}`).origin;
 }
 
 /**
@@ -133,11 +153,12 @@ function getMcpServerOrigin(req: Request): string {
  * `http://undefined`. HTTP/1.0 allows no Host at all; the protocol routes have always
  * tolerated that, but the landing page puts the result in front of a human, so a
  * caller that cannot tell us who we are gets a 400 rather than a page of nonsense.
+ * With `MCP_CANONICAL_ORIGIN` set to a parseable value we already know who we are, so
+ * Host is not read and the 400 cannot happen; a set but unparseable value is Host mode.
  */
 function requireOrigin(req: Request): string {
-  const host = req.get("host");
-  if (!host) throw new Error("missing Host header");
-  return new URL(`${req.protocol}://${host}`).origin;
+  if (configuredOrigin() === null && !req.get("host")) throw new Error("missing Host header");
+  return getMcpServerOrigin(req);
 }
 
 /**
@@ -151,40 +172,27 @@ function sendAuthChallenge(req: Request, res: Response): void {
 }
 
 /**
- * The `origin` of a parseable absolute URL, or null when the value is malformed.
+ * The `origin` of a parseable absolute http(s) URL, or null when the value is malformed.
  *
  * Normalizing through `new URL(...).origin` means a trailing slash, a path or
  * unusual casing does not make every audience comparison fail. `validateToken`
  * also normalizes defensively; this is the deployment-facing half.
+ *
+ * Any other scheme is malformed too. `new URL("localhost:3000")` does not throw: it
+ * reads `localhost:` as the scheme and yields the opaque origin "null", which, taken
+ * as configured, would be advertised as the resource and break every 401 challenge.
  */
 function parseOrigin(value: string): string | null {
   try {
-    return new URL(value).origin;
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : null;
   } catch {
     return null;
   }
 }
 
 /**
- * This server's resource identifier, used for the token `aud` check.
- *
- * `MCP_CANONICAL_ORIGIN` is preferred because `getMcpServerOrigin` derives the
- * origin from the caller-controlled `Host` header, which is weak as a comparison
- * target. Falling back to it keeps a misconfigured deployment working rather
- * than rejecting everyone.
- *
- * Deliberately silent: the env value is fixed for the life of the process, so a
- * warning here would repeat one unchanging fact on every request forever.
- * `auditCanonicalOrigin` reports the mode once, at startup.
- */
-function canonicalOrigin(req: Request): string {
-  const configured = process.env.MCP_CANONICAL_ORIGIN;
-  if (!configured) return getMcpServerOrigin(req);
-  return parseOrigin(configured) ?? getMcpServerOrigin(req);
-}
-
-/**
- * Report which audience-comparison mode this process will use, once at startup.
+ * Report which origin mode this process will use, once at startup.
  *
  * Both degraded modes fall back to the caller-supplied `Host` header, which is
  * spoofable when `trust proxy` is on, so each gets a warning an operator sees
@@ -196,16 +204,17 @@ export function auditCanonicalOrigin(): void {
 
   if (!configured) {
     console.error(
-      "[MCP] Warning: MCP_CANONICAL_ORIGIN is unset; token audience validation " +
-      "will use the caller-supplied Host header"
+      "[MCP] Warning: MCP_CANONICAL_ORIGIN is unset; the OAuth metadata, auth challenges " +
+      "and token audience validation will use the caller-supplied Host header"
     );
     return;
   }
 
   if (parseOrigin(configured) === null) {
     console.error(
-      `[MCP] Warning: MCP_CANONICAL_ORIGIN=${JSON.stringify(configured)} is not a valid URL; ` +
-      "token audience validation will use the caller-supplied Host header"
+      `[MCP] Warning: MCP_CANONICAL_ORIGIN=${JSON.stringify(configured)} is not a valid http(s) URL; ` +
+      "the OAuth metadata, auth challenges and token audience validation will use " +
+      "the caller-supplied Host header"
     );
   }
 }
@@ -244,7 +253,7 @@ async function passesAuthGate(req: Request, res: Response, keys: JwksKeySource):
   // REQUIRE_AUTH=false is the test escape hatch: no token gate, no validation.
   if (!requireAuth || !token) return true;
 
-  const verdict = await validateToken(token, canonicalOrigin(req), keys);
+  const verdict = await validateToken(token, getMcpServerOrigin(req), keys);
 
   if (verdict.kind === "rejected") {
     logAuthOutcome(req, "rejected", verdict.reason, verdict.kid, verdict.exp);
@@ -264,16 +273,17 @@ async function passesAuthGate(req: Request, res: Response, keys: JwksKeySource):
 }
 
 /**
- * Hand a verified user token to the SDK as `req.auth`, which `toNodeHandler` forwards as
- * `authInfo` so each tool's and resource's scope challenge can run before dispatch.
+ * Hand a verified user or agent token to the SDK as `req.auth`, which `toNodeHandler`
+ * forwards as `authInfo` so each tool's and resource's scope challenge can run before dispatch.
  *
- * Only `authorization_code` (user) tokens get one. The Control Center exempts
+ * Only user tokens (`authorization_code`) and agent tokens (`agent`, issued to an agent the
+ * user registered) get one; the Control Center checks the scopes of both. It exempts
  * client-credentials tokens from scope checks, and they may carry no `scope` claim at all,
  * so challenging them would deny what the API allows. Without `req.auth` the challenge
  * lets the request through, as it does on the unverifiable and REQUIRE_AUTH=false paths.
  */
 function attachAuthInfo(req: Request & { auth?: AuthInfo }, token: string, claims: Claims): void {
-  if (claims.tokenType !== "authorization_code") return;
+  if (claims.tokenType !== "authorization_code" && claims.tokenType !== "agent") return;
   req.auth = {
     token,
     clientId: claims.clientId ?? "",
@@ -325,27 +335,30 @@ export function jsonRpcErrorMiddleware(err: unknown, _req: Request, res: Respons
   });
 }
 
+/** Trust exactly one reverse proxy unless TRUST_PROXY says otherwise. */
+const DEFAULT_TRUST_PROXY = 1;
+
 /**
  * Parse TRUST_PROXY into the value Express's `app.set("trust proxy", ...)`
  * expects: a boolean, a hop count, or a comma-separated CIDR/IP allowlist
- * (which Express accepts as a plain string). Defaults to `true` — identical
- * behaviour to the previous boolean-only `!== "false"` check when the env
- * var is unset.
+ * (which Express accepts as a plain string).
  *
- * KNOWN WEAKNESS at the default: `trust proxy: true` trusts every hop, so
- * Express resolves `req.ip` to the client-supplied leftmost X-Forwarded-For
- * entry. Because the rate limiter keys on `req.ip`, a client that simply
- * rotates that header can evade it entirely. The remediation is to set
- * TRUST_PROXY to the exact number of trusted reverse-proxy hops (e.g. "1")
- * or to a comma-separated CIDR/IP list of the trusted proxies — but the
- * correct value depends on deployment topology this repository does not
- * know, so it is deliberately NOT the default here.
+ * Defaults to `1`: trust exactly one reverse proxy. Express then resolves
+ * `req.ip` from the rightmost X-Forwarded-For entry, the one that proxy wrote,
+ * so a client cannot choose the address the rate limiter keys on. Set a larger
+ * hop count or an allowlist when more proxies sit in front of the server.
+ *
+ * `true` remains available as an explicit opt-in, with a known weakness: it
+ * trusts every hop, so `req.ip` becomes the client-supplied leftmost
+ * X-Forwarded-For entry and a client that rotates that header evades the rate
+ * limiter. Proxies append to the header rather than replace it, so running
+ * behind one does not help.
  */
 export function parseTrustProxy(raw: string | undefined): boolean | number | string {
-  if (raw === undefined) return true;
+  if (raw === undefined) return DEFAULT_TRUST_PROXY;
   const trimmed = raw.trim();
   // Empty/whitespace reads as "not configured", not as an empty allowlist.
-  if (trimmed === "") return true;
+  if (trimmed === "") return DEFAULT_TRUST_PROXY;
   // Case-insensitive: before SE4-3723 this was `TRUST_PROXY !== "false"`, so
   // "True" and " true " both meant true and booted. Treating them as an IP
   // allowlist instead makes Express throw and the server never start.
@@ -362,7 +375,7 @@ export function parseTrustProxy(raw: string | undefined): boolean | number | str
  * Express compiles an allowlist inside `app.set` and throws synchronously on anything
  * proxy-addr cannot parse, so an unparseable value left uncaught kills startup. Since we
  * cannot reliably out-guess that parser, catch it here: warn loudly and fall back to the
- * documented default, which is also the pre-SE4-3723 behaviour for such values.
+ * default, so a typo neither stops the server nor reopens the rate-limit bypass.
  */
 export function applyTrustProxy(app: express.Application, raw: string | undefined): void {
   const value = parseTrustProxy(raw);
@@ -371,10 +384,11 @@ export function applyTrustProxy(app: express.Application, raw: string | undefine
   } catch (err) {
     console.error(
       `[MCP] TRUST_PROXY=${JSON.stringify(raw)} is not a valid Express 'trust proxy' setting ` +
-        `(${err instanceof Error ? err.message : String(err)}). Falling back to true. Use ` +
+        `(${err instanceof Error ? err.message : String(err)}). Falling back to ` +
+        `${DEFAULT_TRUST_PROXY}. Use ` +
         `'true', 'false', a hop count, or a comma-separated CIDR/IP allowlist.`
     );
-    app.set("trust proxy", true);
+    app.set("trust proxy", DEFAULT_TRUST_PROXY);
   }
 }
 
@@ -442,8 +456,8 @@ export async function startHttpServer(
 
   // Trust X-Forwarded-Proto from reverse proxies (cloudflared, ngrok, etc.)
   // This ensures req.protocol returns 'https' when behind a TLS-terminating proxy.
-  // See parseTrustProxy's doc comment for the req.ip / rate-limiter evasion risk
-  // at the default and how to remediate it (hop count or CIDR/IP allowlist).
+  // See parseTrustProxy's doc comment for why the default is one hop and the
+  // req.ip / rate-limiter evasion risk of setting it to true.
   applyTrustProxy(app, process.env.TRUST_PROXY);
 
   // Deliberately NO express.json(). toNodeHandler reads the raw request stream;
@@ -544,10 +558,11 @@ export async function startHttpServer(
   // redirect expressed as a catch-all in a proxy in front of this app WOULD shadow
   // them, so it belongs here and not in the ingress.
   app.get("/", (req: Request, res: Response) => {
-    // Resolve the origin BEFORE touching the response. `getMcpServerOrigin` throws on
-    // a Host the URL parser rejects (`a<b`, an embedded space), and if the headers are
-    // already set by then the error middleware ships a JSON-RPC body still labelled
-    // text/html, logged against /mcp on a request that never went there.
+    // Resolve the origin BEFORE touching the response. In Host mode (MCP_CANONICAL_ORIGIN
+    // unset or unparseable) `requireOrigin` throws on a missing Host or one the URL parser rejects
+    // (`a<b`, an embedded space), and if the headers are already set by then the error
+    // middleware ships a JSON-RPC body still labelled text/html, logged against /mcp on a
+    // request that never went there.
     let origin: string;
     try {
       origin = requireOrigin(req);
@@ -556,12 +571,14 @@ export async function startHttpServer(
       return;
     }
 
-    // `private`, never `public`. The body varies by Host AND by req.protocol, which
-    // Express reads from the leftmost X-Forwarded-Proto — client-supplied under the
-    // default `trust proxy: true` (see parseTrustProxy). Host is part of a shared
-    // cache's key; the forwarded scheme is not, and is not in Vary, so `public` would
-    // let one anonymous request pin an hour of "connect over http://" onto the
-    // canonical page for every visitor.
+    // `private`, never `public`. In Host mode the body varies by Host AND by req.protocol
+    // (with a parseable MCP_CANONICAL_ORIGIN it varies by neither, and `private` is kept
+    // so both modes send one header). Express reads req.protocol from the leftmost
+    // X-Forwarded-Proto whenever TRUST_PROXY trusts the connecting hop, at any hop
+    // count — client-supplied when nothing in front overwrites it.
+    // Host is part of a shared cache's key; the forwarded scheme is not, and is not
+    // in Vary, so `public` would let one anonymous request pin an hour of "connect
+    // over http://" onto the canonical page for every visitor.
     //
     // `private` bars shared caches — where that attack lives — while still letting the
     // visitor's own browser cache: a browser does not send X-Forwarded-Proto, and no
@@ -601,13 +618,25 @@ export async function startHttpServer(
     res.redirect(302, `${issuer}/.well-known/oauth-authorization-server`);
   });
 
+  // auth.md manifest. An agent that only knows this origin looks for /auth.md here, but
+  // registration, claims and tokens all belong to the Control Center: this server has no
+  // users, no sign-in page and no signing key. So, exactly like the authorization-server
+  // metadata above, point at the issuer's document instead of keeping a copy that would
+  // drift. Both the bare path and the well-known path are accepted because agents are
+  // not consistent about which they probe first. 302 for the same reason as above: the
+  // target is environment-specific.
+  app.get(["/auth.md", "/.well-known/auth.md"], (_req: Request, res: Response) => {
+    res.redirect(302, `${issuer}/auth.md`);
+  });
+
   // RFC 9728 - Protected Resource Metadata (required by MCP spec 2025-06-18)
   // This tells MCP clients which authorization server to use for this resource.
   // Per MCP spec, the resource MUST be the MCP server's own canonical URL,
   // as MCP clients compute the expected resource from the URL they connect to.
   app.get("/.well-known/oauth-protected-resource", async (req: Request, res: Response) => {
-    // The resource is this MCP server's own URL (origin)
-    // MCP clients (e.g., Cursor) validate this matches the URL they connected to
+    // The resource is this MCP server's own origin: MCP_CANONICAL_ORIGIN when set, the
+    // request's Host otherwise. MCP clients (e.g., Cursor) validate it matches the URL they
+    // connected to (RFC 9728 Section 3.3), so the configured value must be the public one.
     const resourceUrl = getMcpServerOrigin(req);
 
     const protectedResourceMetadata = {

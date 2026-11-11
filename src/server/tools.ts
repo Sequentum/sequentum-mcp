@@ -6,7 +6,7 @@
  */
 
 import type { Tool } from "@modelcontextprotocol/server";
-import { PRE_CALL_CHECK, PROMPT_HANDLING_POLICY } from "./policies.js";
+import { BUILD_RESULT_FIELDS, PRE_CALL_CHECK, PROMPT_HANDLING_POLICY } from "./policies.js";
 import { AGENT_BUILD_MAX_WAIT_LABEL } from "./constants.js";
 import { outputSchemaFor } from "./output-schemas/index.js";
 
@@ -1187,6 +1187,7 @@ export const tools: Tool[] = [
       "Note: clients should set a tool-call timeout > 5 min or enable resetTimeoutOnProgress, as the default MCP SDK timeout (60s) may expire before the build completes on slow sites. " +
       "Optionally call stop_agent_build to abort early while still in 'processing'. " +
       "If spaceName is known, resolve it to a spaceId via search_space_by_name first. " +
+      BUILD_RESULT_FIELDS + " " +
       PRE_CALL_CHECK + " " +
       PROMPT_HANDLING_POLICY,
     inputSchema: {
@@ -1231,8 +1232,10 @@ export const tools: Tool[] = [
     name: "get_agent_build_status",
     description:
       "Poll the status of an agent building session. " +
-      "Returns { status, agentId?, agentName?, error? }. " +
+      "Returns { status, agentId?, agentName?, plan?, report?, partial?, summary?, error? }. " +
       "status: 'processing' (keep polling) | 'ready' | 'completed' | 'error' | 'cancelled'. " +
+      BUILD_RESULT_FIELDS + " " +
+      "`plan` appears while still 'processing', once the builder has seen the page. " +
       "STOP POLLING on: completed, ready, error, or cancelled — the session tears down automatically. " +
       "The returned agentId is the permanent workspace ID usable with get_agent, run_agent, schedule tools, and every other endpoint that takes an agentId. " +
       "POLLING CADENCE: honor any user-expressed preference (e.g., 'poll quickly', 'every N seconds'); otherwise use moderate backoff (~5s start, max ~30s between polls).",

@@ -14,6 +14,16 @@ export const AGENT_BUILD_MAX_WAIT_SHORT = "5m";
 export const AGENT_BUILD_ERROR_MESSAGE = "Build failed. Please review your prompt and try again.";
 
 /**
+ * Largest combined count of array elements and object members one `tools/call`
+ * `arguments` payload may carry (SDK `maxToolInputElements`). A second
+ * cap beside the 4 MiB body limit: a small body can still hold a huge number of
+ * tiny elements, and validating those is what exhausts memory. Our tools take a
+ * handful of scalar fields and short id lists, so 1,000 is far above any
+ * legitimate call.
+ */
+export const MAX_TOOL_INPUT_ELEMENTS = 1_000;
+
+/**
  * Strictly parse a non-negative-integer env var override, or fall back to
  * the default.
  *

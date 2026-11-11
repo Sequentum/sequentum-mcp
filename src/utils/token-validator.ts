@@ -19,7 +19,9 @@ export type RejectReason =
   | "expired"
   | "bad-signature"
   | "malformed"
-  | "bad-alg";
+  | "bad-alg"
+  // The latest JWKS fetch succeeded and lacks the token's kid.
+  | "unknown-kid";
 
 /**
  * We could not reach a verdict. Distinct from `RejectReason` — see {@link Verdict}.
@@ -32,7 +34,7 @@ export type RejectReason =
  * token's audience may legitimately be "any URI (localhost, tunnel URL, external
  * domain)". Treating a mismatch as unverifiable fails the request open instead.
  */
-export type UnverifiableReason = "jwks-unreachable" | "unknown-kid" | "wrong-audience";
+export type UnverifiableReason = "jwks-unreachable" | "wrong-audience";
 
 /** The claims a caller may act on, populated only for a `valid` verdict. */
 export interface Claims {
@@ -46,7 +48,10 @@ export interface Claims {
   readonly scopes: readonly string[];
   /** The `clientId` claim (camelCase, as Control Center mints it), when it is a string. */
   readonly clientId?: string;
-  /** The `token_type` claim: `authorization_code` for user tokens, `client_credentials` for server keys. */
+  /**
+   * The `token_type` claim: `authorization_code` for user tokens, `agent` for tokens issued to a
+   * registered agent, `client_credentials` for server keys.
+   */
   readonly tokenType?: string;
 }
 
@@ -54,7 +59,8 @@ export interface Claims {
  * The three-way split is the core of the design.
  *
  * - `rejected` — a definite verdict. Send 401 + WWW-Authenticate.
- * - `unverifiable` — infrastructure failure (JWKS down, key rotated). Pass the
+ * - `unverifiable` — infrastructure failure (JWKS unreachable), or an audience
+ *   mismatch tolerated on purpose (see {@link UnverifiableReason}). Pass the
  *   request through to the API, behaving exactly as before this change. Failing
  *   closed here would 401 every user during a JWKS blip, and since their refresh
  *   would succeed but still not validate, it would escalate a brief outage into
@@ -171,9 +177,11 @@ function audienceMatches(entry: string, normalizedCanonicalOrigin: string): bool
  *
  * `exp` deliberately precedes the key lookup. An expiry check can only ever
  * produce a rejection, never an acceptance, so it needs no verified signature —
- * and running it first means an expired token is still rejected during a key
- * rotation, when the lookup returns `unverifiable` and the caller fails open.
- * A forged token claiming a future `exp` is still caught by the signature check.
+ * and running it first means an expired token is still rejected while the JWKS
+ * is unreachable, when the lookup returns `unverifiable` and the caller fails open.
+ * A forged token claiming a future `exp` is caught by the signature check when its
+ * kid is known, and rejected as `unknown-kid` when the latest JWKS fetch succeeded
+ * without it. Only while the JWKS is unreachable does it pass unverified.
  *
  * @param token - the raw Bearer value, with the `Bearer ` prefix already removed
  * @param canonicalOrigin - this server's resource identifier, for the `aud` check
@@ -205,7 +213,7 @@ export async function validateToken(
   }
 
   const lookup = await keys.getKey(kid);
-  if (lookup.kind === "unknown") return { kind: "unverifiable", reason: "unknown-kid", kid };
+  if (lookup.kind === "unknown") return { kind: "rejected", reason: "unknown-kid", kid };
   if (lookup.kind === "unreachable") {
     return { kind: "unverifiable", reason: "jwks-unreachable", kid };
   }

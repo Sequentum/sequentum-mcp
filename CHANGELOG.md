@@ -16,7 +16,30 @@
 - **The `SequentumApiClient` constructor dropped its `apiKey` parameter.** It is now
   `(baseUrl, requestTimeoutMs, maxRetries)`; authenticate with `setAccessToken()`.
 
+### Added
+
+- **`/auth.md` and `/.well-known/auth.md` redirect to the Control Center's auth.md manifest.**
+  An agent that only knows the MCP origin can now find how to register and claim a token; the
+  server keeps no copy of the manifest, as with the authorization-server metadata redirect. The
+  landing page links to it, and `oauth-scope-probe` gained an `--auth-md-email` mode that runs the
+  claim flow end to end against QA.
+
 ### Changed
+
+- **Production dependencies upgraded to clear `pnpm audit --prod`.** `@modelcontextprotocol/server`
+  and `client` (with `core`) 2.2.0 to 2.4.0, `@modelcontextprotocol/node` 2.1.0 to 2.1.2,
+  `express` to 4.22.3, `express-rate-limit` to 8.7.2, and the transitive `proxy-addr`, `zod`,
+  `hono`, `@hono/node-server` and `qs`. Fixes the memory-exhaustion advisory in the SDK's request
+  validation and the rate limiter that collapsed all IPv4 clients into one bucket. A `tools/call`
+  whose `arguments` hold more than 1,000 array elements and object members is now rejected
+  (SDK `maxToolInputElements`). CI now fails on a high or critical production advisory.
+- **`start_agent_build` and `get_agent_build_status` return the build's Plan and report.** A
+  finished build now carries `plan` (what the build set out to deliver, with each line marked as
+  the user's request, seen on the site, or an assumption or default), `report` (each Plan line
+  met, partial or unmet, and up to 3 open questions with suggested replies), `partial` and
+  `summary`. Before this, the default synchronous `start_agent_build` returned only the agent id
+  and name, so a client could not see what the build guessed. `get_agent_build_status` already
+  passed these fields through; its description and output schema now name them.
 
 - **Each tool and resource now declares the OAuth scopes it needs, and the server checks
   them before dispatch.** A `tools/call` or `resources/read` whose token lacks one is
@@ -25,9 +48,10 @@
   the missing scope, and the Sequentum API is not called. The scope list names the scopes
   the token already holds plus the missing ones, so re-authorizing does not narrow the
   grant. The requirements mirror the Control Center's own per-endpoint scopes;
-  `start_agent_build` needs both `agents:write` and `agents:read`. Client-credentials
-  tokens, which the Control Center exempts, are not checked. The "Insufficient Scope" tool
-  error remains as the fallback for a 403 from the API itself.
+  `start_agent_build` needs both `agents:write` and `agents:read`. User tokens and tokens
+  issued to an agent registered through the Control Center (`token_type` `agent`) are
+  checked; client-credentials tokens, which the Control Center exempts, are not. The
+  "Insufficient Scope" tool error remains as the fallback for a 403 from the API itself.
 - Tool errors for a 401 or 403 from the Sequentum API no longer mention API keys. A 401
   now says to disconnect and reconnect the Sequentum MCP server to sign in again.
 - **Every HTTP response now carries a `Content-Security-Policy` header.** The policy is
@@ -37,6 +61,30 @@
 
 ### Fixed
 
+- **`TRUST_PROXY` now defaults to `1` instead of `true`, so rotating `X-Forwarded-For` no
+  longer evades the `/mcp` rate limiter.** Under `true`, Express took `req.ip` from the
+  leftmost, client-supplied entry of that header, so each new value opened a fresh rate-limit
+  bucket. One trusted hop takes it from the entry the reverse proxy wrote. An unparseable
+  `TRUST_PROXY` now also falls back to `1`. `true` is still accepted when set explicitly,
+  but keeps the bypass, as does the default with no proxy in front (set `false` there).
+  Deployments behind more than one proxy must set the hop count or an allowlist.
+- **A spoofed `Host` header no longer changes the origin the server advertises.** With
+  `MCP_CANONICAL_ORIGIN` set, it is now also the `resource` in
+  `/.well-known/oauth-protected-resource`, the `realm` and `resource_metadata` of the 401
+  `WWW-Authenticate` challenge, the `resource_metadata` of the 403 one, and the endpoint
+  on the landing page, which
+  previously all echoed the caller's `Host` (and scheme from `X-Forwarded-Proto`). With it
+  set, the landing page no longer answers `400` to a request without `Host`. Unset, behaviour
+  is unchanged. A value that is not an `http(s)` URL, such as a scheme-less `localhost:3000`,
+  now counts as unparseable and falls back to `Host` with the startup warning, instead of
+  being taken as the origin `null`. The challenge `realm` also drops `"`, which a `Host`
+  could use to break out of the quoted value, and `,`, which naive parsers split on.
+- **A token naming a signing key Control Center does not publish is now rejected with
+  `401`.** It used to pass through unverified as `unknown-kid`, so a forged token with
+  any key id and a future expiry reached the MCP handlers without credentials. When the
+  latest JWKS fetch succeeded and lacks the key id, the token is now rejected with reason
+  `unknown-kid`. Validation still fails open, as `jwks-unreachable`, when no usable key
+  set has been fetched or the latest fetch failed.
 - **Glama's browser-based MCP inspector can now reach the server.** `https://glama.ai` and
   its subdomains are in the built-in CORS origin allowlist (`src/server/cors.ts`).
   Requests from the inspector previously got a 403 on `/mcp`, and the preflight carried no

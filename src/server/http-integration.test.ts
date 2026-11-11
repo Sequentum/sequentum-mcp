@@ -34,12 +34,38 @@ function rawRequest(base: string, raw: string): Promise<string> {
   });
 }
 
+// MCP_CANONICAL_ORIGIN now decides the advertised resource, the challenges and the landing
+// page, so a value left exported in the shell running the suite would fail every Host-mode
+// test below. TRUST_PROXY decides whether a spoofed X-Forwarded-Proto reaches req.protocol,
+// so a shell `TRUST_PROXY=false` would make the spoof tests pass vacuously. Suites that need
+// either set it themselves; this restores the shell's values after.
+const SCRUBBED_ENV = ["MCP_CANONICAL_ORIGIN", "TRUST_PROXY"] as const;
+const savedEnv: Partial<Record<(typeof SCRUBBED_ENV)[number], string>> = {};
+beforeEach(() => {
+  for (const name of SCRUBBED_ENV) {
+    savedEnv[name] = process.env[name];
+    delete process.env[name];
+  }
+});
+afterEach(() => {
+  for (const name of SCRUBBED_ENV) {
+    const saved = savedEnv[name];
+    if (saved === undefined) delete process.env[name];
+    else process.env[name] = saved;
+  }
+});
+
 describe("POST /mcp through the real Express app", () => {
   let server: HttpServer;
   let base: string;
+  let savedTrustProxy: string | undefined;
 
   beforeEach(async () => {
     process.env.REQUIRE_AUTH = "false";
+    // Unset so the X-Forwarded-For test below exercises the default, not
+    // whatever TRUST_PROXY the shell running the suite happens to export.
+    savedTrustProxy = process.env.TRUST_PROXY;
+    delete process.env.TRUST_PROXY;
     server = await startHttpServer("https://api.example.test", "https://api.example.test", "9.9.9", 0, "127.0.0.1");
     const addr = server.address();
     if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
@@ -48,6 +74,8 @@ describe("POST /mcp through the real Express app", () => {
 
   afterEach(async () => {
     delete process.env.REQUIRE_AUTH;
+    if (savedTrustProxy === undefined) delete process.env.TRUST_PROXY;
+    else process.env.TRUST_PROXY = savedTrustProxy;
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
@@ -156,6 +184,30 @@ describe("POST /mcp through the real Express app", () => {
     // MCP 2026-07-28 reserves -32020..-32099 for the spec; -32000..-32019 stays ours.
     expect(RATE_LIMIT_ERROR_CODE).toBeGreaterThanOrEqual(-32019);
     expect(RATE_LIMIT_ERROR_CODE).toBeLessThanOrEqual(-32000);
+  });
+
+  it("keys the rate limit on the proxy-written X-Forwarded-For entry, not the client's", async () => {
+    // A reverse proxy appends the address it saw to whatever X-Forwarded-For the
+    // client sent, so only the rightmost entry is trustworthy. Here the test
+    // client plays the proxy: the rightmost entry stays fixed while the leftmost,
+    // client-chosen one rotates. If rotating it opened a fresh bucket, a client
+    // could send unlimited requests per window.
+    const post = (forwardedFor: string) =>
+      fetch(`${base}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "x-forwarded-for": forwardedFor,
+        },
+        body: "{}",
+      });
+
+    const first = await post("203.0.113.10, 192.0.2.1");
+    const second = await post("198.51.100.77, 192.0.2.1");
+
+    const remaining = (res: Response) => Number(res.headers.get("ratelimit-remaining"));
+    expect(remaining(second)).toBe(remaining(first) - 1);
   });
 });
 
@@ -388,6 +440,24 @@ describe("/.well-known/oauth-protected-resource", () => {
     expect(text).not.toContain("registration_endpoint");
   });
 
+  it.each(["/auth.md", "/.well-known/auth.md"])(
+    "redirects %s to the issuer's own manifest",
+    async (path) => {
+      const res = await fetch(`${base}${path}`, { redirect: "manual" });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("https://issuer.example.test/auth.md");
+    }
+  );
+
+  it("serves no auth.md body of its own", async () => {
+    // Registration, claims and tokens live on the Control Center; a local copy of the
+    // manifest would drift, exactly as the authorization-server metadata copy did.
+    const res = await fetch(`${base}/auth.md`, { redirect: "manual" });
+    const text = await res.text();
+    expect(text).not.toContain("registration");
+    expect(res.headers.get("content-type") ?? "").not.toMatch(/markdown/);
+  });
+
   it("serves the SUPPORTED_SCOPES fallback when no scope source is injected (default wiring)", async () => {
     // No mock apiBaseUrl in this suite ever resolves to a real Control Center, so this is the
     // server's real default behaviour, not a stub standing in for it.
@@ -442,6 +512,98 @@ describe("/.well-known/oauth-protected-resource", () => {
     } finally {
       await new Promise<void>((resolve) => primed.close(() => resolve()));
     }
+  });
+});
+
+// Host is caller-controlled, so with MCP_CANONICAL_ORIGIN set every origin this
+// server advertises comes from the env instead. `rawRequest` sends the spoofed Host,
+// because fetch rewrites it.
+describe("MCP_CANONICAL_ORIGIN pins the advertised origin", () => {
+  const CANONICAL = "https://mcp.example.test";
+  let server: HttpServer;
+  let base: string;
+
+  beforeEach(async () => {
+    delete process.env.REQUIRE_AUTH;
+    server = await startHttpServer(
+      "https://api.example.test",
+      "https://issuer.example.test",
+      "9.9.9",
+      0,
+      "127.0.0.1"
+    );
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    base = `http://127.0.0.1:${addr.port}`;
+    process.env.MCP_CANONICAL_ORIGIN = CANONICAL;
+  });
+
+  afterEach(async () => {
+    delete process.env.MCP_CANONICAL_ORIGIN;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("advertises the canonical origin as the PRM resource whatever Host says", async () => {
+    const res = await rawRequest(
+      base,
+      "GET /.well-known/oauth-protected-resource HTTP/1.1\r\nHost: attacker.example.test\r\nConnection: close\r\n\r\n"
+    );
+    expect(res).toContain("200 OK");
+    expect(res).toContain(`"resource":"${CANONICAL}"`);
+    expect(res).not.toContain("attacker.example.test");
+  });
+
+  it("ignores a spoofed X-Forwarded-Proto when the canonical origin is set", async () => {
+    // The connection is plain http, so the spoof must claim https to change anything:
+    // the default one-hop TRUST_PROXY trusts loopback, so req.protocol becomes "https"
+    // and an origin that took its scheme from the request would advertise https.
+    process.env.MCP_CANONICAL_ORIGIN = "http://mcp.example.test";
+    const res = await fetch(`${base}/.well-known/oauth-protected-resource`, {
+      headers: { "x-forwarded-proto": "https" },
+    });
+    const body = (await res.json()) as { resource: string };
+    expect(body.resource).toBe("http://mcp.example.test");
+  });
+
+  it("points the 401 challenge at the canonical origin whatever Host says", async () => {
+    const payload = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
+    const res = await rawRequest(
+      base,
+      "POST /mcp HTTP/1.1\r\nHost: attacker.example.test\r\nContent-Type: application/json\r\n" +
+        "Accept: application/json, text/event-stream\r\n" +
+        `Content-Length: ${Buffer.byteLength(payload)}\r\nConnection: close\r\n\r\n${payload}`
+    );
+    expect(res).toContain("401");
+    expect(res).toContain('realm="mcp.example.test"');
+    expect(res).toContain(`resource_metadata="${CANONICAL}/.well-known/oauth-protected-resource"`);
+    expect(res).not.toContain("attacker.example.test");
+  });
+
+  it("falls back to Host for the PRM resource when the value is unparseable", async () => {
+    process.env.MCP_CANONICAL_ORIGIN = "mcp.example.test"; // no scheme, so `new URL` throws
+    const body = (await (await fetch(`${base}/.well-known/oauth-protected-resource`)).json()) as {
+      resource: string;
+    };
+    expect(body.resource).toBe(base);
+  });
+
+  it("falls back to Host for a scheme-less host:port, which new URL parses to the origin \"null\"", async () => {
+    // `new URL("localhost:3000")` reads `localhost:` as a scheme and does not throw; its
+    // origin is the string "null". Taken as configured, that broke every 401 (the
+    // challenge builder cannot parse "null") and advertised "null" as the resource.
+    process.env.MCP_CANONICAL_ORIGIN = "localhost:3000";
+    const body = (await (await fetch(`${base}/.well-known/oauth-protected-resource`)).json()) as {
+      resource: string;
+    };
+    expect(body.resource).toBe(base);
+
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toContain(`resource_metadata="${base}/.well-known/oauth-protected-resource"`);
   });
 });
 
@@ -502,6 +664,12 @@ describe("GET / landing page", () => {
     expect(body).not.toContain("mcp.sequentum.com");
   });
 
+  it("links the auth.md manifest and says agents can register through it", async () => {
+    const body = await (await fetch(`${base}/`)).text();
+    expect(body).toContain('href="/auth.md"');
+    expect(body).toMatch(/agents can register/i);
+  });
+
   it("does not shadow the protocol routes", async () => {
     // The whole safety argument for adding a root route is that Express matches `/`
     // exactly. If this ever regresses — or the same redirect is re-expressed as a
@@ -537,10 +705,10 @@ describe("GET / landing page", () => {
 
   it("is cacheable privately but never by a shared cache", async () => {
     // The body varies by Host (which a shared cache keys on) AND by the leftmost
-    // X-Forwarded-Proto (which it does not, and which is client-supplied under the
-    // default trust proxy: true). `public` would let one anonymous request pin an
-    // hour of "connect over http://" onto the canonical page; `private` keeps the
-    // browser cache without exposing a shared one. The absence of `public` is the
+    // X-Forwarded-Proto (which it does not, and which is client-supplied whenever
+    // nothing in front of the server overwrites it). `public` would let one
+    // anonymous request pin an hour of "connect over http://" onto the canonical
+    // page; `private` keeps the browser cache without exposing a shared one. The absence of `public` is the
     // security property here — assert it directly, not just the happy string.
     const res = await fetch(`${base}/`);
     expect(res.headers.get("cache-control")).toBe("private, max-age=3600");
@@ -582,6 +750,41 @@ describe("GET / landing page", () => {
     const res = await rawRequest(base, "GET / HTTP/1.0\r\n\r\n");
     expect(res).toContain("400 Bad Request");
     expect(res).not.toContain("undefined");
+  });
+
+  it("still rejects a request with no Host when MCP_CANONICAL_ORIGIN is set but unparseable", async () => {
+    // A set but unparseable value is Host mode, so the guard must test the parsed
+    // origin, not whether the variable is present.
+    process.env.MCP_CANONICAL_ORIGIN = "localhost:3000";
+    const res = await rawRequest(base, "GET / HTTP/1.0\r\n\r\n");
+    expect(res).toContain("400 Bad Request");
+    expect(res).not.toContain("undefined");
+  });
+
+  describe("with MCP_CANONICAL_ORIGIN set", () => {
+    // The configured origin is known, so the page neither echoes Host nor needs it.
+    beforeEach(() => {
+      process.env.MCP_CANONICAL_ORIGIN = "https://mcp.example.test";
+    });
+
+    afterEach(() => {
+      delete process.env.MCP_CANONICAL_ORIGIN;
+    });
+
+    it("advertises the canonical endpoint whatever Host says", async () => {
+      const res = await rawRequest(base, "GET / HTTP/1.1\r\nHost: attacker.example.test\r\nConnection: close\r\n\r\n");
+      expect(res).toContain("200 OK");
+      expect(res).toContain("<code>https://mcp.example.test/mcp</code>");
+      expect(res).not.toContain("attacker.example.test");
+      expect(res).toMatch(/cache-control: private, max-age=3600/i);
+    });
+
+    it("serves the page to a request with no Host", async () => {
+      const res = await rawRequest(base, "GET / HTTP/1.0\r\n\r\n");
+      expect(res).toContain("200 OK");
+      expect(res).toContain("https://mcp.example.test/mcp");
+      expect(res).not.toContain("undefined");
+    });
   });
 });
 
@@ -640,6 +843,8 @@ describe("Content-Security-Policy on every response (IT-2272)", () => {
         await fetch(`${base}/.well-known/oauth-authorization-server`, { redirect: "manual" }),
       ],
       ["GET /.well-known/glama.json", await fetch(`${base}/.well-known/glama.json`)],
+      ["GET /auth.md", await fetch(`${base}/auth.md`, { redirect: "manual" })],
+      ["GET /.well-known/auth.md", await fetch(`${base}/.well-known/auth.md`, { redirect: "manual" })],
       [
         "POST /mcp",
         await fetch(`${base}/mcp`, {
@@ -849,6 +1054,23 @@ describe("token validation on /mcp (SE4-3856)", () => {
     expect(res.status).toBe(401);
   });
 
+  it("answers a forged token naming a kid the JWKS lacks with 401, including inside the refetch cooldown", async () => {
+    // RS256, an invented kid, a future exp and a garbage signature used to
+    // reach tools/list unauthenticated. The first request triggers the JWKS fetch;
+    // the second lands inside the 60 s cooldown, which must not reopen the gate.
+    const forged = `${segment({ alg: "RS256", kid: "attacker-chosen" })}.${segment({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: process.env.MCP_CANONICAL_ORIGIN,
+    })}.${Buffer.from("not-a-signature").toString("base64url")}`;
+
+    for (const attempt of [1, 2]) {
+      const res = await post(forged);
+
+      expect(res.status, `attempt ${attempt}`).toBe(401);
+      expect(res.headers.get("www-authenticate"), `attempt ${attempt}`).toContain('error="invalid_token"');
+    }
+  });
+
   it("answers a non-JWT bearer value with 401", async () => {
     const res = await post("sk-not-a-jwt");
     expect(res.status).toBe(401);
@@ -929,7 +1151,7 @@ describe("token validation on /mcp (SE4-3856)", () => {
   describe("MCP_CANONICAL_ORIGIN takes priority over the Host header", () => {
     // The outer beforeEach pins MCP_CANONICAL_ORIGIN to `${ORIGIN_ENV}:${addr.port}`,
     // which is byte-identical to what getMcpServerOrigin derives from the request's
-    // Host header. That makes the env branch in canonicalOrigin() untested: deleting
+    // Host header. That makes the env branch in configuredOrigin() untested: deleting
     // it entirely would not fail a single test above. Overriding it here to a
     // genuinely distinct origin, and then asserting on an audience equal to the
     // Host-derived value (now NOT the canonical one), is what actually proves the
@@ -970,7 +1192,7 @@ describe("token validation on /mcp (SE4-3856)", () => {
   });
 
   describe("an unparseable MCP_CANONICAL_ORIGIN falls back to the Host header", () => {
-    // canonicalOrigin()'s malformed-value path had no coverage: deleting it
+    // configuredOrigin()'s malformed-value path had no coverage: deleting it
     // would not fail a test. Status alone cannot pin it either, because
     // wrong-audience is fail-open -- a fallback that resolved to the WRONG
     // origin also answers 200. The discriminating signal is the ABSENCE of a
@@ -1004,11 +1226,12 @@ describe("token validation on /mcp (SE4-3856)", () => {
       expect(errors.some((line) => line.includes("wrong-audience"))).toBe(false);
       // The per-request path stays quiet; auditCanonicalOrigin owns the warning.
       // Without this, reinstating a per-request warn would go unnoticed.
-      expect(errors.some((line) => line.includes("not a valid URL"))).toBe(false);
+      expect(errors.some((line) => line.includes("not a valid http(s) URL"))).toBe(false);
     });
 
     it("still rejects an expired token, so the fallback does not weaken the gate", async () => {
-      // The fallback must only affect which origin `aud` is compared against.
+      // The fallback changes which origin is advertised and which `aud` is expected,
+      // never whether the token is checked.
       // Expiry is checked before the audience, so a malformed env value must not
       // turn the SE4-3856 regression guard back into a 200.
       const token = await mint({
@@ -1050,6 +1273,11 @@ describe("per-tool scope challenge on /mcp", () => {
   /** A user token as Control Center's OAuthService.GenerateUserToken mints it. */
   function userToken(scope: string): Promise<string> {
     return mint({ scope, clientId: "https://client.example.test/cimd.json", token_type: "authorization_code" });
+  }
+
+  /** An agent token as Control Center mints it for a claimed agent registration: no clientId. */
+  function agentToken(scope: string): Promise<string> {
+    return mint({ scope, token_type: "agent" });
   }
 
   function callTool(token: string, name: string, era: "modern" | "legacy") {
@@ -1147,6 +1375,19 @@ describe("per-tool scope challenge on /mcp", () => {
     });
   }
 
+  it("points the step-up challenge at the canonical origin, not Host", async () => {
+    // beforeEach pins MCP_CANONICAL_ORIGIN to `base`, which is also what Host derives, so
+    // the test above cannot tell the two apart. A distinct value can. `mint` reads the env
+    // for `aud`, so the token still matches and `req.auth` is attached.
+    process.env.MCP_CANONICAL_ORIGIN = "https://mcp.example.test";
+    const res = await callTool(await userToken("runs:read offline_access"), "list_agents", "modern");
+
+    expect(res.status).toBe(403);
+    expect(res.headers.get("www-authenticate")).toContain(
+      'resource_metadata="https://mcp.example.test/.well-known/oauth-protected-resource"'
+    );
+  });
+
   it("dispatches a tools/call whose token holds the tool's scope", async () => {
     const res = await callTool(await userToken("agents:read"), "list_agents", "modern");
 
@@ -1175,6 +1416,24 @@ describe("per-tool scope challenge on /mcp", () => {
 
     expect(res.status).toBe(403);
     expect(res.headers.get("www-authenticate")).toContain('scope="agents:read runs:read"');
+  });
+
+  it("challenges an agent token missing the tool's scope, as it does a user token", async () => {
+    const token = await agentToken("runs:read");
+
+    const res = await callTool(token, "list_agents", "modern");
+
+    expect(res.status).toBe(403);
+    expect(res.headers.get("www-authenticate")).toContain('error="insufficient_scope"');
+    expect(res.headers.get("www-authenticate")).toContain('scope="runs:read agents:read"');
+    expect(apiCalls).toEqual([]);
+  });
+
+  it("dispatches an agent token that holds the tool's scope", async () => {
+    const res = await callTool(await agentToken("agents:read"), "list_agents", "modern");
+
+    expect(res.status).toBe(200);
+    expect(apiCalls).toEqual(["GET /api/v1/agent/all"]);
   });
 
   it("does not challenge a client_credentials token, which the Control Center exempts", async () => {
