@@ -14,7 +14,10 @@
 
 import type { JwksKeySource } from "./jwks-cache.js";
 
-/** A definite negative verdict: the token cannot work and the client must re-authenticate. */
+/**
+ * A definite negative verdict: the token cannot work here and the client must re-authenticate.
+ * The one exception is `wrong-audience`, which the caller may choose not to enforce.
+ */
 export type RejectReason =
   | "expired"
   | "bad-signature"
@@ -53,7 +56,9 @@ export interface Claims {
 /**
  * The three-way split is the core of the design.
  *
- * - `rejected` — a definite verdict. Send 401 + WWW-Authenticate.
+ * - `rejected` — a definite verdict. Send 401 + WWW-Authenticate, except that the
+ *   caller may pass a `wrong-audience` through when it has no configured origin to
+ *   compare against.
  * - `unverifiable` — infrastructure failure (JWKS unreachable). Pass the request
  *   through to the API, behaving exactly as before this change. Failing
  *   closed here would 401 every user during a JWKS blip, and since their refresh

@@ -258,7 +258,9 @@ describe("validateToken", () => {
       { exp: future(), aud: "https://someone-else.test" }
     );
 
-    expect(await validateToken(token, ORIGIN, keySource({ k1: pair.publicKey }))).toMatchObject({
+    // toEqual, not toMatchObject: the verdict carries no `exp`, which would only
+    // put a meaningless age on the rejection's log line.
+    expect(await validateToken(token, ORIGIN, keySource({ k1: pair.publicKey }))).toEqual({
       kind: "rejected",
       reason: "wrong-audience",
       kid: "k1",
