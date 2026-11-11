@@ -42,6 +42,14 @@ describe("buildAuthChallenge", () => {
     );
   });
 
+  it("strips quotes and commas from realm so a hostile Host cannot break the header", () => {
+    // `new URL` accepts both as host code points, so a Host-derived origin can carry
+    // them here when MCP_CANONICAL_ORIGIN is unset.
+    const { wwwAuthenticate } = buildAuthChallenge('http://a"b,c');
+    expect(wwwAuthenticate).toContain('realm="abc"');
+    expect(wwwAuthenticate).toMatch(/^Bearer realm="[^",]*", error="invalid_token", resource_metadata="/);
+  });
+
   it("works with an arbitrary hostname", () => {
     // Use the IANA-reserved documentation domain (RFC 2606) rather than any real
     // Sequentum subdomain, since this repo is public and tests are visible.
