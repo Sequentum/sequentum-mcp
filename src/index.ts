@@ -42,6 +42,7 @@
 import { createRequire } from "module";
 import { startHttpServer } from "./server/http-server.js";
 import { resolveIssuer } from "./utils/issuer.js";
+import { installUnhandledRejectionLogger } from "./utils/process-guards.js";
 
 // Import version from package.json
 const require = createRequire(import.meta.url);
@@ -94,6 +95,8 @@ async function main() {
   const issuer = resolveIssuerOrExit();
   await startHttpServer(API_BASE_URL, issuer, version, HTTP_PORT, HTTP_HOST);
 }
+
+installUnhandledRejectionLogger();
 
 main().catch((error) => {
   console.error("Fatal error starting server:", error);
