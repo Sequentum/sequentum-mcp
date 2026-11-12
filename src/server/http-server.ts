@@ -25,7 +25,7 @@ import glamaClaim from "./well-known/glama.json" with { type: "json" };
 const DEBUG = process.env.DEBUG === '1';
 
 /**
- * One year, the HSTS preload list's minimum. `includeSubDomains` covers only names under
+ * One year, deliberately without `preload`. `includeSubDomains` covers only names under
  * this server's own host (e.g. *.mcp.sequentum.com), not the parent domain.
  */
 const STRICT_TRANSPORT_SECURITY = "max-age=31536000; includeSubDomains";

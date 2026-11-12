@@ -895,6 +895,12 @@ describe("Content-Security-Policy on every response (IT-2272)", () => {
     }
     if (!limited) throw new Error("expected the /mcp rate limiter to answer 429");
     expect(limited.headers.get("content-security-policy")).toBe(API_CONTENT_SECURITY_POLICY);
+    // The SE4-4540 hardening headers ride the same first middleware; checked here rather than
+    // in a second suite so the limiter is only exhausted once.
+    expect(limited.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(limited.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(limited.headers.get("x-frame-options")).toBe("DENY");
+    expect(limited.headers.get("x-powered-by")).toBeNull();
   });
 
   it("sends the API policy on a 400 for a malformed JSON body to /mcp", async () => {
@@ -942,8 +948,12 @@ describe("Content-Security-Policy on every response (IT-2272)", () => {
 describe("hardening headers on every response (SE4-4540)", () => {
   let server: HttpServer;
   let base: string;
+  let savedRequireAuth: string | undefined;
 
   beforeEach(async () => {
+    // The 401 rows below need the auth gate on, whatever REQUIRE_AUTH the shell exports.
+    savedRequireAuth = process.env.REQUIRE_AUTH;
+    delete process.env.REQUIRE_AUTH;
     server = await startHttpServer(
       "https://api.example.test",
       "https://issuer.example.test",
@@ -957,6 +967,8 @@ describe("hardening headers on every response (SE4-4540)", () => {
   });
 
   afterEach(async () => {
+    if (savedRequireAuth === undefined) delete process.env.REQUIRE_AUTH;
+    else process.env.REQUIRE_AUTH = savedRequireAuth;
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
@@ -981,6 +993,8 @@ describe("hardening headers on every response (SE4-4540)", () => {
         frame: res.headers.get("x-frame-options"),
       }).toEqual({ route, poweredBy: null, nosniff: "nosniff", referrer: "no-referrer", frame: "DENY" });
     }
+    // The auth gate answered that row, not the route handler.
+    expect(responses.find(([route]) => route === "GET /mcp (401)")?.[1].status).toBe(401);
   });
 
   it("sends the hardening headers on the 403 for a non-allowlisted browser origin", async () => {
@@ -991,6 +1005,7 @@ describe("hardening headers on every response (SE4-4540)", () => {
     );
     expect(res).toContain("403 Forbidden");
     expect(res).toMatch(/X-Content-Type-Options: nosniff\r\n/i);
+    expect(res).toMatch(/Referrer-Policy: no-referrer\r\n/i);
     expect(res).toMatch(/X-Frame-Options: DENY\r\n/i);
     expect(res).not.toMatch(/X-Powered-By/i);
   });

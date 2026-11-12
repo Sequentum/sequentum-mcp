@@ -60,8 +60,9 @@
   clients are unaffected.
 - **HTTP responses are hardened further.** `X-Powered-By: Express` is no longer sent. Every
   response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
-  `X-Frame-Options: DENY`, and a request that arrived over https (directly or through a trusted
-  proxy) also gets `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
+  `X-Frame-Options: DENY`, and a request that reached the trusted proxy over https (its
+  `X-Forwarded-Proto` says so) also gets
+  `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
   `/.well-known/oauth-protected-resource` and the `401` challenge are sent with
   `Cache-Control: no-store`, so a shared cache cannot store a body that names the request's Host.
 - **A token issued for another resource is now rejected with `401`.** With
