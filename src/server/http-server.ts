@@ -168,6 +168,32 @@ function requireOrigin(req: Request): string {
 }
 
 /**
+ * Answer a Host this server cannot turn into an origin. Plain text and never stored:
+ * an error is not worth caching, and in Host mode the next request may carry a valid one.
+ */
+function sendBadHost(res: Response): void {
+  res.status(400).type("text/plain").set("Cache-Control", "no-store").send("Bad Host header");
+}
+
+/**
+ * Turn away a request whose Host the URL parser refuses (`a<b`, `a:99999`) before
+ * anything downstream derives the origin from it. Only Host mode can fail this way; with
+ * a parseable `MCP_CANONICAL_ORIGIN` the Host is never read. A missing Host still passes:
+ * the protocol routes have always tolerated HTTP/1.0 without one. The scheme comes from a
+ * trusted `X-Forwarded-Proto`, so a malformed one (`a b`) lands here too and gets the same
+ * "Bad Host header" answer.
+ */
+function rejectUnparseableHost(req: Request, res: Response, next: NextFunction): void {
+  try {
+    getMcpServerOrigin(req);
+  } catch {
+    sendBadHost(res);
+    return;
+  }
+  next();
+}
+
+/**
  * Send a spec-compliant 401 with the RFC 9728 WWW-Authenticate challenge.
  * Centralizes the header + body pair so a third 401 callsite cannot drift.
  */
@@ -599,7 +625,7 @@ export async function startHttpServer(
     try {
       origin = requireOrigin(req);
     } catch {
-      res.status(400).type("text/plain").set("Cache-Control", "no-store").send("Bad Host header");
+      sendBadHost(res);
       return;
     }
 
@@ -665,11 +691,21 @@ export async function startHttpServer(
   // This tells MCP clients which authorization server to use for this resource.
   // Per MCP spec, the resource MUST be the MCP server's own canonical URL,
   // as MCP clients compute the expected resource from the URL they connect to.
-  app.get("/.well-known/oauth-protected-resource", async (req: Request, res: Response) => {
+  //
+  // Not `async`: Express 4 drops the promise an async handler returns, so a throw here
+  // was an unhandled rejection that exited the process. Keep it synchronous.
+  app.get("/.well-known/oauth-protected-resource", (req: Request, res: Response) => {
     // The resource is this MCP server's own origin: MCP_CANONICAL_ORIGIN when set, the
     // request's Host otherwise. MCP clients (e.g., Cursor) validate it matches the URL they
     // connected to (RFC 9728 Section 3.3), so the configured value must be the public one.
-    const resourceUrl = getMcpServerOrigin(req);
+    // In Host mode a Host the URL parser refuses throws; answer 400 instead.
+    let resourceUrl: string;
+    try {
+      resourceUrl = getMcpServerOrigin(req);
+    } catch {
+      sendBadHost(res);
+      return;
+    }
 
     const protectedResourceMetadata = {
       // The canonical URI of this MCP server (the protected resource)
@@ -736,7 +772,7 @@ export async function startHttpServer(
   auditCanonicalOrigin();
 
   // Handle POST requests for client-to-server messages
-  app.post("/mcp", (req: Request, res: Response, next: NextFunction) => {
+  app.post("/mcp", rejectUnparseableHost, (req: Request, res: Response, next: NextFunction) => {
     void passesAuthGate(req, res, jwksCache)
       .then((ok) => {
         if (ok) return nodeHandler(req, res);
@@ -758,7 +794,7 @@ export async function startHttpServer(
   // remove that discovery signal. An authenticated GET is delegated to the
   // handler, which answers 405 Method not allowed: the standalone SSE stream
   // was a session construct and no longer exists.
-  app.get("/mcp", (req: Request, res: Response, next: NextFunction) => {
+  app.get("/mcp", rejectUnparseableHost, (req: Request, res: Response, next: NextFunction) => {
     void passesAuthGate(req, res, jwksCache)
       .then((ok) => {
         if (ok) return nodeHandler(req, res);

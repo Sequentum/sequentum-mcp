@@ -515,6 +515,78 @@ describe("/.well-known/oauth-protected-resource", () => {
   });
 });
 
+// In Host mode (MCP_CANONICAL_ORIGIN unset) every route that derives this server's origin
+// parses the caller's Host. A Host the URL parser refuses used to throw inside the async
+// protected-resource handler, which Express 4 never forwards, so one unauthenticated
+// request exited the process. Each route must answer 400 instead, and the
+// server must still be serving afterwards.
+describe("a Host the URL parser refuses", () => {
+  let server: HttpServer;
+  let base: string;
+
+  beforeEach(async () => {
+    server = await startHttpServer(
+      "https://api.example.test",
+      "https://issuer.example.test",
+      "9.9.9",
+      0,
+      "127.0.0.1"
+    );
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    base = `http://127.0.0.1:${addr.port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  // `a<b` fails the host code-point check; `a:99999` has a port out of range.
+  const BAD_HOSTS = ["a<b", "a:99999"];
+  const REQUESTS = ["GET /.well-known/oauth-protected-resource", "POST /mcp", "GET /mcp"];
+
+  for (const line of REQUESTS) {
+    for (const host of BAD_HOSTS) {
+      it(`answers ${line} with Host ${host} with a 400 and keeps serving`, async () => {
+        const body = line.startsWith("POST") ? "{}" : "";
+        const res = await rawRequest(
+          base,
+          `${line} HTTP/1.1\r\nHost: ${host}\r\nContent-Type: application/json\r\n` +
+            `Content-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`
+        );
+        expect(res).toContain("400 Bad Request");
+        expect(res).toMatch(/content-type: text\/plain/i);
+        expect(res).toMatch(/cache-control: no-store/i);
+        expect(res).toContain("Bad Host header");
+
+        const health = await fetch(`${base}/health`);
+        expect(health.status).toBe(200);
+      });
+    }
+  }
+
+  it("still tolerates a request with no Host on the protocol routes", async () => {
+    // HTTP/1.0 allows no Host, and the protocol routes have always answered it; only
+    // the landing page, which renders the origin for a human, rejects it.
+    const res = await rawRequest(base, "GET /.well-known/oauth-protected-resource HTTP/1.0\r\n\r\n");
+    expect(res).toContain("200 OK");
+  });
+
+  it("lets a request with no Host through the /mcp Host check to the auth challenge", async () => {
+    // The Host check in front of /mcp must not reject a missing Host the way the landing
+    // page does: an unauthenticated caller still gets the 401 that points it at the PRM.
+    const savedRequireAuth = process.env.REQUIRE_AUTH;
+    delete process.env.REQUIRE_AUTH;
+    try {
+      const res = await rawRequest(base, "GET /mcp HTTP/1.0\r\n\r\n");
+      expect(res).toContain("401 Unauthorized");
+      expect(res).not.toContain("Bad Host header");
+    } finally {
+      if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+    }
+  });
+});
+
 // Host is caller-controlled, so with MCP_CANONICAL_ORIGIN set every origin this
 // server advertises comes from the env instead. `rawRequest` sends the spoofed Host,
 // because fetch rewrites it.
@@ -551,6 +623,15 @@ describe("MCP_CANONICAL_ORIGIN pins the advertised origin", () => {
     expect(res).toContain("200 OK");
     expect(res).toContain(`"resource":"${CANONICAL}"`);
     expect(res).not.toContain("attacker.example.test");
+  });
+
+  it("never reads a Host the URL parser refuses when the canonical origin is set", async () => {
+    const res = await rawRequest(
+      base,
+      "GET /.well-known/oauth-protected-resource HTTP/1.1\r\nHost: a<b\r\nConnection: close\r\n\r\n"
+    );
+    expect(res).toContain("200 OK");
+    expect(res).toContain(`"resource":"${CANONICAL}"`);
   });
 
   it("ignores a spoofed X-Forwarded-Proto when the canonical origin is set", async () => {
