@@ -83,7 +83,7 @@
 ### Fixed
 
 - **A single request with an unparseable `Host` header no longer crashes the server.**
-  Without `MCP_CANONICAL_ORIGIN`, a `Host` the URL parser rejects (such as `a<b` or
+  Without a parseable `MCP_CANONICAL_ORIGIN`, a `Host` the URL parser rejects (such as `a<b` or
   `a:99999`) made `/.well-known/oauth-protected-resource` throw inside an async handler.
   Express 4 never forwarded that error, so Node exited and dropped every in-flight request.
   That route and `POST`/`GET /mcp` now answer `400 Bad Host header` (`text/plain`,

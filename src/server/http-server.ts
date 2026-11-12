@@ -179,7 +179,9 @@ function sendBadHost(res: Response): void {
  * Turn away a request whose Host the URL parser refuses (`a<b`, `a:99999`) before
  * anything downstream derives the origin from it. Only Host mode can fail this way; with
  * a parseable `MCP_CANONICAL_ORIGIN` the Host is never read. A missing Host still passes:
- * the protocol routes have always tolerated HTTP/1.0 without one.
+ * the protocol routes have always tolerated HTTP/1.0 without one. The scheme comes from a
+ * trusted `X-Forwarded-Proto`, so a malformed one (`a b`) lands here too and gets the same
+ * "Bad Host header" answer.
  */
 function rejectUnparseableHost(req: Request, res: Response, next: NextFunction): void {
   try {

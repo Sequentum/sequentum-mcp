@@ -543,15 +543,11 @@ describe("a Host the URL parser refuses", () => {
 
   // `a<b` fails the host code-point check; `a:99999` has a port out of range.
   const BAD_HOSTS = ["a<b", "a:99999"];
-  const REQUESTS = [
-    { label: "GET /.well-known/oauth-protected-resource", line: "GET /.well-known/oauth-protected-resource" },
-    { label: "POST /mcp", line: "POST /mcp" },
-    { label: "GET /mcp", line: "GET /mcp" },
-  ];
+  const REQUESTS = ["GET /.well-known/oauth-protected-resource", "POST /mcp", "GET /mcp"];
 
-  for (const { label, line } of REQUESTS) {
+  for (const line of REQUESTS) {
     for (const host of BAD_HOSTS) {
-      it(`answers ${label} with Host ${host} with a 400 and keeps serving`, async () => {
+      it(`answers ${line} with Host ${host} with a 400 and keeps serving`, async () => {
         const body = line.startsWith("POST") ? "{}" : "";
         const res = await rawRequest(
           base,
@@ -574,6 +570,20 @@ describe("a Host the URL parser refuses", () => {
     // the landing page, which renders the origin for a human, rejects it.
     const res = await rawRequest(base, "GET /.well-known/oauth-protected-resource HTTP/1.0\r\n\r\n");
     expect(res).toContain("200 OK");
+  });
+
+  it("lets a request with no Host through the /mcp Host check to the auth challenge", async () => {
+    // The Host check in front of /mcp must not reject a missing Host the way the landing
+    // page does: an unauthenticated caller still gets the 401 that points it at the PRM.
+    const savedRequireAuth = process.env.REQUIRE_AUTH;
+    delete process.env.REQUIRE_AUTH;
+    try {
+      const res = await rawRequest(base, "GET /mcp HTTP/1.0\r\n\r\n");
+      expect(res).toContain("401 Unauthorized");
+      expect(res).not.toContain("Bad Host header");
+    } finally {
+      if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+    }
   });
 });
 
@@ -613,6 +623,15 @@ describe("MCP_CANONICAL_ORIGIN pins the advertised origin", () => {
     expect(res).toContain("200 OK");
     expect(res).toContain(`"resource":"${CANONICAL}"`);
     expect(res).not.toContain("attacker.example.test");
+  });
+
+  it("never reads a Host the URL parser refuses when the canonical origin is set", async () => {
+    const res = await rawRequest(
+      base,
+      "GET /.well-known/oauth-protected-resource HTTP/1.1\r\nHost: a<b\r\nConnection: close\r\n\r\n"
+    );
+    expect(res).toContain("200 OK");
+    expect(res).toContain(`"resource":"${CANONICAL}"`);
   });
 
   it("ignores a spoofed X-Forwarded-Proto when the canonical origin is set", async () => {
