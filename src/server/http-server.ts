@@ -25,6 +25,12 @@ import glamaClaim from "./well-known/glama.json" with { type: "json" };
 const DEBUG = process.env.DEBUG === '1';
 
 /**
+ * One year, deliberately without `preload`. `includeSubDomains` covers only names under
+ * this server's own host (e.g. *.mcp.sequentum.com), not the parent domain.
+ */
+const STRICT_TRANSPORT_SECURITY = "max-age=31536000; includeSubDomains";
+
+/**
  * One instance per `startHttpServer` call still running in this process.
  * Backs the single, process-wide SIGTERM/SIGINT registration below so
  * repeated calls (every integration test's `beforeEach`) do not each add
@@ -168,6 +174,8 @@ function requireOrigin(req: Request): string {
 function sendAuthChallenge(req: Request, res: Response): void {
   const challenge = buildAuthChallenge(getMcpServerOrigin(req));
   res.setHeader("WWW-Authenticate", challenge.wwwAuthenticate);
+  // The challenge names this origin, which in Host mode comes from the request: never cacheable.
+  res.setHeader("Cache-Control", "no-store");
   res.status(401).json(challenge.body);
 }
 
@@ -454,6 +462,8 @@ export async function startHttpServer(
   options: { resourceScopes?: ResourceScopesSource } = {}
 ): Promise<import("node:http").Server> {
   const app = express();
+  // Don't advertise the framework (SE4-4540): `X-Powered-By: Express` only helps fingerprinting.
+  app.disable("x-powered-by");
   const resourceScopes = options.resourceScopes ?? createResourceScopesSource(apiBaseUrl);
   // Kick off the first fetch immediately rather than waiting for the first request to a
   // discovery endpoint: by the time a real client's first request lands, the derived list
@@ -481,8 +491,22 @@ export async function startHttpServer(
   // below, the auth gate's 401 — carry it too, not just the routes. The landing page
   // overrides it with LANDING_PAGE_CSP to allow its own stylesheet. Express's own 404
   // page (finalhandler) replaces it with `default-src 'none'`, still a policy.
-  app.use((_req: Request, res: Response, next) => {
+  //
+  // The hardening headers below (SE4-4540) ride the same middleware for the same reason:
+  // every response, including the ones middleware answers, gets them.
+  //   - nosniff: browsers must trust our Content-Type rather than guess one.
+  //   - Referrer-Policy: the landing page links out; leak nothing about where from.
+  //   - X-Frame-Options: frame-ancestors 'none' already covers current browsers; this is
+  //     the fallback for ones that predate it.
+  //   - HSTS only when the request arrived over TLS (req.secure honours
+  //     X-Forwarded-Proto from a trusted proxy), so a local http run never pins a
+  //     browser to https on localhost. RFC 6797 has browsers ignore it over http anyway.
+  app.use((req: Request, res: Response, next) => {
     res.setHeader("Content-Security-Policy", API_CONTENT_SECURITY_POLICY);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("X-Frame-Options", "DENY");
+    if (req.secure) res.setHeader("Strict-Transport-Security", STRICT_TRANSPORT_SECURITY);
     next();
   });
 
@@ -663,7 +687,9 @@ export async function startHttpServer(
       bearer_methods_supported: ["header"],
     };
 
-    res.json(protectedResourceMetadata);
+    // no-store: in Host mode `resource` comes from the request's Host, so a shared cache
+    // (a CDN put in front later) must never serve one caller's document to another.
+    res.set("Cache-Control", "no-store").json(protectedResourceMetadata);
   });
 
   // OpenAI domain verification endpoint (ChatGPT Apps submission)
