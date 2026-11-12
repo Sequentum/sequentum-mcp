@@ -1,0 +1,27 @@
+# Keeps the pinned Actions and Docker base image current. Actions are pinned to commit
+# SHAs and the base image to a digest, so nothing moves unless one of these PRs is merged.
+# npm is left to Dependabot security updates, which are enabled in the repo settings.
+# Those do not touch package.json's packageManager, so the pnpm version and its hash
+# are bumped by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      docker:
+        patterns: ["*"]
+    # Moving to a new Node major is a deliberate upgrade, not a routine bump.
+    # Digest refreshes for node:24-alpine still come through.
+    ignore:
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
