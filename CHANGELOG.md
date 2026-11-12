@@ -58,6 +58,20 @@
   `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`. The landing
   page at `/` extends it with a SHA-256 hash that allows only its own inline stylesheet. MCP
   clients are unaffected.
+- **A token issued for another resource is now rejected with `401`.** With
+  `MCP_CANONICAL_ORIGIN` set, a correctly signed token whose audience names a different origin,
+  or that has no audience at all, gets the `401` + `WWW-Authenticate` challenge instead of being
+  forwarded to the Control Center, as the MCP authorization spec requires (servers must not
+  accept or pass through tokens issued for another resource). A refresh cannot repair such a
+  token, so the client must sign in again through the `MCP_CANONICAL_ORIGIN` address (a
+  connector added through any other address of this server gets the same rejected token back):
+  disconnect the Sequentum MCP server and connect it again, removing and re-adding it if the
+  client keeps reusing its stored tokens. An agent that renews its token with the JWT-bearer
+  grant must leave `resource` out, or send this server's origin where the Control Center accepts
+  it; sending the Control Center's own address gets a token for the Control Center, which is now
+  rejected. Tokens with the legacy `Sequentum Enterprise` audience are still accepted. Without
+  the variable, or with a value that does not parse, behaviour is unchanged: the mismatch is
+  logged and the request passes through.
 
 ### Fixed
 

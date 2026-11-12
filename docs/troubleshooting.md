@@ -39,22 +39,38 @@ should not notice anything beyond a brief pause.
 
 A 401 that persists across retries therefore means something other than expiry:
 
-- the connector was revoked from your Sequentum account, or
-- your user or organisation access changed.
+- the connector was revoked from your Sequentum account,
+- your user or organisation access changed, or
+- your token was issued for a different address of this server, for example
+  one you connected through before the server started checking it.
 
-Reconnect from **Settings → Connectors** to resolve either case.
+Reconnect from **Settings → Connectors** to resolve any of these. If the 401
+persists after reconnecting, check that the connector's URL is
+`https://mcp.sequentum.com/mcp`: a token issued through any other address is
+rejected, so re-add the connector with that URL. If the URL is already right,
+your client is reusing its stored tokens: remove the connector and add it again.
 
 **Diagnosing a report as an operator.** The server logs one line per rejected
 token:
 
     [MCP] auth=rejected reason=expired kid="STXjwgTe" age=417s client="claude-desktop"
 
-`reason` is one of `expired`, `bad-signature`, `malformed`, `bad-alg` or
-`unknown-kid`. `unknown-kid` means the latest fetch of the signing keys succeeded
+`reason` is one of `expired`, `bad-signature`, `malformed`, `bad-alg`,
+`unknown-kid` or `wrong-audience`. `unknown-kid` means the latest fetch of the signing keys succeeded
 and none of them matches the token's key id: the token was not signed with Control
 Center's current key. After a signing-key change it also hits tokens signed with
 the previous key until they expire, and, for up to a minute, genuine new-key
-tokens until the next key fetch picks up the new key.
+tokens until the next key fetch picks up the new key. `wrong-audience` means the
+token is correctly signed but was issued for another resource: its audience names
+a different origin from `MCP_CANONICAL_ORIGIN`, or it has none. A refresh cannot
+repair it, so the user must sign in again through the `MCP_CANONICAL_ORIGIN`
+address: a connector added through any other address of this server gets the
+same rejected token back. Disconnect the server and connect it again, removing
+and re-adding it if the client keeps reusing its stored tokens.
+An agent that renews its token with the JWT-bearer grant and sends the Control
+Center's own address as `resource` gets a token for the Control Center, which
+this server rejects. It must leave `resource` out, or send this server's origin
+where the Control Center is configured to accept it.
 
 Lines reading `auth=unverifiable` are **not** rejections — the request was passed
 through and the API decided it. Two reasons appear there:
@@ -62,10 +78,11 @@ through and the API decided it. Two reasons appear there:
 - `jwks-unreachable` — the signing keys could not be fetched, the fetched
   document held no usable RS256 key, or the latest fetch failed and the token's
   key is not among those cached.
-- `wrong-audience` — the token was minted for a different origin. This is
-  recorded rather than rejected on purpose: a refresh reuses the original
-  resource, so rejecting it would put the client in a 401/refresh loop it could
-  never escape.
+- `wrong-audience` — the token was minted for a different origin, and
+  `MCP_CANONICAL_ORIGIN` is unset or does not parse. The audience was then
+  compared with the caller's own `Host`, so a mismatch is logged and passed
+  through rather than rejected. With the variable set, the same token is
+  rejected and logged as `auth=rejected reason=wrong-audience`.
 
 A sustained run of `jwks-unreachable` means validation has degraded to
 pass-through and needs attention.
@@ -108,22 +125,38 @@ should not notice anything beyond a brief pause.
 
 A 401 that persists across retries therefore means something other than expiry:
 
-- the connector was revoked from your Sequentum account, or
-- your user or organisation access changed.
+- the connector was revoked from your Sequentum account,
+- your user or organisation access changed, or
+- your token was issued for a different address of this server, for example
+  one you connected through before the server started checking it.
 
-Reconnect from **Settings → Connectors** to resolve either case.
+Reconnect from **Settings → Connectors** to resolve any of these. If the 401
+persists after reconnecting, check that the connector's URL is
+`https://mcp.sequentum.com/mcp`: a token issued through any other address is
+rejected, so re-add the connector with that URL. If the URL is already right,
+your client is reusing its stored tokens: remove the connector and add it again.
 
 **Diagnosing a report as an operator.** The server logs one line per rejected
 token:
 
     [MCP] auth=rejected reason=expired kid="STXjwgTe" age=417s client="claude-desktop"
 
-`reason` is one of `expired`, `bad-signature`, `malformed`, `bad-alg` or
-`unknown-kid`. `unknown-kid` means the latest fetch of the signing keys succeeded
+`reason` is one of `expired`, `bad-signature`, `malformed`, `bad-alg`,
+`unknown-kid` or `wrong-audience`. `unknown-kid` means the latest fetch of the signing keys succeeded
 and none of them matches the token's key id: the token was not signed with Control
 Center's current key. After a signing-key change it also hits tokens signed with
 the previous key until they expire, and, for up to a minute, genuine new-key
-tokens until the next key fetch picks up the new key.
+tokens until the next key fetch picks up the new key. `wrong-audience` means the
+token is correctly signed but was issued for another resource: its audience names
+a different origin from `MCP_CANONICAL_ORIGIN`, or it has none. A refresh cannot
+repair it, so the user must sign in again through the `MCP_CANONICAL_ORIGIN`
+address: a connector added through any other address of this server gets the
+same rejected token back. Disconnect the server and connect it again, removing
+and re-adding it if the client keeps reusing its stored tokens.
+An agent that renews its token with the JWT-bearer grant and sends the Control
+Center's own address as `resource` gets a token for the Control Center, which
+this server rejects. It must leave `resource` out, or send this server's origin
+where the Control Center is configured to accept it.
 
 Lines reading `auth=unverifiable` are **not** rejections — the request was passed
 through and the API decided it. Two reasons appear there:
@@ -131,10 +164,11 @@ through and the API decided it. Two reasons appear there:
 - `jwks-unreachable` — the signing keys could not be fetched, the fetched
   document held no usable RS256 key, or the latest fetch failed and the token's
   key is not among those cached.
-- `wrong-audience` — the token was minted for a different origin. This is
-  recorded rather than rejected on purpose: a refresh reuses the original
-  resource, so rejecting it would put the client in a 401/refresh loop it could
-  never escape.
+- `wrong-audience` — the token was minted for a different origin, and
+  `MCP_CANONICAL_ORIGIN` is unset or does not parse. The audience was then
+  compared with the caller's own `Host`, so a mismatch is logged and passed
+  through rather than rejected. With the variable set, the same token is
+  rejected and logged as `auth=rejected reason=wrong-audience`.
 
 A sustained run of `jwks-unreachable` means validation has degraded to
 pass-through and needs attention.
