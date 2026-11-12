@@ -82,6 +82,13 @@
 
 ### Fixed
 
+- **A single request with an unparseable `Host` header no longer crashes the server.**
+  Without `MCP_CANONICAL_ORIGIN`, a `Host` the URL parser rejects (such as `a<b` or
+  `a:99999`) made `/.well-known/oauth-protected-resource` throw inside an async handler.
+  Express 4 never forwarded that error, so Node exited and dropped every in-flight request.
+  That route and `POST`/`GET /mcp` now answer `400 Bad Host header` (`text/plain`,
+  `Cache-Control: no-store`). `/mcp` used to answer this case with a JSON-RPC 500. As a
+  backstop, the process now logs any unhandled promise rejection and keeps running.
 - **`TRUST_PROXY` now defaults to `1` instead of `true`, so rotating `X-Forwarded-For` no
   longer evades the `/mcp` rate limiter.** Under `true`, Express took `req.ip` from the
   leftmost, client-supplied entry of that header, so each new value opened a fresh rate-limit
