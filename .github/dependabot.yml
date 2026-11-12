@@ -1,6 +1,8 @@
-# Keeps the pinned build inputs current. Actions are pinned to commit SHAs and the
-# Docker base image to a digest, so nothing moves unless one of these PRs is merged.
+# Keeps the pinned Actions and Docker base image current. Actions are pinned to commit
+# SHAs and the base image to a digest, so nothing moves unless one of these PRs is merged.
 # npm is left to Dependabot security updates, which are enabled in the repo settings.
+# Those do not touch package.json's packageManager, so the pnpm version and its hash
+# are bumped by hand.
 version: 2
 updates:
   - package-ecosystem: github-actions
