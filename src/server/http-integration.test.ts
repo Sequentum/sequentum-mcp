@@ -939,6 +939,102 @@ describe("Content-Security-Policy on every response (IT-2272)", () => {
   });
 });
 
+describe("hardening headers on every response (SE4-4540)", () => {
+  let server: HttpServer;
+  let base: string;
+
+  beforeEach(async () => {
+    server = await startHttpServer(
+      "https://api.example.test",
+      "https://issuer.example.test",
+      "9.9.9",
+      0,
+      "127.0.0.1"
+    );
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    base = `http://127.0.0.1:${addr.port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("sends the static hardening headers and no X-Powered-By on every route", async () => {
+    const responses: [string, Response][] = [
+      ["GET /", await fetch(`${base}/`)],
+      ["GET /health", await fetch(`${base}/health`)],
+      ["GET /.well-known/oauth-protected-resource", await fetch(`${base}/.well-known/oauth-protected-resource`)],
+      [
+        "GET /.well-known/oauth-authorization-server",
+        await fetch(`${base}/.well-known/oauth-authorization-server`, { redirect: "manual" }),
+      ],
+      ["GET /mcp (401)", await fetch(`${base}/mcp`)],
+      ["OPTIONS /mcp", await fetch(`${base}/mcp`, { method: "OPTIONS" })],
+    ];
+    for (const [route, res] of responses) {
+      expect({
+        route,
+        poweredBy: res.headers.get("x-powered-by"),
+        nosniff: res.headers.get("x-content-type-options"),
+        referrer: res.headers.get("referrer-policy"),
+        frame: res.headers.get("x-frame-options"),
+      }).toEqual({ route, poweredBy: null, nosniff: "nosniff", referrer: "no-referrer", frame: "DENY" });
+    }
+  });
+
+  it("sends the hardening headers on the 403 for a non-allowlisted browser origin", async () => {
+    const res = await rawRequest(
+      base,
+      "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: https://evil.example.test\r\n" +
+        "Content-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    expect(res).toContain("403 Forbidden");
+    expect(res).toMatch(/X-Content-Type-Options: nosniff\r\n/i);
+    expect(res).toMatch(/X-Frame-Options: DENY\r\n/i);
+    expect(res).not.toMatch(/X-Powered-By/i);
+  });
+
+  it("sends HSTS when the request arrived over https at the proxy", async () => {
+    // TRUST_PROXY defaults to one hop, so X-Forwarded-Proto makes req.secure true —
+    // the same path production takes behind its TLS-terminating proxy.
+    const res = await fetch(`${base}/health`, { headers: { "X-Forwarded-Proto": "https" } });
+    expect(res.headers.get("strict-transport-security")).toBe("max-age=31536000; includeSubDomains");
+  });
+
+  it("omits HSTS on plain http, so local runs are unaffected", async () => {
+    const res = await fetch(`${base}/health`);
+    expect(res.headers.get("strict-transport-security")).toBeNull();
+  });
+
+  it("omits HSTS for a forwarded https claim when no proxy is trusted", async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    process.env.TRUST_PROXY = "false";
+    server = await startHttpServer("https://api.example.test", "https://issuer.example.test", "9.9.9", 0, "127.0.0.1");
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    const res = await fetch(`http://127.0.0.1:${addr.port}/health`, { headers: { "X-Forwarded-Proto": "https" } });
+    expect(res.headers.get("strict-transport-security")).toBeNull();
+  });
+
+  it("marks the protected-resource document no-store", async () => {
+    // The body varies by Host in Host mode; a shared cache must never store it.
+    const res = await fetch(`${base}/.well-known/oauth-protected-resource`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("marks the 401 challenge no-store", async () => {
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+});
+
 describe("token validation on /mcp (SE4-3856)", () => {
   let server: HttpServer;
   let jwks: HttpServer;
