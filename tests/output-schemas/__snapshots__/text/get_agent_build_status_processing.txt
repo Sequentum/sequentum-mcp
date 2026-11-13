@@ -1,7 +1,2 @@
-{
-  "status": "processing",
-  "agentId": null,
-  "agentName": null,
-  "agentElapsedSeconds": null,
-  "browserIoSeconds": null
-}
+**Building your Agent: Looking at the page**
+sessionId: "sess-0001". The build keeps running on Sequentum's servers whether or not anyone checks. Next update: call get_agent_build_status with this sessionId and waitSeconds 45.

@@ -950,24 +950,26 @@ describe("MCP Prompts", () => {
       expect(text).toContain("My Space");
     });
 
-    it("build-agent-from-prompt instructs start_agent_build to wait internally (no manual poll step)", () => {
+    it("build-agent-from-prompt follows the build in 45 s status calls, one status line each", () => {
       const messages = getPromptMessages("build-agent-from-prompt", {
         prompt: "Scrape prices from amazon.com",
       });
       const text = (messages[0].content as { text: string }).text;
-      expect(text).toContain("wait for the build to complete");
-      expect(text).toContain("agentId directly");
-      expect(text).not.toContain("Poll get_agent_build_status");
+      expect(text).toContain("returns within about 45 seconds");
+      expect(text).toContain("tell the user the stage in one line");
+      expect(text).toContain("waitSeconds 45");
+      expect(text).toContain("until done is true");
+      expect(text).not.toContain("5 minutes");
       expect(text).not.toContain("User polling preference (advisory)");
       expect(text).not.toContain("moderate cadence with backoff");
     });
 
-    it("build-agent-from-prompt includes timeout fallback guidance with sessionId", () => {
+    it("build-agent-from-prompt says a cut-off call does not end the build", () => {
       const messages = getPromptMessages("build-agent-from-prompt", {
         prompt: "Scrape prices from amazon.com",
       });
       const text = (messages[0].content as { text: string }).text;
-      expect(text).toContain("times out");
+      expect(text).toContain("keeps running even if a call is cut off");
       expect(text).toContain("sessionId");
       expect(text).toContain("get_agent_build_status");
     });
@@ -1008,7 +1010,8 @@ describe("MCP Prompts", () => {
       const text = (messages[0].content as { text: string }).text;
       expect(text).not.toContain("User polling preference (advisory)");
       expect(text).not.toContain("IMPORTANT POLLING DIRECTIVE FROM USER");
-      expect(text).toContain("moderate cadence with backoff");
+      expect(text).toContain("waitSeconds 45");
+      expect(text).not.toContain("moderate cadence with backoff");
     });
 
     it("should throw for inspect-agent-draft without sessionId", () => {
