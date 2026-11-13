@@ -13,11 +13,31 @@
   effect and can be removed from any deployment configuration.
 - **The package is no longer publishable.** `package.json` is marked `private` and no
   longer declares the `sequentum-mcp` bin.
+- **`start_agent_build` no longer holds the call for up to 5 minutes, and no longer stops the
+  build when the client goes away.** It returns within about 45 seconds: as soon as the build
+  has written its plan, at once if it finishes, otherwise at 45 seconds. claude.ai and Claude
+  Desktop cut a tool call at 240 seconds and ChatGPT reportedly at about 60, and a cancelled or
+  dropped call used to stop the build. Now only `stop_agent_build` stops one. The `timeout`
+  status is gone: a build still running returns `status: "processing"` with `done: false`, so a
+  caller that branched on `timeout` must branch on `done`.
+- **The build tools' text content is a short status card, not JSON.** `start_agent_build` and
+  `get_agent_build_status` write the stage, the time so far, the plan and what it guessed, the
+  report and its questions, a Control Center link and the `sessionId` as a few lines for the
+  model to relay. `structuredContent` keeps every earlier field and adds `sessionId`, `stage`,
+  `done`, `elapsedSeconds`, `nextCheckSeconds`, `watchUrl`, `agentUrl` and `message`. Links use
+  the OAuth issuer (the Control Center's public origin), not `SEQUENTUM_API_URL`.
 - **The `SequentumApiClient` constructor dropped its `apiKey` parameter.** It is now
   `(baseUrl, requestTimeoutMs, maxRetries)`; authenticate with `setAccessToken()`.
 
 ### Added
 
+- **`get_agent_build_status` takes `waitSeconds` (0-50, default 0).** The call waits on the
+  server, sending progress notifications, and returns as soon as the status changes or the plan
+  appears, or when the wait ends. Without it the call reads the status once, as before.
+- **Build tool errors keep the `sessionId`.** A status read that fails with a 5xx, a 429 or no
+  answer now returns a non-error card with `stage: "Checking"` and the `sessionId`, instead of a
+  bare "Server Error" that lost the build. A 401, 403 or 404 is still an error, and its text names
+  the `sessionId`. A failed or stopped build's error result also names it.
 - **`/auth.md` and `/.well-known/auth.md` redirect to the Control Center's auth.md manifest.**
   An agent that only knows the MCP origin can now find how to register and claim a token; the
   server keeps no copy of the manifest, as with the authorization-server metadata redirect. The
@@ -26,6 +46,9 @@
 
 ### Changed
 
+- The build tool descriptions no longer claim builds take "1-2 minutes", no longer ask clients to
+  raise a tool-call timeout they cannot change on hosted clients, name `start_agent` instead of the
+  non-existent `run_agent`, and no longer say `stop_agent_build` returns 204 No Content.
 - **Production dependencies upgraded to clear `pnpm audit --prod`.** `@modelcontextprotocol/server`
   and `client` (with `core`) 2.2.0 to 2.4.0, `@modelcontextprotocol/node` 2.1.0 to 2.1.2,
   `express` to 4.22.3, `express-rate-limit` to 8.7.2, and the transitive `proxy-addr`, `zod`,

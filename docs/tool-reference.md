@@ -1286,9 +1286,11 @@ Tools for building new web scraping agents from natural language prompts using t
 
 ### start_agent_build
 
-Start a new AI-powered agent building session from a natural language description. Returns immediately with a `sessionId` — building happens asynchronously. The agent is saved to your workspace as soon as the AI creates it.
+Start an AI-powered build of a new agent from a natural language description. The call returns within about 45 seconds: as soon as the build has written its plan, at once if it finishes, otherwise when the 45 seconds pass. A build can take several minutes; it keeps running on Sequentum's servers whether or not anyone checks. The agent is saved to your workspace as soon as the AI creates it.
 
-**Next step:** Poll `get_agent_build_status` until status reaches `completed`, `ready`, or `error`. Optionally call `stop_agent_build` to abort early while still in `processing`.
+**Next step:** While `done` is false, relay the card's status to the user in one line, then call `get_agent_build_status` with the `sessionId` and `waitSeconds: 45` for the next update.
+
+**Stopping:** A cancelled, timed-out or disconnected tool call does not stop the build. Only `stop_agent_build` does.
 
 **Pre-call check:** Before invoking, the request should unambiguously specify (1) the target URL or domain, (2) the data to extract, and (3) any scope qualifiers (section, filters, language). If any of these are missing, the model is expected to ask one consolidated clarifying question instead of inventing values.
 
@@ -1300,14 +1302,21 @@ Start a new AI-powered agent building session from a natural language descriptio
 |-----------|------|----------|-------------|
 | `prompt` | string | Yes | What you want to scrape or automate, in your own words, passed through verbatim. The agent builder infers technical details (pagination, lazy-load, output format, etc.) server-side. Must be 10–5000 characters. |
 | `spaceId` | number | No | Space ID to associate the agent with. Uses the default space if omitted. |
+| `waitForCompletion` | boolean | No | Default `true`: wait up to 45 seconds and return a status card. `false`: return only `{ "sessionId" }` at once. |
 
 #### Returns
 
-```json
-{
-  "sessionId": "sess-abc-123"
-}
+The text content is a short status card for the model to relay. Once the plan is written:
+
+```markdown
+**Building your Agent: Building the Agent** · 8 s so far
+Plan: each row is a book, from https://books.toscrape.com/, all listing pages. Fields: title, price, rating.
+Guessed without asking: "all listing pages" (default), "one table" (default), "rating field" (assumption).
+Watch it live: https://dashboard.sequentum.com/agent-builder?sessionId=ab_553abb2901ed4248a480aef155ab334b
+sessionId: "ab_553abb2901ed4248a480aef155ab334b". The build keeps running on Sequentum's servers whether or not anyone checks. Next update: call get_agent_build_status with this sessionId and waitSeconds 45.
 ```
+
+`structuredContent` has the same facts: the fields listed under [`get_agent_build_status`](#get_agent_build_status), including `sessionId`, `status`, `stage`, `done`, `elapsedSeconds`, `nextCheckSeconds`, `watchUrl` and `agentUrl`. A build that failed or was stopped is an error result whose card still carries the `sessionId`.
 
 #### Example
 
@@ -1325,18 +1334,95 @@ Start a new AI-powered agent building session from a natural language descriptio
 
 ### get_agent_build_status
 
-Poll the current status of an agent building session. Call this repeatedly until status reaches a terminal value, then stop polling — no further calls are required.
+Check an agent build. With `waitSeconds`, the call waits on the server and returns as soon as the status changes or the plan appears, or when the wait ends, sending progress notifications meanwhile. Without it, the call reads the status once and returns.
 
 **Status values:**
-- `processing` — AI is still building. Keep polling.
-- `ready` — AI finished its turn. `agentId` and `agentName` are now in the response, but the agent may not be fully saved yet. Stop polling.
-- `completed` — Agent was saved successfully. `agentId` and `agentName` are populated. Stop polling.
-- `error` — Build failed. Check the `error` field.
+- `processing` — AI is still building. `done` is false.
+- `ready` — AI finished its turn. `agentId` and `agentName` are now in the response, but the agent may not be fully saved yet.
+- `completed` — Agent was saved successfully. `agentId` and `agentName` are populated.
+- `error` — Build failed. `error` holds a fixed message.
 - `cancelled` — `stop_agent_build` was called while processing.
 
-> **Note:** Stop polling on any of: `completed`, `ready`, `error`, `cancelled`. The session tears down automatically after reaching a terminal status.
+**Stages** (`stage`): `Starting`, `Looking at the page`, `Building the Agent`, `Checking` (this status read failed; the build is not affected, call again), `Task completed`, `Partially completed`, `Failed`, `Stopped`.
 
-> **Polling cadence:** Build duration is highly variable (seconds to several minutes). If the user has expressed a polling preference (e.g., *"poll quickly"*, *"be patient"*, *"every N seconds"*), honor it. Otherwise default to a moderate cadence with backoff (e.g., start ~5s, back off to ~15–30s) and avoid waiting longer than ~30s between polls so the user gets timely feedback when the build completes. The [`inspect-agent-draft`](prompts-reference.md#inspect-agent-draft) prompt accepts a `pollingPreference` argument that gets forwarded into the model's instructions.
+> **Following a build:** call with `waitSeconds: 45` until `done` is true, relaying each card to the user as one status line. If the user has asked for a different cadence, honor it. The [`inspect-agent-draft`](prompts-reference.md#inspect-agent-draft) prompt accepts a `pollingPreference` argument that gets forwarded into the model's instructions.
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sessionId` | string | Yes | Session ID returned by `start_agent_build`. |
+| `waitSeconds` | number | No | 0–50 (larger values count as 50; default 0). How long to wait on the server for a change. |
+
+#### Returns
+
+Text content is a status card. A finished build:
+
+```markdown
+**Agent ready: Books Title Price Rating (agent 24737)** · built in 2 min 2 s
+Plan: each row is a book, from https://books.toscrape.com/, all listing pages. Fields: title, price, rating.
+Guessed without asking: "all listing pages" (default), "one table" (default), "rating field" (assumption).
+Plan check: 4 met, 1 partial, 0 unmet.
+- field:rating: partial (empty on 3 of 1000 rows)
+Questions the build answered with a default (the first reply is what it did):
+1. Which pages? "All listing pages" / "First page only"
+Open in Sequentum: https://dashboard.sequentum.com/space/0/config/24737/details/runs
+sessionId: "ab_553abb2901ed4248a480aef155ab334b". The build is finished. A different answer to a question needs a new start_agent_build whose prompt includes it.
+```
+
+`structuredContent`:
+
+```json
+{
+  "sessionId": "ab_553abb2901ed4248a480aef155ab334b",
+  "status": "completed",
+  "stage": "Task completed",
+  "done": true,
+  "elapsedSeconds": 122,
+  "agentUrl": "https://dashboard.sequentum.com/space/0/config/24737/details/runs",
+  "agentId": 24737,
+  "agentName": "Books Title Price Rating",
+  "agentElapsedSeconds": 58.4,
+  "browserIoSeconds": 63.2,
+  "partial": false,
+  "plan": {
+    "item": { "text": "a book", "provenance": "user" },
+    "fields": [
+      { "name": "title", "required": true, "source": "list", "example": "A Light in the Attic", "provenance": "user" },
+      { "name": "rating", "required": false, "source": "list", "example": "3", "provenance": "assumption" }
+    ],
+    "scope": { "count": null, "text": "all listing pages", "provenance": "default" },
+    "exclusions": [],
+    "navigation": [],
+    "output": { "text": "one table", "provenance": "default" }
+  },
+  "report": {
+    "lines": { "field:rating": { "status": "partial", "evidence": "empty on 3 of 1000 rows" } },
+    "met": 4, "partial": 1, "unmet": 0, "total": 5,
+    "questions": [
+      { "text": "Which pages?", "replies": ["All listing pages", "First page only"] }
+    ]
+  }
+}
+```
+
+- `done` is true once the build has finished, failed or stopped. While it is false, `nextCheckSeconds` (45) and `watchUrl` (the live build in the Control Center) are present.
+- `elapsedSeconds` is the build's own clock from the API (model time plus browser I/O time); inside `start_agent_build`, the server's clock until the API reports one.
+- `agentUrl` is present once the build has saved an Agent. It uses the space the build was started in, or space 0 when that is unknown.
+- `status` is absent only when this read failed (`stage: "Checking"`).
+- `plan` appears while the build is still `processing`, once the builder has seen the page. Each line's `provenance` is `user` (the request said it), `site` (seen on the page), `assumption` or `default` (a choice the build made without asking).
+- `report` appears when a build that wrote a Plan finishes: each Plan line graded `met`, `partial` or `unmet`, and up to 3 `questions`. The first reply of each question is the choice the build already made.
+- The build never pauses for an answer, and no tool applies an answer to a finished build. A different answer needs a new `start_agent_build` whose prompt includes it.
+- `partial: true` means the build stopped early but delivered a working Agent; `summary` says what is missing.
+- A failed read that will not fix itself (401, 403, 404) is an error result; its text still names the `sessionId`.
+
+---
+
+### stop_agent_build
+
+Abort an in-progress agent building session early. This is the only way to stop a build: a cancelled or timed-out `start_agent_build` or `get_agent_build_status` call leaves it running. Has no effect once the session has already reached a terminal status.
+
+Any agent already saved to your workspace before the abort remains there — use the standard agents API to delete it if unwanted.
 
 #### Parameters
 
@@ -1348,61 +1434,16 @@ Poll the current status of an agent building session. Call this repeatedly until
 
 ```json
 {
-  "status": "completed",
-  "agentId": 42,
-  "agentName": "Amazon Laptop Scraper",
-  "partial": false,
-  "plan": {
-    "item": { "text": "a laptop listing", "provenance": "user" },
-    "fields": [
-      { "name": "title", "required": true, "source": "list", "example": "Acer Aspire 5", "provenance": "user" },
-      { "name": "rating", "required": false, "source": "list", "example": "4.4", "provenance": "site" }
-    ],
-    "scope": { "count": null, "text": "first page only", "provenance": "default" },
-    "exclusions": [],
-    "navigation": [],
-    "output": { "text": "one table", "provenance": "default" }
-  },
-  "report": {
-    "lines": { "field:title": { "status": "met", "evidence": "24 of 24 rows" } },
-    "met": 4, "partial": 0, "unmet": 0, "total": 4,
-    "questions": [
-      { "text": "Do you want every results page?", "replies": ["First page only", "Every page"] }
-    ]
-  }
+  "stopped": true,
+  "sessionId": "sess-abc-123"
 }
 ```
-
-- `plan` appears while the build is still `processing`, once the builder has seen the page. Each line's `provenance` is `user` (the request said it), `site` (seen on the page), `assumption` or `default` (a choice the build made without asking).
-- `report` appears when a build that wrote a Plan finishes: each Plan line graded `met`, `partial` or `unmet`, and up to 3 `questions`. The first reply of each question is the choice the build already made.
-- The build never pauses for an answer, and no tool applies an answer to a finished build. A different answer needs a new `start_agent_build` whose prompt includes it.
-- `partial: true` means the build stopped early but delivered a working Agent; `summary` says what is missing.
-
-A finished `start_agent_build` (the default `waitForCompletion: true`) returns the same fields plus `sessionId`.
-
----
-
-### stop_agent_build
-
-Abort an in-progress agent building session early. **Optional** — only needed if you want to cancel before the build completes. Has no effect once the session has already reached a terminal status.
-
-Any agent already saved to your workspace before the abort remains there — use the standard agents API to delete it if unwanted. Returns 204 No Content.
-
-#### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `sessionId` | string | Yes | Session ID returned by `start_agent_build`. |
-
-#### Returns
-
-No content (HTTP 204).
 
 ### Agent Builder Session Status Values
 
 | Value | Description |
 |-------|-------------|
-| `processing` | AI is building the agent. Keep polling. |
+| `processing` | AI is building the agent. `done` is false. |
 | `ready` | AI finished its turn; `agentId`/`agentName` are available. Session may still be wrapping up. |
 | `completed` | Agent was saved successfully. `agentId` and `agentName` are populated. |
 | `error` | Build failed. The `error` field contains the reason. |
