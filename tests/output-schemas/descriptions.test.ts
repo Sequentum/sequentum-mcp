@@ -18,6 +18,9 @@ describe("descriptions match the output schemas", () => {
     ["list_agents", ["Array of agent summaries"]],
     ["get_credit_history", ["Array of transactions"]],
     ["get_agent_cost_breakdown", ["server time vs exports vs proxies", "corresponds to data points"]],
+    ["start_agent_build", ["1-2 minutes", "resetTimeoutOnProgress", "5 min", "times out"]],
+    ["get_agent_build_status", ["run_agent", "POLLING CADENCE", "~30s"]],
+    ["stop_agent_build", ["204"]],
   ] as const)("%s", (name, stale) => {
     for (const phrase of stale) expect(description(name)).not.toContain(phrase);
   });

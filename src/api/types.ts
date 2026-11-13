@@ -754,6 +754,10 @@ export interface ExternalSessionStatusResponse {
   agentName?: string;
   /** Error message when status is "error". */
   error?: string;
+  /** Model time the build has used so far, in seconds. */
+  agentElapsedSeconds?: number | null;
+  /** Browser I/O time the build has used so far, in seconds; with agentElapsedSeconds, about its wall clock. */
+  browserIoSeconds?: number | null;
   /** True when the build stopped early but delivered a working Agent; `summary` says what is missing. */
   partial?: boolean;
   /** What the Agent collects, what is missing and why the build stopped. Present only when `partial` is true. */

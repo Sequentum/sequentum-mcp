@@ -7,7 +7,7 @@
 
 import type { Tool } from "@modelcontextprotocol/server";
 import { BUILD_RESULT_FIELDS, PRE_CALL_CHECK, PROMPT_HANDLING_POLICY } from "./policies.js";
-import { AGENT_BUILD_MAX_WAIT_LABEL } from "./constants.js";
+import { BUILD_HOLD_DEFAULT_S, BUILD_HOLD_MAX_S } from "./constants.js";
 import { outputSchemaFor } from "./output-schemas/index.js";
 
 export const tools: Tool[] = [
@@ -1178,14 +1178,17 @@ export const tools: Tool[] = [
   {
     name: "start_agent_build",
     description:
-      "Start a new AI-powered agent building session from a natural language prompt. " +
-      "By default (waitForCompletion=true), this call waits for the build to finish and returns the agentId directly — no polling required. " +
-      "Unlike start_agent (which defaults to async because run durations vary widely), start_agent_build defaults to sync because builds typically complete in 1-2 minutes. " +
-      "The agent is saved to your workspace as soon as the AI creates it. " +
-      "Set waitForCompletion=false to get the sessionId immediately and poll manually via get_agent_build_status. " +
-      `If the build times out (>${AGENT_BUILD_MAX_WAIT_LABEL}), the build is still running — the response will include the sessionId so you can check status manually via get_agent_build_status. ` +
-      "Note: clients should set a tool-call timeout > 5 min or enable resetTimeoutOnProgress, as the default MCP SDK timeout (60s) may expire before the build completes on slow sites. " +
-      "Optionally call stop_agent_build to abort early while still in 'processing'. " +
+      "Start an AI-powered build of a new agent from a natural language prompt. " +
+      `The call returns within about ${BUILD_HOLD_DEFAULT_S} seconds: as soon as the build has written its plan, at once if it finishes, otherwise when the ${BUILD_HOLD_DEFAULT_S} seconds pass. ` +
+      "A build can take several minutes. " +
+      "The result text is a short status card: the stage, the plan and what it guessed without asking, the time so far, a link where the user can watch the build live, and the sessionId. " +
+      "structuredContent has the same facts (sessionId, status, stage, done, elapsedSeconds, watchUrl, agentUrl, nextCheckSeconds, agentId, agentName, plan, report, partial, summary). " +
+      "While done is false the build keeps running on Sequentum's servers whether or not anyone checks. " +
+      `Each card is meant to be relayed to the user as one short status line; the next update comes from get_agent_build_status with the sessionId and waitSeconds ${BUILD_HOLD_DEFAULT_S}. ` +
+      "There is nothing more to check once done is true or the user no longer wants updates: the build goes on either way, and an agent it saves appears in list_agents. " +
+      "A cancelled, timed-out or disconnected tool call does not stop the build; only stop_agent_build does. " +
+      "A build that failed or was stopped is an error result that still carries the sessionId. " +
+      "Set waitForCompletion=false to get only the sessionId at once. " +
       "If spaceName is known, resolve it to a spaceId via search_space_by_name first. " +
       BUILD_RESULT_FIELDS + " " +
       PRE_CALL_CHECK + " " +
@@ -1212,8 +1215,8 @@ export const tools: Tool[] = [
         waitForCompletion: {
           type: "boolean",
           description:
-            `If true (default), wait for the build to complete and return the agentId directly in a single call (up to ~${AGENT_BUILD_MAX_WAIT_LABEL}). ` +
-            "If false, return the sessionId immediately for manual polling via get_agent_build_status.",
+            `If true (default), wait up to ${BUILD_HOLD_DEFAULT_S} seconds for the plan or the end of the build and return a status card. ` +
+            "If false, return only the sessionId at once.",
         },
       },
       required: ["prompt"],
@@ -1231,20 +1234,33 @@ export const tools: Tool[] = [
   {
     name: "get_agent_build_status",
     description:
-      "Poll the status of an agent building session. " +
-      "Returns { status, agentId?, agentName?, plan?, report?, partial?, summary?, error? }. " +
-      "status: 'processing' (keep polling) | 'ready' | 'completed' | 'error' | 'cancelled'. " +
+      "Check an agent build started by start_agent_build. " +
+      "The result text is a short status card meant to be relayed to the user as one status line; structuredContent has " +
+      "{ sessionId, status, stage, done, elapsedSeconds, watchUrl?, agentUrl?, nextCheckSeconds?, agentId?, agentName?, plan?, report?, partial?, summary?, error? }. " +
+      "status: 'processing' | 'ready' | 'completed' | 'error' | 'cancelled'. " +
+      "stage says in a few words what the build is doing. done is true once the build has finished, failed or stopped; " +
+      "while it is false the build keeps running whether or not anyone checks. " +
+      `With waitSeconds (0-${BUILD_HOLD_MAX_S}) the call waits on the server and returns as soon as the status changes or the plan appears, or when the wait ends; ` +
+      `waitSeconds ${BUILD_HOLD_DEFAULT_S} gives one update per call. Without it the call returns at once. ` +
+      "Stage 'Checking' means this read failed (the build is not affected); call again. " +
       BUILD_RESULT_FIELDS + " " +
       "`plan` appears while still 'processing', once the builder has seen the page. " +
-      "STOP POLLING on: completed, ready, error, or cancelled — the session tears down automatically. " +
-      "The returned agentId is the permanent workspace ID usable with get_agent, run_agent, schedule tools, and every other endpoint that takes an agentId. " +
-      "POLLING CADENCE: honor any user-expressed preference (e.g., 'poll quickly', 'every N seconds'); otherwise use moderate backoff (~5s start, max ~30s between polls).",
+      "There is nothing more to check once done is true. " +
+      "The agentId is the permanent workspace ID usable with get_agent, start_agent, schedule tools, and every other endpoint that takes an agentId. " +
+      "If the user asks for a different cadence, honor it.",
     inputSchema: {
       type: "object" as const,
       properties: {
         sessionId: {
           type: "string",
           description: "The session ID returned by start_agent_build.",
+        },
+        waitSeconds: {
+          type: "number",
+          description:
+            `Optional, 0-${BUILD_HOLD_MAX_S} (larger values count as ${BUILD_HOLD_MAX_S}; default 0). How long to wait on the server for the status to change before returning. ` +
+            `Use ${BUILD_HOLD_DEFAULT_S} to follow a running build.`,
+          minimum: 0,
         },
       },
       required: ["sessionId"],
@@ -1264,7 +1280,8 @@ export const tools: Tool[] = [
       "Abort an in-progress agent building session early. Optional — only needed if you want to cancel before the build completes. " +
       "Has no effect once the session has already reached a terminal status (completed, ready, error, or cancelled). " +
       "Any agent already saved to your workspace before the abort remains there — use the standard agents API to delete it if unwanted. " +
-      "Returns 204 No Content.",
+      "Returns { stopped: true, sessionId }. This is the only way to stop a build: a cancelled or timed-out " +
+      "start_agent_build or get_agent_build_status call leaves it running.",
     inputSchema: {
       type: "object" as const,
       properties: {

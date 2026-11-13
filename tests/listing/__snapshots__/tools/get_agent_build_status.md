@@ -16,7 +16,7 @@ Title: Get Agent Build Status
 
 ## Description
 
-Poll the status of an agent building session. Returns { status, agentId?, agentName?, plan?, report?, partial?, summary?, error? }. status: 'processing' (keep polling) | 'ready' | 'completed' | 'error' | 'cancelled'. The result also carries `plan`: what the build set out to deliver, written after one look at the page. Each plan line has a provenance: 'user' (the request said it), 'site' (seen on the page), 'assumption' or 'default' (a choice the build made without asking). When the build finishes it carries `report`: each plan line graded met, partial or unmet with evidence, and up to 3 `questions` for the user, each with suggested `replies` whose first entry is the choice the build already made. The build never pauses for an answer. There is no call that applies an answer to a finished build: a different answer needs a new start_agent_build whose prompt includes it. `partial: true` means the build stopped early but delivered a working Agent; `summary` then says what is missing. `plan` appears while still 'processing', once the builder has seen the page. STOP POLLING on: completed, ready, error, or cancelled — the session tears down automatically. The returned agentId is the permanent workspace ID usable with get_agent, run_agent, schedule tools, and every other endpoint that takes an agentId. POLLING CADENCE: honor any user-expressed preference (e.g., 'poll quickly', 'every N seconds'); otherwise use moderate backoff (~5s start, max ~30s between polls).
+Check an agent build started by start_agent_build. The result text is a short status card meant to be relayed to the user as one status line; structuredContent has { sessionId, status, stage, done, elapsedSeconds, watchUrl?, agentUrl?, nextCheckSeconds?, agentId?, agentName?, plan?, report?, partial?, summary?, error? }. status: 'processing' | 'ready' | 'completed' | 'error' | 'cancelled'. stage says in a few words what the build is doing. done is true once the build has finished, failed or stopped; while it is false the build keeps running whether or not anyone checks. With waitSeconds (0-50) the call waits on the server and returns as soon as the status changes or the plan appears, or when the wait ends; waitSeconds 45 gives one update per call. Without it the call returns at once. Stage 'Checking' means this read failed (the build is not affected); call again. The result also carries `plan`: what the build set out to deliver, written after one look at the page. Each plan line has a provenance: 'user' (the request said it), 'site' (seen on the page), 'assumption' or 'default' (a choice the build made without asking). When the build finishes it carries `report`: each plan line graded met, partial or unmet with evidence, and up to 3 `questions` for the user, each with suggested `replies` whose first entry is the choice the build already made. The build never pauses for an answer. There is no call that applies an answer to a finished build: a different answer needs a new start_agent_build whose prompt includes it. `partial: true` means the build stopped early but delivered a working Agent; `summary` then says what is missing. `plan` appears while still 'processing', once the builder has seen the page. There is nothing more to check once done is true. The agentId is the permanent workspace ID usable with get_agent, start_agent, schedule tools, and every other endpoint that takes an agentId. If the user asks for a different cadence, honor it.
 
 ## inputSchema
 
@@ -27,6 +27,11 @@ Poll the status of an agent building session. Returns { status, agentId?, agentN
     "sessionId": {
       "type": "string",
       "description": "The session ID returned by start_agent_build."
+    },
+    "waitSeconds": {
+      "type": "number",
+      "description": "Optional, 0-50 (larger values count as 50; default 0). How long to wait on the server for the status to change before returning. Use 45 to follow a running build.",
+      "minimum": 0
     }
   },
   "required": [
@@ -41,9 +46,12 @@ Poll the status of an agent building session. Returns { status, agentId?, agentN
 {
   "type": "object",
   "properties": {
+    "sessionId": {
+      "type": "string"
+    },
     "status": {
       "type": "string",
-      "description": "processing, ready, completed, error or cancelled."
+      "description": "processing, ready, completed, error or cancelled. Absent when this status read failed (stage Checking)."
     },
     "agentId": {
       "type": [
@@ -272,13 +280,43 @@ Poll the status of an agent building session. Returns { status, agentId?, agentN
       "required": [],
       "description": "The Plan checked against the finished Agent. Null until a build that wrote a Plan has finished."
     },
+    "stage": {
+      "type": "string",
+      "description": "Starting, Looking at the page, Building the Agent, Checking (this status read failed; the build is not affected), Task completed, Partially completed, Failed or Stopped."
+    },
+    "done": {
+      "type": "boolean",
+      "description": "True once the build has finished, failed or stopped. While false the build keeps running."
+    },
+    "elapsedSeconds": {
+      "type": "integer",
+      "description": "Time since the build started, in seconds."
+    },
+    "nextCheckSeconds": {
+      "type": "integer",
+      "description": "Present while done is false: the waitSeconds to pass to get_agent_build_status."
+    },
+    "watchUrl": {
+      "type": "string",
+      "description": "Present while done is false: the live build in the Control Center."
+    },
+    "agentUrl": {
+      "type": "string",
+      "description": "Present once the build has saved an Agent: the Agent in the Control Center."
+    },
+    "message": {
+      "type": "string",
+      "description": "Why the call returned early, when that is not a status change."
+    },
     "error": {
       "type": "string",
-      "description": "Present only when status is error."
+      "description": "Present only when status is error: a fixed message."
     }
   },
   "required": [
-    "status"
+    "sessionId",
+    "stage",
+    "done"
   ]
 }
 ```

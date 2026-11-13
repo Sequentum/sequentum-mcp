@@ -16,7 +16,7 @@ Title: Build Agent from Prompt
 
 ## Description
 
-Start a new AI-powered agent building session from a natural language prompt. By default (waitForCompletion=true), this call waits for the build to finish and returns the agentId directly — no polling required. Unlike start_agent (which defaults to async because run durations vary widely), start_agent_build defaults to sync because builds typically complete in 1-2 minutes. The agent is saved to your workspace as soon as the AI creates it. Set waitForCompletion=false to get the sessionId immediately and poll manually via get_agent_build_status. If the build times out (>5 minutes), the build is still running — the response will include the sessionId so you can check status manually via get_agent_build_status. Note: clients should set a tool-call timeout > 5 min or enable resetTimeoutOnProgress, as the default MCP SDK timeout (60s) may expire before the build completes on slow sites. Optionally call stop_agent_build to abort early while still in 'processing'. If spaceName is known, resolve it to a spaceId via search_space_by_name first. The result also carries `plan`: what the build set out to deliver, written after one look at the page. Each plan line has a provenance: 'user' (the request said it), 'site' (seen on the page), 'assumption' or 'default' (a choice the build made without asking). When the build finishes it carries `report`: each plan line graded met, partial or unmet with evidence, and up to 3 `questions` for the user, each with suggested `replies` whose first entry is the choice the build already made. The build never pauses for an answer. There is no call that applies an answer to a finished build: a different answer needs a new start_agent_build whose prompt includes it. `partial: true` means the build stopped early but delivered a working Agent; `summary` then says what is missing. ARGUMENT REQUIREMENTS: this tool's arguments are only sufficient when (1) the target URL or domain, (2) the data the user wants extracted, (3) any qualifiers that affect scope (section, filters, language, etc.) are each unambiguous. Arguments derived by analogy from a different site, or reused from a previous request for a different purpose, are not sufficient. When a required detail is absent, ask one consolidated clarifying question covering every gap instead of supplying an invented value. PROMPT-HANDLING POLICY: (1) Pass the user's wording (and any clarification answers from earlier in the conversation) through verbatim. (2) Trivial normalizations (adding 'https://', fixing an obvious URL typo) are fine. (3) Do NOT invent details the user did not state — extra fields, output formats, price-handling rules, lazy-load instructions, pagination strategies, etc. The upstream Sequentum Agent Builder pipeline will infer these on its own from the page; do not pre-empt it. If a detail feels essential to include, that is a sufficiency gap — ask one clarifying question instead of inventing.
+Start an AI-powered build of a new agent from a natural language prompt. The call returns within about 45 seconds: as soon as the build has written its plan, at once if it finishes, otherwise when the 45 seconds pass. A build can take several minutes. The result text is a short status card: the stage, the plan and what it guessed without asking, the time so far, a link where the user can watch the build live, and the sessionId. structuredContent has the same facts (sessionId, status, stage, done, elapsedSeconds, watchUrl, agentUrl, nextCheckSeconds, agentId, agentName, plan, report, partial, summary). While done is false the build keeps running on Sequentum's servers whether or not anyone checks. Each card is meant to be relayed to the user as one short status line; the next update comes from get_agent_build_status with the sessionId and waitSeconds 45. There is nothing more to check once done is true or the user no longer wants updates: the build goes on either way, and an agent it saves appears in list_agents. A cancelled, timed-out or disconnected tool call does not stop the build; only stop_agent_build does. A build that failed or was stopped is an error result that still carries the sessionId. Set waitForCompletion=false to get only the sessionId at once. If spaceName is known, resolve it to a spaceId via search_space_by_name first. The result also carries `plan`: what the build set out to deliver, written after one look at the page. Each plan line has a provenance: 'user' (the request said it), 'site' (seen on the page), 'assumption' or 'default' (a choice the build made without asking). When the build finishes it carries `report`: each plan line graded met, partial or unmet with evidence, and up to 3 `questions` for the user, each with suggested `replies` whose first entry is the choice the build already made. The build never pauses for an answer. There is no call that applies an answer to a finished build: a different answer needs a new start_agent_build whose prompt includes it. `partial: true` means the build stopped early but delivered a working Agent; `summary` then says what is missing. ARGUMENT REQUIREMENTS: this tool's arguments are only sufficient when (1) the target URL or domain, (2) the data the user wants extracted, (3) any qualifiers that affect scope (section, filters, language, etc.) are each unambiguous. Arguments derived by analogy from a different site, or reused from a previous request for a different purpose, are not sufficient. When a required detail is absent, ask one consolidated clarifying question covering every gap instead of supplying an invented value. PROMPT-HANDLING POLICY: (1) Pass the user's wording (and any clarification answers from earlier in the conversation) through verbatim. (2) Trivial normalizations (adding 'https://', fixing an obvious URL typo) are fine. (3) Do NOT invent details the user did not state — extra fields, output formats, price-handling rules, lazy-load instructions, pagination strategies, etc. The upstream Sequentum Agent Builder pipeline will infer these on its own from the page; do not pre-empt it. If a detail feels essential to include, that is a sufficiency gap — ask one clarifying question instead of inventing.
 
 ## inputSchema
 
@@ -36,7 +36,7 @@ Start a new AI-powered agent building session from a natural language prompt. By
     },
     "waitForCompletion": {
       "type": "boolean",
-      "description": "If true (default), wait for the build to complete and return the agentId directly in a single call (up to ~5 minutes). If false, return the sessionId immediately for manual polling via get_agent_build_status."
+      "description": "If true (default), wait up to 45 seconds for the plan or the end of the build and return a status card. If false, return only the sessionId at once."
     }
   },
   "required": [
@@ -56,7 +56,7 @@ Start a new AI-powered agent building session from a natural language prompt. By
     },
     "status": {
       "type": "string",
-      "description": "completed, ready or timeout. Absent when waitForCompletion is false."
+      "description": "processing, completed, ready, error or cancelled. Absent when waitForCompletion is false."
     },
     "agentId": {
       "type": [
@@ -285,9 +285,37 @@ Start a new AI-powered agent building session from a natural language prompt. By
       "required": [],
       "description": "The Plan checked against the finished Agent. Null until a build that wrote a Plan has finished."
     },
+    "stage": {
+      "type": "string",
+      "description": "Starting, Looking at the page, Building the Agent, Checking (this status read failed; the build is not affected), Task completed, Partially completed, Failed or Stopped."
+    },
+    "done": {
+      "type": "boolean",
+      "description": "True once the build has finished, failed or stopped. While false the build keeps running."
+    },
+    "elapsedSeconds": {
+      "type": "integer",
+      "description": "Time since the build started, in seconds."
+    },
+    "nextCheckSeconds": {
+      "type": "integer",
+      "description": "Present while done is false: the waitSeconds to pass to get_agent_build_status."
+    },
+    "watchUrl": {
+      "type": "string",
+      "description": "Present while done is false: the live build in the Control Center."
+    },
+    "agentUrl": {
+      "type": "string",
+      "description": "Present once the build has saved an Agent: the Agent in the Control Center."
+    },
     "message": {
       "type": "string",
-      "description": "Present only on timeout."
+      "description": "Why the call returned early, when that is not a status change."
+    },
+    "error": {
+      "type": "string",
+      "description": "Present only when status is error: a fixed message."
     }
   },
   "required": [

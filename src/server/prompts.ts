@@ -8,7 +8,7 @@
 
 import type { Prompt, PromptMessage } from "@modelcontextprotocol/server";
 import { PROMPT_HANDLING_POLICY } from "./policies.js";
-import { AGENT_BUILD_MAX_WAIT_LABEL } from "./constants.js";
+import { BUILD_HOLD_DEFAULT_S } from "./constants.js";
 
 // ==========================================
 // Prompt Definitions
@@ -449,8 +449,9 @@ export function getPromptMessages(
               `Follow these steps:\n\n` +
               spaceStep +
               `${stepOffset + 1}. Use start_agent_build with prompt=\`${prompt}\`. ${spaceNote} ` +
-              `This will wait for the build to complete and return the agentId directly (up to ~${AGENT_BUILD_MAX_WAIT_LABEL}). ` +
-              `If the build times out, the response will include a sessionId — use get_agent_build_status to check manually.\n` +
+              `It returns within about ${BUILD_HOLD_DEFAULT_S} seconds with a status card and a sessionId. ` +
+              `While done is false, tell the user the stage in one line, then call get_agent_build_status with the sessionId and waitSeconds ${BUILD_HOLD_DEFAULT_S}; ` +
+              `repeat until done is true. The build keeps running even if a call is cut off.\n` +
               AGENT_BUILD_STATUS_BRANCHES +
               `${stepOffset + 2}. If the build succeeded (completed or ready), use get_agent with the agentId to show the user their new agent's details.\n` +
               `${stepOffset + 3}. Remind the user the agent is now accessible via list_agents and all other agent tools.`,
@@ -471,7 +472,7 @@ export function getPromptMessages(
         : "";
       const processingNote = pollingPreference
         ? `report that the AI is still building, then call get_agent_build_status again using the cadence from the user's advisory above.`
-        : `report that the AI is still building, then call get_agent_build_status again (moderate cadence with backoff; never wait more than ~30s between calls).`;
+        : `tell the user the stage in one line, then call get_agent_build_status again with waitSeconds ${BUILD_HOLD_DEFAULT_S}; repeat until done is true.`;
       return [
         {
           role: "user",

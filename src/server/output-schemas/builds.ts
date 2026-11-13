@@ -75,27 +75,42 @@ const buildResult: Record<string, JsonSchema> = {
 };
 const buildResultKeys = Object.keys(buildResult);
 
+// The status card fields both build tools add (see tools/builds.ts).
+const statusCard: Record<string, JsonSchema> = {
+  stage: str(
+    "Starting, Looking at the page, Building the Agent, Checking (this status read failed; the build is not affected), " +
+      "Task completed, Partially completed, Failed or Stopped."
+  ),
+  done: bool("True once the build has finished, failed or stopped. While false the build keeps running."),
+  elapsedSeconds: int("Time since the build started, in seconds."),
+  nextCheckSeconds: int("Present while done is false: the waitSeconds to pass to get_agent_build_status."),
+  watchUrl: str("Present while done is false: the live build in the Control Center."),
+  agentUrl: str("Present once the build has saved an Agent: the Agent in the Control Center."),
+  message: str("Why the call returned early, when that is not a status change."),
+  error: str("Present only when status is error: a fixed message."),
+};
+const statusCardKeys = Object.keys(statusCard);
+
 export const buildOutputSchemas: Record<string, JsonSchema> = {
-  // Three success shapes share one loose object: { sessionId } when waitForCompletion is false;
-  // { status: completed|ready, agentId, agentName, plan, report, ..., sessionId } when the build
-  // finished; { status: timeout, sessionId, message } when polling gave up. Cancellation and
-  // failures are isError results, which the SDK does not validate.
+  // { sessionId } alone when waitForCompletion is false; otherwise the status card. A build that
+  // failed or was stopped is an isError result, which the SDK does not validate.
   start_agent_build: obj(
     {
       sessionId: str(),
-      status: str("completed, ready or timeout. Absent when waitForCompletion is false."),
+      status: str("processing, completed, ready, error or cancelled. Absent when waitForCompletion is false."),
       ...buildResult,
-      message: str("Present only on timeout."),
+      ...statusCard,
     },
-    { optional: ["status", ...buildResultKeys, "message"] }
+    { optional: ["status", ...buildResultKeys, ...statusCardKeys] }
   ),
   get_agent_build_status: obj(
     {
-      status: str("processing, ready, completed, error or cancelled."),
+      sessionId: str(),
+      status: str("processing, ready, completed, error or cancelled. Absent when this status read failed (stage Checking)."),
       ...buildResult,
-      error: str("Present only when status is error."),
+      ...statusCard,
     },
-    { optional: [...buildResultKeys, "error"] }
+    { optional: ["status", ...buildResultKeys, ...statusCardKeys.filter((k) => k !== "stage" && k !== "done")] }
   ),
   stop_agent_build: obj({ stopped: bool(), sessionId: str() }),
 };

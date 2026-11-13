@@ -104,7 +104,9 @@ describe("get_agent_build_status optional timing fields", () => {
     const client = await connect({ getAgentBuildStatus: { status: "processing" } });
     const result = await client.callTool({ name: "get_agent_build_status", arguments: { sessionId: "sess-0001" } });
     expect(result.isError, textOf(result)).toBeFalsy();
-    expect(result.structuredContent).toEqual({ status: "processing" });
+    expect(result.structuredContent).toEqual({
+      status: "processing", sessionId: "sess-0001", stage: "Looking at the page", done: false, nextCheckSeconds: 45,
+    });
     await client.close();
   });
 });

@@ -4,7 +4,9 @@ import { connect, textOf } from "./harness.js";
 
 // Structured output adds structuredContent next to the text block, never instead of it. These snapshots
 // were recorded from the handlers before that change and must not be updated (-u) as part of
-// it: a diff here means a client that reads only the text would see a change.
+// it: a diff here means a client that reads only the text would see a change. The one deliberate
+// exception: the build tools' text became a short status card for the model to relay, so
+// start_agent_build_completed and get_agent_build_status_* were re-recorded with that change.
 describe("tool text output is unchanged", () => {
   it.each(CASES.map((c) => [c.id, c] as const))("%s", async (id, c) => {
     const client = await connect(c.api);
