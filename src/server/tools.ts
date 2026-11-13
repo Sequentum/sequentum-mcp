@@ -1242,7 +1242,7 @@ export const tools: Tool[] = [
       "while it is false the build keeps running whether or not anyone checks. " +
       `With waitSeconds (0-${BUILD_HOLD_MAX_S}) the call waits on the server and returns as soon as the status changes or the plan appears, or when the wait ends; ` +
       `waitSeconds ${BUILD_HOLD_DEFAULT_S} gives one update per call. Without it the call returns at once. ` +
-      "Stage 'Checking' means this read failed (the build is not affected); call again. " +
+      "Stage 'Checking' means this read failed (the build is not affected); call again, and after several failed checks in a row there is no need to keep checking. " +
       BUILD_RESULT_FIELDS + " " +
       "`plan` appears while still 'processing', once the builder has seen the page. " +
       "There is nothing more to check once done is true. " +
