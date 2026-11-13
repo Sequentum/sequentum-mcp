@@ -54,8 +54,8 @@ let signalHandlersInstalled = false;
  * ORDER IS LOAD-BEARING. `httpServer.close(cb)` only invokes `cb` once every open
  * connection has ended, and the call that ends them is `mcpHandler.close()`. Awaiting
  * the drain *before* aborting deadlocks the two against each other whenever a request
- * is still in flight — a `start_agent_build` with `waitForCompletion` holds its response
- * open for up to AGENT_BUILD_MAX_WAIT_MS — until the caller's force-exit timer fires and
+ * is still in flight — a `start_agent_build` or a waiting `get_agent_build_status` holds its
+ * response open for up to about BUILD_HOLD_MAX_S — until the caller's force-exit timer fires and
  * the process exits non-zero. Start the close, abort, then drain.
  *
  * Exported for testing: the signal handler around it calls `process.exit`, so this is the
@@ -762,7 +762,9 @@ export async function startHttpServer(
   // The stateless protocol handler: one McpServer and one API client per
   // request. Any `Mcp-Session-Id` a mid-flight client still sends is ignored by
   // construction, so a rolling deploy does not break in-progress clients.
-  const mcpHandler = createSequentumMcpHandler(apiBaseUrl, version);
+  // The issuer is the Control Center's public origin: build results link to it, never to apiBaseUrl,
+  // which can be an internal host.
+  const mcpHandler = createSequentumMcpHandler(apiBaseUrl, version, issuer);
   const nodeHandler = toNodeHandler(mcpHandler);
 
   // One cache per server, not per request: the stateless handler builds a fresh

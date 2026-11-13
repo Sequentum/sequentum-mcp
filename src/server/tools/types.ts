@@ -14,10 +14,12 @@ export interface ToolDeps {
   sendProgress: ProgressFn;
   /**
    * Abort signal for the in-flight tool call, sourced from the request handler's
-   * `ctx.mcpReq.signal`. Only `start_agent_build` uses this today (to stop polling
-   * and call `stopAgentBuild` when the MCP client cancels the request mid-poll).
+   * `ctx.mcpReq.signal`. The build tools use it only to stop waiting: a client that
+   * cancels or disconnects never stops the build itself.
    */
   signal: AbortSignal;
+  /** Public Control Center origin (the OAuth issuer), for links shown to the user. Absent: no links. */
+  controlCenterUrl?: string;
 }
 
 export type ToolHandler = (
