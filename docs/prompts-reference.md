@@ -300,7 +300,7 @@ Give me a cost breakdown
 
 ### build-agent-from-prompt
 
-Build a new web scraping agent from a natural language description using the AI agent builder. Calls `start_agent_build`, which waits on the server for the build to finish and returns the `agentId` directly, so the prompt does not poll. The agent is saved to the workspace automatically once the AI completes the build.
+Build a new web scraping agent from a natural language description using the AI agent builder. Calls `start_agent_build`, which returns a status card within about 45 seconds, then follows the build with `get_agent_build_status` and `waitSeconds: 45`, telling the user the stage in one line after each call. The agent is saved to the workspace automatically once the AI completes the build.
 
 #### Arguments
 
@@ -312,7 +312,7 @@ Build a new web scraping agent from a natural language description using the AI 
 #### Workflow
 
 1. *(If `spaceName` provided)* Uses `search_space_by_name` to resolve the name to a `spaceId`.
-2. Uses `start_agent_build` with the given `prompt` (and `spaceId` if resolved). The tool waits for the build to complete, up to about 5 minutes, and returns the `agentId`. If it times out, the response includes a `sessionId` to check with `get_agent_build_status`. The final status is handled as follows:
+2. Uses `start_agent_build` with the given `prompt` (and `spaceId` if resolved). The tool returns within about 45 seconds with a status card and a `sessionId`. While `done` is false, the model tells the user the stage in one line and calls `get_agent_build_status` with `waitSeconds: 45`, until `done` is true. The build keeps running even if a call is cut off. The final status is handled as follows:
    - `completed` → agent was saved successfully. Reports `agentId` and `agentName` to the user. Done.
    - `ready` → agent exists but may not be fully saved yet. Reports `agentId` and `agentName`. No further action required.
    - `error` → reports the error to the user. If an agent was partially created, advises the user to delete it via the standard agents API.
@@ -341,12 +341,12 @@ Check the current status of an agent build session and present the resulting age
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `sessionId` | string | Yes | The session ID returned by `start_agent_build`. |
-| `pollingPreference` | string | No | Hint for how aggressively to poll `get_agent_build_status` if the session is still in progress. Examples: `"fast"` (every 2–3s), `"normal"` (start ~5s, back off to ~15s), `"slow"` (every 30s), or free-form (`"poll every 5 seconds"`). If omitted, a moderate cadence with backoff is used. |
+| `pollingPreference` | string | No | Hint for how aggressively to poll `get_agent_build_status` if the session is still in progress. Examples: `"fast"` (every 2–3s), `"slow"` (every 30s), or free-form (`"poll every 5 seconds"`). If omitted, the model calls `get_agent_build_status` with `waitSeconds: 45` until `done` is true. |
 
 #### Workflow
 
 1. Uses `get_agent_build_status` to get the current status of the session.
-   - `processing` → reports that the AI is still building; continues polling using `pollingPreference` if provided, otherwise a moderate cadence with backoff.
+   - `processing` → tells the user the stage in one line; continues using `pollingPreference` if provided, otherwise calls again with `waitSeconds: 45`.
    - `error` → reports the error. The session is over. If an agent was partially created, advises the user to delete it via the standard agents API.
    - `cancelled` → reports the build was aborted early. Any agent saved before the abort remains in the workspace.
    - `completed` → agent was saved successfully; shows `agentId` / `agentName`. Done.
