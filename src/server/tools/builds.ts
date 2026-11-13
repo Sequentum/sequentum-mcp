@@ -123,7 +123,9 @@ function progressIn(sendProgress: ProgressFn) {
 // ==========================================
 
 const rec = (v: unknown): Record<string, unknown> => (v && typeof v === "object" ? (v as Record<string, unknown>) : {});
-const txt = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+// Whitespace collapsed: a plan or agent-name string must not start a line of its own in the card.
+const txt = (v: unknown): string | undefined =>
+  typeof v === "string" && v.trim() ? v.replace(/\s+/g, " ").trim() : undefined;
 const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const count = (v: unknown): number => (typeof v === "number" ? v : 0);
 
@@ -240,7 +242,7 @@ function card(input: CardInput): { text: string; value: Record<string, unknown>;
     elapsedSeconds === undefined
       ? ""
       : ` · ${finished ? "built in " : done ? "after " : ""}${duration(elapsedSeconds)}${done ? "" : " so far"}`;
-  const agent = fields.agentId ? `${fields.agentName ?? "Agent"} (agent ${fields.agentId})` : undefined;
+  const agent = fields.agentId ? `${txt(fields.agentName) ?? "Agent"} (agent ${fields.agentId})` : undefined;
   let headline: string;
   const lines: string[] = [];
   switch (status) {
@@ -266,7 +268,12 @@ function card(input: CardInput): { text: string; value: Record<string, unknown>;
       break;
     default:
       headline = status ? `Building your Agent: ${stage}` : "Checking on the build";
-      if (checkFailed) lines.push(`Could not read the build status this time (${checkFailed}). That does not stop the build.`);
+      if (checkFailed) {
+        lines.push(
+          `Could not read the build status this time (${checkFailed}). That does not stop the build. ` +
+            "If several checks in a row fail, there is no need to keep checking: the build goes on, and an Agent it saves appears in list_agents."
+        );
+      }
       if (message) lines.push(message);
       lines.push(...planText(fields.plan));
       if (watchUrl) lines.push(`Watch it live: ${watchUrl}`);
