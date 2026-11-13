@@ -175,9 +175,10 @@ async function readResourceResult(uri: URL, apiClient: SequentumApiClient) {
  *
  * @param apiClient - The API client to use for this server instance
  * @param version - The server version string from package.json
+ * @param controlCenterUrl - Public Control Center origin for links in build results; omitted, no links
  * @returns Configured MCP Server instance
  */
-export function createMcpServer(apiClient: SequentumApiClient, version: string): McpServer {
+export function createMcpServer(apiClient: SequentumApiClient, version: string, controlCenterUrl?: string): McpServer {
   // Capabilities are intentionally NOT declared: McpServer derives them from the
   // registrations below. (It advertises `listChanged: true` for each even though
   // this server never emits those notifications — a known, accepted SDK behaviour
@@ -282,12 +283,16 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
           return await handler((args ?? {}) as Record<string, unknown>, {
             apiClient,
             sendProgress,
-            // start_agent_build stops the backend build when the client cancels
-            // mid-poll; ToolDeps.signal is required so this cannot be dropped.
+            // The build tools stop waiting (never the build) when the client cancels.
             signal: ctx.mcpReq.signal,
+            controlCenterUrl,
           });
         } catch (error) {
-          return formatToolError(error);
+          const result = formatToolError(error);
+          // tools/builds.ts tags errors raised after a build started with its sessionId and next step.
+          const buildNote = error instanceof Error ? (error as { buildNote?: unknown }).buildNote : undefined;
+          if (typeof buildNote === "string") result.content[0].text += `\n${buildNote}`;
+          return result;
         }
       }
     );
