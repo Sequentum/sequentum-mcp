@@ -1369,6 +1369,16 @@ Poll the current status of an agent building session. Call this repeatedly until
     "questions": [
       { "text": "Do you want every results page?", "replies": ["First page only", "Every page"] }
     ]
+  },
+  "sample": {
+    "columns": ["title", "price"],
+    "rows": [{ "title": "Acer Aspire 5", "price": "$549.99" }],
+    "totalRows": 24,
+    "pageUrl": "https://www.amazon.com/s?k=laptop",
+    "pageCount": null,
+    "morePages": true,
+    "hasScreenshot": true,
+    "screenshotPath": "/api/v1/agent-builder/ab_123/screenshot"
   }
 }
 ```
@@ -1377,6 +1387,7 @@ Poll the current status of an agent building session. Call this repeatedly until
 - `report` appears when a build that wrote a Plan finishes: each Plan line graded `met`, `partial` or `unmet`, and up to 3 `questions`. The first reply of each question is the choice the build already made.
 - The build never pauses for an answer, and no tool applies an answer to a finished build. A different answer needs a new `start_agent_build` whose prompt includes it.
 - `partial: true` means the build stopped early but delivered a working Agent; `summary` says what is missing.
+- `sample` appears once the build has run the Agent: its columns, up to 10 `rows` with `totalRows`, the `pageUrl` the rows came from, `pageCount` (when the page shows "Page 1 of N") and `morePages` (the page links to a next page), and `screenshotPath`, a Control Center API path that answers that page's screenshot as base64.
 
 A finished `start_agent_build` (the default `waitForCompletion: true`) returns the same fields plus `sessionId`.
 

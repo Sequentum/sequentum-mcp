@@ -1232,7 +1232,7 @@ export const tools: Tool[] = [
     name: "get_agent_build_status",
     description:
       "Poll the status of an agent building session. " +
-      "Returns { status, agentId?, agentName?, plan?, report?, partial?, summary?, error? }. " +
+      "Returns { status, agentId?, agentName?, plan?, report?, sample?, partial?, summary?, error? }. " +
       "status: 'processing' (keep polling) | 'ready' | 'completed' | 'error' | 'cancelled'. " +
       BUILD_RESULT_FIELDS + " " +
       "`plan` appears while still 'processing', once the builder has seen the page. " +

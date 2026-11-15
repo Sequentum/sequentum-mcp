@@ -18,6 +18,10 @@
 
 ### Added
 
+- **`get_agent_build_status` and a finished `start_agent_build` describe the build's `sample`.** The
+  Control Center's status now carries the last fresh run's columns, up to 10 rows, the page they came
+  from, its pagination and a screenshot reference; the output schema, types and tool descriptions name
+  them, so a caller can show the rows before asking the report's questions.
 - **`/auth.md` and `/.well-known/auth.md` redirect to the Control Center's auth.md manifest.**
   An agent that only knows the MCP origin can now find how to register and claim a token; the
   server keeps no copy of the manifest, as with the authorization-server metadata redirect. The

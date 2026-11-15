@@ -61,6 +61,23 @@ const report = nullable(
   )
 );
 
+const sample = obj(
+  {
+    columns: arrayOf(str()),
+    rows: arrayOf(obj({}, { description: "Column name to value." }), "Up to 10 sample rows."),
+    totalRows: int("How many rows the run returned; rows holds a sample of them."),
+    pageUrl: nullable(str("The page the rows came from.")),
+    pageCount: nullable(int("The page count the page shows ('Page 1 of 12'), when it shows one.")),
+    morePages: bool("True when the page links to a next page."),
+    hasScreenshot: bool("True when a screenshot of that page is available."),
+    screenshotPath: nullable(str("Control Center API path (GET) that answers the screenshot as base64 with its content type.")),
+  },
+  {
+    optional: ["columns", "rows", "totalRows", "pageUrl", "pageCount", "morePages", "hasScreenshot", "screenshotPath"],
+    description: "The rows the build's last fresh run returned and the page they came from. Absent before the build has run the Agent.",
+  }
+);
+
 // The build result fields shared by get_agent_build_status and a finished start_agent_build.
 const buildResult: Record<string, JsonSchema> = {
   agentId: nullable(int()),
@@ -72,6 +89,7 @@ const buildResult: Record<string, JsonSchema> = {
   schemaCheck: obj({}, { description: "How far the Agent's columns match a requested schema." }),
   plan,
   report,
+  sample,
 };
 const buildResultKeys = Object.keys(buildResult);
 
