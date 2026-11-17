@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createServer, type Server as HttpServer } from "node:http";
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { startHttpServer } from "./http-server.js";
 import glamaClaim from "./well-known/glama.json" with { type: "json" };
 import { MCP_RATE_LIMIT_MAX, RATE_LIMIT_ERROR_CODE } from "./constants.js";
 import { connect } from "node:net";
-import { SUPPORTED_SCOPES } from "../utils/oauth-metadata.js";
+import { SUPPORTED_SCOPES, buildAuthChallenge } from "../utils/oauth-metadata.js";
 import type { ResourceScopesSource } from "../utils/resource-scopes.js";
 import { API_CONTENT_SECURITY_POLICY } from "./csp.js";
 import { LANDING_PAGE_CSP } from "./landing-page.js";
@@ -358,6 +358,306 @@ describe("POST /mcp authentication", () => {
     // the per-request factory, onto that request's SequentumApiClient, and out
     // to the upstream API.
     expect(upstreamAuthHeaders).toContain(`Bearer ${token}`);
+  });
+});
+
+// When the Control Center rejects a user's token with its auth-middleware 401, the MCP
+// client must get an HTTP 401 with this server's challenge, so it re-authorizes by itself,
+// instead of a 200 tool result it cannot act on. Every other token type, and every other
+// upstream refusal, keeps the tool result it gets today.
+describe("upstream revocation of a user token", () => {
+  let server: HttpServer;
+  let base: string;
+  let upstream: HttpServer;
+  let pair: CryptoKeyPair;
+  /** Answers every upstream request other than the JWKS document. */
+  let respond: (req: IncomingMessage, res: ServerResponse) => void;
+
+  const KID = "revocation-test-key";
+  const CHALLENGE_A =
+    'Bearer realm="MCP Server", resource_metadata="http://cc/.well-known/oauth-protected-resource"';
+  const DESCRIPTION =
+    "Multi-factor authentication is now required for this account. Sign in again to reconnect.";
+  const CHALLENGE_B = `${CHALLENGE_A}, error="invalid_token", error_description="${DESCRIPTION}"`;
+
+  function segment(obj: unknown): string {
+    return Buffer.from(JSON.stringify(obj), "utf8").toString("base64url");
+  }
+
+  async function mint(payload: Record<string, unknown>): Promise<string> {
+    const input = `${segment({ alg: "RS256", kid: KID })}.${segment(payload)}`;
+    const sig = await crypto.subtle.sign(
+      { name: "RSASSA-PKCS1-v1_5" },
+      pair.privateKey,
+      new TextEncoder().encode(input)
+    );
+    return `${input}.${Buffer.from(sig).toString("base64url")}`;
+  }
+
+  function userToken(tokenType = "authorization_code", scope = "agents:read"): Promise<string> {
+    return mint({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: base,
+      token_type: tokenType,
+      scope,
+      clientId: "c",
+    });
+  }
+
+  function upstreamReplies(status: number, headers: Record<string, string>, body: string): void {
+    respond = (_req, res) => {
+      res.writeHead(status, { "content-type": "application/json", ...headers });
+      res.end(body);
+    };
+  }
+
+  function callModern(token: string): Promise<Response> {
+    return fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+        "Mcp-Method": "tools/call",
+        "Mcp-Protocol-Version": "2026-07-28",
+        "Mcp-Name": "list_agents",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "list_agents", arguments: {}, _meta: ENVELOPE },
+      }),
+    });
+  }
+
+  /** An older-protocol request: no envelope, no Mcp-Method/Mcp-Name, so the stateless legacy path answers it. */
+  function callLegacy(token: string, method = "tools/call", params: unknown = { name: "list_agents", arguments: {} }) {
+    return fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+        "mcp-protocol-version": "2025-06-18",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }),
+    });
+  }
+
+  /** Every JSON-RPC message in an SSE or JSON body, in order. */
+  function messages(text: string): Record<string, any>[] {
+    const data = text
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim())
+      .filter(Boolean);
+    return (data.length > 0 ? data : [text]).map((chunk) => JSON.parse(chunk));
+  }
+
+  function toolText(text: string): { isError: unknown; text: string } {
+    const final = messages(text).find((m) => m.id === 2);
+    return { isError: final?.result?.isError, text: final?.result?.content?.[0]?.text ?? "" };
+  }
+
+  beforeEach(async () => {
+    process.env.REQUIRE_AUTH = "true";
+    pair = await crypto.subtle.generateKey(
+      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["sign", "verify"]
+    );
+    const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+    upstreamReplies(200, {}, "[]");
+    upstream = createServer((req, res) => {
+      if (req.url === "/api/oauth/certs") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ keys: [{ kty: "RSA", use: "sig", alg: "RS256", kid: KID, n: jwk.n, e: jwk.e }] }));
+        return;
+      }
+      respond(req, res);
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", () => resolve()));
+    const upstreamAddr = upstream.address();
+    if (!upstreamAddr || typeof upstreamAddr === "string") throw new Error("expected a TCP address");
+
+    server = await startHttpServer(`http://127.0.0.1:${upstreamAddr.port}`, "https://api.example.test", "9.9.9", 0, "127.0.0.1");
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    base = `http://127.0.0.1:${addr.port}`;
+  });
+
+  afterEach(async () => {
+    delete process.env.REQUIRE_AUTH;
+    vi.restoreAllMocks();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  });
+
+  async function expectChallenge(res: Response): Promise<void> {
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toBe(buildAuthChallenge(base).wwwAuthenticate);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const body = (await res.json()) as { error: { code: number } };
+    expect(body.error.code).toBe(-32001);
+  }
+
+  it("answers 401 for a revoked user token (legacy era)", async () => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    await expectChallenge(await callLegacy(await userToken()));
+  });
+
+  it("answers 401 for a revoked user token (modern era)", async () => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    await expectChallenge(await callModern(await userToken()));
+  });
+
+  it("answers 401 for resources/read of sequentum://agents", async () => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    await expectChallenge(await callLegacy(await userToken(), "resources/read", { uri: "sequentum://agents" }));
+  });
+
+  it("relays the upstream error_description", async () => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_B }, "");
+    const res = await callLegacy(await userToken());
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toContain(`error_description="${DESCRIPTION}"`);
+    const body = (await res.json()) as { error: { message: string; data: { error_description: string } } };
+    expect(body.error.data.error_description).toBe(DESCRIPTION);
+    expect(body.error.message).toBe("Authentication required");
+  });
+
+  it("drops an upstream error_description that sanitizes to nothing", async () => {
+    // Node refuses to send C0 controls such as \u0001 in a header, so this uses characters
+    // a header may carry but the sanitizer removes: a tab and a non-ASCII letter.
+    upstreamReplies(401, { "www-authenticate": `${CHALLENGE_A}, error_description="\t\u00e9\t"` }, "");
+    const onError = vi.spyOn(console, "error");
+    const res = await callLegacy(await userToken());
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toBe(buildAuthChallenge(base).wwwAuthenticate);
+    const body = (await res.json()) as { error: { data: Record<string, unknown> } };
+    expect(body.error.data).not.toHaveProperty("error_description");
+    const lines = onError.mock.calls.map((args) => String(args[0])).filter((l) => l.includes("reason=upstream-revoked"));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/described=no/);
+  });
+
+  it("still answers 405 to an authenticated GET", async () => {
+    const res = await fetch(`${base}/mcp`, {
+      method: "GET",
+      headers: { accept: "text/event-stream", authorization: `Bearer ${await userToken()}` },
+    });
+
+    expect(res.status).toBe(405);
+  });
+
+  it("sends the API CSP on the upstream-revoked 401", async () => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    const res = await callLegacy(await userToken());
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get("content-security-policy")).toBe(API_CONTENT_SECURITY_POLICY);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+  });
+
+  it.each(["client_credentials", "agent"])("keeps the tool result for %s tokens", async (tokenType) => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    const res = await callLegacy(await userToken(tokenType));
+
+    expect(res.status).toBe(200);
+    const result = toolText(await res.text());
+    expect(result.isError).toBe(true);
+    expect(result.text.startsWith("Authentication Failed:")).toBe(true);
+  });
+
+  it("keeps the tool result for a 401 without the middleware challenge", async () => {
+    upstreamReplies(401, {}, JSON.stringify({ message: "Access denied to this session" }));
+    const res = await callLegacy(await userToken());
+
+    expect(res.status).toBe(200);
+    const result = toolText(await res.text());
+    expect(result.isError).toBe(true);
+    expect(result.text.startsWith("Authentication Failed:")).toBe(true);
+  });
+
+  it("keeps 403 unchanged", async () => {
+    upstreamReplies(
+      403,
+      {
+        "www-authenticate":
+          'Bearer error="insufficient_scope", scope="agents:read", resource_metadata="http://cc/.well-known/oauth-protected-resource"',
+      },
+      ""
+    );
+    const scoped = await callLegacy(await userToken());
+    expect(scoped.status).toBe(200);
+    expect(toolText(await scoped.text()).text.startsWith("Insufficient Scope:")).toBe(true);
+
+    upstreamReplies(403, {}, "");
+    const plain = await callLegacy(await userToken());
+    expect(plain.status).toBe(200);
+    expect(toolText(await plain.text()).text.startsWith("Access Denied:")).toBe(true);
+  });
+
+  it("leaves a normal legacy tools/call byte-identical", async () => {
+    upstreamReplies(200, {}, "[]");
+    const held = await callLegacy(await userToken());
+    const notHeld = await callLegacy(await userToken("client_credentials"));
+
+    expect(held.status).toBe(200);
+    // The legacy path streams, so this goes through the SSE replay, not the immediate commit.
+    expect(held.headers.get("content-type")).toMatch(/^text\/event-stream/);
+    expect(held.headers.get("content-type")).toBe(notHeld.headers.get("content-type"));
+    expect(await held.text()).toBe(await notHeld.text());
+  });
+
+  it("falls back to the tool result once progress has streamed", async () => {
+    let statusPolls = 0;
+    respond = (req, res) => {
+      if (req.url === "/api/v1/agent-builder/start") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ sessionId: "s" }));
+        return;
+      }
+      if (req.url === "/api/v1/agent-builder/s/status") statusPolls++;
+      res.writeHead(401, { "content-type": "application/json", "www-authenticate": CHALLENGE_A });
+      res.end("");
+    };
+    const onError = vi.spyOn(console, "error");
+    const token = await userToken("authorization_code", "agents:read agents:write");
+    const res = await callLegacy(token, "tools/call", {
+      name: "start_agent_build",
+      arguments: { prompt: "Build an agent that lists products on example.com" },
+      _meta: { progressToken: "p" },
+    });
+
+    expect(res.status).toBe(200);
+    const all = messages(await res.text());
+    expect(all.some((m) => m.method === "notifications/progress")).toBe(true);
+    expect(all.find((m) => m.id === 2)?.result?.isError).toBe(true);
+    // The revocation did happen, after the progress frame had committed the stream.
+    expect(statusPolls).toBe(1);
+    // The 401 was never sent, so it must not be logged as one.
+    expect(onError.mock.calls.some((args) => String(args[0]).includes("reason=upstream-revoked"))).toBe(false);
+  });
+
+  it("logs auth=rejected reason=upstream-revoked", async () => {
+    const onError = vi.spyOn(console, "error");
+    const revokedLines = () =>
+      onError.mock.calls.map((args) => String(args[0])).filter((line) => line.includes("reason=upstream-revoked"));
+
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_B }, "");
+    expect((await callLegacy(await userToken())).status).toBe(401);
+    expect(revokedLines()).toHaveLength(1);
+    expect(revokedLines()[0]).toMatch(/auth=rejected reason=upstream-revoked .*described=yes/);
+
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    expect((await callLegacy(await userToken())).status).toBe(401);
+    expect(revokedLines()).toHaveLength(2);
+    expect(revokedLines()[1]).toMatch(/auth=rejected reason=upstream-revoked .*described=no/);
   });
 });
 

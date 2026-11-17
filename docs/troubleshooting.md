@@ -44,7 +44,12 @@ A 401 that persists across retries therefore means something other than expiry:
 - your token was issued for a different address of this server, for example
   one you connected through before the server started checking it.
 
-Reconnect from **Settings → Connectors** to resolve any of these. If the 401
+When the Sequentum sign-in behind a connection is revoked (for example after a
+security change on your account), the server answers your next request with a
+401 and a sign-in challenge, and a compliant client asks you to sign in again.
+You only need to reconnect by hand if your client does not prompt you.
+
+Reconnect from **Settings → Connectors** to resolve any of the causes above. If the 401
 persists after reconnecting, check that the connector's URL is
 `https://mcp.sequentum.com/mcp`: a token issued through any other address is
 rejected, so re-add the connector with that URL. If the URL is already right,
@@ -130,7 +135,12 @@ A 401 that persists across retries therefore means something other than expiry:
 - your token was issued for a different address of this server, for example
   one you connected through before the server started checking it.
 
-Reconnect from **Settings → Connectors** to resolve any of these. If the 401
+When the Sequentum sign-in behind a connection is revoked (for example after a
+security change on your account), the server answers your next request with a
+401 and a sign-in challenge, and a compliant client asks you to sign in again.
+You only need to reconnect by hand if your client does not prompt you.
+
+Reconnect from **Settings → Connectors** to resolve any of the causes above. If the 401
 persists after reconnecting, check that the connector's URL is
 `https://mcp.sequentum.com/mcp`: a token issued through any other address is
 rejected, so re-add the connector with that URL. If the URL is already right,

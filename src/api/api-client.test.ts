@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SequentumApiClient } from "./api-client.js";
 import { AuthenticationError, ApiRequestError, RateLimitError } from "./types.js";
+import { runWithUpstreamAuth, type UpstreamAuthContext } from "./upstream-auth.js";
 
 /** A client that authenticates the way the HTTP transport does: with a Bearer token. */
 function authedClient(
@@ -931,6 +932,36 @@ describe("SequentumApiClient", () => {
         expect(error).toBeInstanceOf(ApiRequestError);
         expect((error as ApiRequestError).message.length).toBeLessThanOrEqual(503); // 500 + "..."
       }
+    });
+  });
+
+  describe("upstream revocation context", () => {
+    it("records a middleware 401 on the request context and still rejects", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        headers: new Headers({ "www-authenticate": 'Bearer resource_metadata="https://cc/x"' }),
+        text: async () => "",
+      } as Response);
+
+      const ctx: UpstreamAuthContext = {
+        tokenType: "authorization_code",
+        origin: "http://x",
+        onRevoked: () => {},
+      };
+      let caught: unknown;
+      await runWithUpstreamAuth(ctx, async () => {
+        try {
+          await client.getAllAgents();
+        } catch (e) {
+          caught = e;
+        }
+      });
+
+      expect(caught).toBeInstanceOf(ApiRequestError);
+      expect((caught as ApiRequestError).isUnauthorized).toBe(true);
+      expect(ctx.revoked).toEqual({ description: null });
     });
   });
 
@@ -2688,6 +2719,43 @@ describe("ApiRequestError", () => {
       const error = new ApiRequestError(403, "Forbidden", "msg", "/api/test", {});
       expect(error.isInsufficientScope).toBe(false);
       expect(error.requiredScope).toBeNull();
+    });
+  });
+
+  describe("isAuthMiddlewareChallenge / errorDescription", () => {
+    const MFA =
+      "Multi-factor authentication is now required for this account. Sign in again to reconnect.";
+    const cases: Array<[string, string | null, boolean, string | null]> = [
+      [
+        "bare resource_metadata challenge",
+        'Bearer realm="MCP Server", resource_metadata="https://cc/.well-known/oauth-protected-resource"',
+        true,
+        null,
+      ],
+      [
+        "challenge with error_description",
+        `Bearer realm="MCP Server", resource_metadata="https://cc/x", error="invalid_token", error_description="${MFA}"`,
+        true,
+        MFA,
+      ],
+      ["lowercase scheme", 'bearer resource_metadata="https://cc/x"', true, null],
+      ["no resource_metadata", 'Bearer realm="x"', false, null],
+      ["non-Bearer scheme", 'Basic realm="x", resource_metadata="https://cc/x"', false, null],
+      ["null header", null, false, null],
+      [
+        "empty error_description",
+        'Bearer resource_metadata="https://cc/x", error_description=""',
+        true,
+        null,
+      ],
+    ];
+
+    it.each(cases)("%s", (_name, wwwAuthenticate, challenge, description) => {
+      const error = new ApiRequestError(401, "Unauthorized", "x", "/api/v1/agent/all", {
+        wwwAuthenticate,
+      });
+      expect(error.isAuthMiddlewareChallenge).toBe(challenge);
+      expect(error.errorDescription).toBe(description);
     });
   });
 });

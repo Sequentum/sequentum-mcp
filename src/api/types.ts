@@ -77,6 +77,25 @@ export class ApiRequestError extends Error {
     return match && match[1].length > 0 ? match[1] : null;
   }
 
+  /**
+   * True when the `WWW-Authenticate` header is a Bearer challenge carrying a
+   * `resource_metadata` parameter. Only the Control Center auth middleware sends this
+   * challenge; controller-level 401s send no header.
+   */
+  get isAuthMiddlewareChallenge(): boolean {
+    const header = this.wwwAuthenticate ?? "";
+    return /^\s*bearer\b/i.test(header) && /\bresource_metadata=/.test(header);
+  }
+
+  /**
+   * The `error_description="…"` parameter of the `WWW-Authenticate` header, or null if the
+   * header is absent or the description is missing or empty.
+   */
+  get errorDescription(): string | null {
+    const match = /\berror_description="([^"]*)"/.exec(this.wwwAuthenticate ?? "");
+    return match && match[1].length > 0 ? match[1] : null;
+  }
+
   /** True for 401 Unauthorized */
   get isUnauthorized(): boolean {
     return this.statusCode === 401;

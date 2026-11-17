@@ -117,3 +117,14 @@ export function parseRateLimitMax(raw: string | undefined): number {
  */
 export const MCP_RATE_LIMIT_WINDOW_MS = parseRateLimitWindowMs(process.env.MCP_RATE_LIMIT_WINDOW_MS);
 export const MCP_RATE_LIMIT_MAX = parseRateLimitMax(process.env.MCP_RATE_LIMIT_MAX);
+
+/**
+ * Longest time (ms) an MCP event-stream response is held before its first bytes
+ * reach the client, while the server waits to learn whether the upstream API
+ * revoked the user's token. The upstream auth middleware rejects a revoked token
+ * before any controller work, so that result frame is ready in well under a
+ * second. A short cap keeps long synchronous calls, such as starting an agent,
+ * from sitting with no bytes sent: once it expires the response is committed and
+ * streamed as usual.
+ */
+export const UPSTREAM_AUTH_HOLD_MS = 5000;

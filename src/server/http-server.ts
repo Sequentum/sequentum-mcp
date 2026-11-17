@@ -20,6 +20,7 @@ import { createResourceScopesSource, type ResourceScopesSource } from "../utils/
 import { validateToken, type Claims } from "../utils/token-validator.js";
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import { createSequentumMcpHandler, loggable } from "./mcp-handler.js";
+import { runWithUpstreamAuth } from "../api/upstream-auth.js";
 import glamaClaim from "./well-known/glama.json" with { type: "json" };
 
 const DEBUG = process.env.DEBUG === '1';
@@ -259,11 +260,20 @@ export function auditCanonicalOrigin(): void {
  * era log. Never emits the token: a truncated `kid` is the only token-derived
  * value here.
  */
-function logAuthOutcome(req: Request, outcome: string, reason: string, kid?: string, exp?: number): void {
+function logAuthOutcome(
+  req: Request,
+  outcome: string,
+  reason: string,
+  kid?: string,
+  exp?: number,
+  extra?: Record<string, string>
+): void {
   const client = req.get("user-agent") ?? "unknown";
   const parts = [`[MCP] auth=${outcome}`, `reason=${reason}`];
   if (kid) parts.push(`kid=${loggable(kid.slice(0, 8))}`);
   if (typeof exp === "number") parts.push(`age=${Math.max(0, Math.floor(Date.now() / 1000) - exp)}s`);
+  // Server-chosen keys and values only; never pass request-derived text here.
+  for (const [key, value] of Object.entries(extra ?? {})) parts.push(`${key}=${value}`);
   parts.push(`client=${loggable(client)}`);
   console.error(parts.join(" "));
 }
@@ -271,22 +281,28 @@ function logAuthOutcome(req: Request, outcome: string, reason: string, kid?: str
 /**
  * Shared auth gate for POST and GET /mcp.
  *
- * Returns true if the request may proceed. On a definite rejection it has
+ * Returns `ok: true` if the request may proceed. On a definite rejection it has
  * already sent the 401 + RFC 9728 challenge, which is the signal MCP clients use
  * to redeem a refresh token (SE4-3856).
+ *
+ * `tokenType` and `kid` come only from a verified token. The pass-through paths
+ * (unverifiable, REQUIRE_AUTH=false) carry neither, so an upstream revocation on
+ * them keeps today's tool result instead of turning into a 401.
  */
-async function passesAuthGate(req: Request, res: Response, keys: JwksKeySource): Promise<boolean> {
+type AuthGateResult = { ok: false } | { ok: true; tokenType?: string; kid?: string };
+
+async function passesAuthGate(req: Request, res: Response, keys: JwksKeySource): Promise<AuthGateResult> {
   const requireAuth = process.env.REQUIRE_AUTH !== "false";
   const token = extractBearerToken(req);
 
   if (requireAuth && !token) {
     sendAuthChallenge(req, res);
     console.error("[MCP] 401 - Authentication required, no Bearer token provided");
-    return false;
+    return { ok: false };
   }
 
   // REQUIRE_AUTH=false is the test escape hatch: no token gate, no validation.
-  if (!requireAuth || !token) return true;
+  if (!requireAuth || !token) return { ok: true };
 
   const verdict = await validateToken(token, getMcpServerOrigin(req), keys);
 
@@ -296,22 +312,46 @@ async function passesAuthGate(req: Request, res: Response, keys: JwksKeySource):
     // from the public origin. Degrade to pass-through, as before enforcement existed.
     if (verdict.reason === "wrong-audience" && configuredOrigin() === null) {
       logAuthOutcome(req, "unverifiable", verdict.reason, verdict.kid);
-      return true;
+      return { ok: true };
     }
     logAuthOutcome(req, "rejected", verdict.reason, verdict.kid, verdict.exp);
     sendAuthChallenge(req, res);
-    return false;
+    return { ok: false };
   }
 
   if (verdict.kind === "unverifiable") {
     // Degraded to pass-through; the API stays the authority. A sustained run of
     // these means validation is silently off and needs attention.
     logAuthOutcome(req, "unverifiable", verdict.reason, verdict.kid);
-    return true;
+    return { ok: true };
   }
 
   attachAuthInfo(req, token, verdict.claims);
-  return true;
+  return { ok: true, tokenType: verdict.claims.tokenType, kid: verdict.claims.kid };
+}
+
+/**
+ * Run the MCP handler inside this request's upstream-auth context, so a user token the
+ * Control Center revokes mid-request is answered with our 401 challenge (built for this
+ * request's origin) and logged once, when that 401 is actually sent.
+ */
+function handleAuthorized(
+  req: Request,
+  res: Response,
+  gate: { tokenType?: string; kid?: string },
+  nodeHandler: ReturnType<typeof toNodeHandler>
+): Promise<void> {
+  return runWithUpstreamAuth(
+    {
+      tokenType: gate.tokenType,
+      origin: getMcpServerOrigin(req),
+      onRevoked: (described) =>
+        logAuthOutcome(req, "rejected", "upstream-revoked", gate.kid, undefined, {
+          described: described ? "yes" : "no",
+        }),
+    },
+    () => nodeHandler(req, res)
+  );
 }
 
 /**
@@ -774,8 +814,8 @@ export async function startHttpServer(
   // Handle POST requests for client-to-server messages
   app.post("/mcp", rejectUnparseableHost, (req: Request, res: Response, next: NextFunction) => {
     void passesAuthGate(req, res, jwksCache)
-      .then((ok) => {
-        if (ok) return nodeHandler(req, res);
+      .then((gate) => {
+        if (gate.ok) return handleAuthorized(req, res, gate, nodeHandler);
       })
       .catch(next);
   });
@@ -796,8 +836,8 @@ export async function startHttpServer(
   // was a session construct and no longer exists.
   app.get("/mcp", rejectUnparseableHost, (req: Request, res: Response, next: NextFunction) => {
     void passesAuthGate(req, res, jwksCache)
-      .then((ok) => {
-        if (ok) return nodeHandler(req, res);
+      .then((gate) => {
+        if (gate.ok) return handleAuthorized(req, res, gate, nodeHandler);
       })
       .catch(next);
   });

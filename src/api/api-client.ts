@@ -38,6 +38,7 @@ import {
   ExternalStartAgentBuildResponse,
   ExternalSessionStatusResponse,
 } from "./types.js";
+import { noteUpstreamUnauthorized } from "./upstream-auth.js";
 
 /** Default retry configuration for transient failures */
 const DEFAULT_MAX_RETRIES = 3;
@@ -288,6 +289,9 @@ export class SequentumApiClient {
 
         // Don't retry auth errors (401/403) — they won't resolve with retries
         if (error.isUnauthorized || error.isForbidden) {
+          if (error.isUnauthorized) {
+            noteUpstreamUnauthorized(error);
+          }
           throw error;
         }
 

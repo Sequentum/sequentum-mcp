@@ -69,26 +69,50 @@ export interface AuthChallenge {
     error: {
       code: -32001;
       message: "Authentication required";
-      data: { protectedResourceMetadata: string };
+      data: { protectedResourceMetadata: string; error_description?: string };
     };
     id: null;
   };
 }
 
-export function buildAuthChallenge(mcpServerOrigin: string): AuthChallenge {
+const MAX_ERROR_DESCRIPTION_LENGTH = 300;
+
+/**
+ * Reduce a relayed error description to what RFC 6750 3 allows inside a quoted
+ * error_description: %x20-21 / %x23-5B / %x5D-7E. Everything else (quotes,
+ * backslashes, control characters, non-ASCII) is dropped. Returns null when
+ * nothing usable remains.
+ */
+export function sanitizeErrorDescription(value: string): string | null {
+  const cleaned = value
+    .replace(/[^\x20\x21\x23-\x5B\x5D-\x7E]/g, "")
+    .trim()
+    .slice(0, MAX_ERROR_DESCRIPTION_LENGTH);
+  return cleaned === "" ? null : cleaned;
+}
+
+export function buildAuthChallenge(
+  mcpServerOrigin: string,
+  errorDescription?: string | null
+): AuthChallenge {
+  const description = errorDescription ? sanitizeErrorDescription(errorDescription) : null;
   const prmUrl = `${mcpServerOrigin}/.well-known/oauth-protected-resource`;
   // `new URL` accepts `"` and `,` in a host, and a Host-derived origin can carry them.
   // A `"` would end the quoted realm early and inject parameters into the header; a `,`
   // is legal inside a quoted-string (RFC 9110 5.6.4) but naive parsers split on it.
   const realm = new URL(mcpServerOrigin).host.replace(/[",]/g, "");
   return {
-    wwwAuthenticate: `Bearer realm="${realm}", error="invalid_token", resource_metadata="${prmUrl}"`,
+    wwwAuthenticate: `Bearer realm="${realm}", error="invalid_token", resource_metadata="${prmUrl}"${
+      description ? `, error_description="${description}"` : ""
+    }`,
     body: {
       jsonrpc: "2.0",
       error: {
         code: -32001,
         message: "Authentication required",
-        data: { protectedResourceMetadata: prmUrl },
+        data: description
+          ? { protectedResourceMetadata: prmUrl, error_description: description }
+          : { protectedResourceMetadata: prmUrl },
       },
       id: null,
     },
