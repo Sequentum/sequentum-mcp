@@ -1,5 +1,21 @@
 # Changelog
 
+## [3.1.2] - Unreleased
+
+### Fixed
+
+- **A revoked sign-in now prompts the client to sign in again instead of failing every tool
+  call.** When the Control Center rejected a user token whose sign-in it had revoked (for
+  example after a security change on the account), the server returned the 401 as a tool
+  result on HTTP 200, so clients never re-authorized and the connection stayed broken until
+  it was reconnected by hand. For OAuth user tokens, an upstream 401 carrying the Control
+  Center's auth challenge now becomes an HTTP 401 with this server's RFC 9728
+  `WWW-Authenticate` challenge, relaying the upstream `error_description` when there is one.
+  Responses are held until their first JSON-RPC message (at most 5 s) to make this
+  possible. Client-credentials and agent tokens, 403s, and a 401 that arrives after a
+  progress stream has started keep the previous tool-result behaviour. Logged as
+  `auth=rejected reason=upstream-revoked`.
+
 ## [3.0.0] - Unreleased
 
 ### BREAKING CHANGES
@@ -82,17 +98,6 @@
 
 ### Fixed
 
-- **A revoked sign-in now prompts the client to sign in again instead of failing every tool
-  call.** When the Control Center rejected a user token whose sign-in it had revoked (for
-  example after a security change on the account), the server returned the 401 as a tool
-  result on HTTP 200, so clients never re-authorized and the connection stayed broken until
-  it was reconnected by hand. For OAuth user tokens, an upstream 401 carrying the Control
-  Center's auth challenge now becomes an HTTP 401 with this server's RFC 9728
-  `WWW-Authenticate` challenge, relaying the upstream `error_description` when there is one.
-  Responses are held until their first JSON-RPC message (at most 5 s) to make this
-  possible. Client-credentials and agent tokens, 403s, and a 401 that arrives after a
-  progress stream has started keep the previous tool-result behaviour. Logged as
-  `auth=rejected reason=upstream-revoked`.
 - **A single request with an unparseable `Host` header no longer crashes the server.**
   Without a parseable `MCP_CANONICAL_ORIGIN`, a `Host` the URL parser rejects (such as `a<b` or
   `a:99999`) made `/.well-known/oauth-protected-resource` throw inside an async handler.
