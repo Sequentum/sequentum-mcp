@@ -963,6 +963,80 @@ describe("SequentumApiClient", () => {
       expect((caught as ApiRequestError).isUnauthorized).toBe(true);
       expect(ctx.revoked).toEqual({ description: null });
     });
+
+    it("counts a POST as in flight until it answers, then records that it changed something", async () => {
+      let answer!: (response: Response) => void;
+      vi.mocked(fetch).mockReturnValueOnce(new Promise<Response>((resolve) => (answer = resolve)));
+
+      const ctx: UpstreamAuthContext = {
+        tokenType: "authorization_code",
+        origin: "http://x",
+        onRevoked: () => {},
+      };
+      await runWithUpstreamAuth(ctx, async () => {
+        const started = client.startAgent(7, {});
+        await vi.waitFor(() => expect(ctx.pendingMutations).toBe(1));
+        expect(ctx.mutated).toBeUndefined();
+        answer({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: new Headers({ "content-type": "application/json" }),
+          text: async () => '{"id":1}',
+          json: async () => ({ id: 1 }),
+        } as Response);
+        await started;
+      });
+
+      expect(ctx.pendingMutations).toBe(0);
+      expect(ctx.mutated).toBe(true);
+    });
+
+    it.each([
+      ["a 5xx", () => Promise.resolve({ ok: false, status: 502, statusText: "Bad Gateway", headers: new Headers(), text: async () => "" } as Response)],
+      ["a network error", () => Promise.reject(new TypeError("fetch failed"))],
+    ])("counts a POST that failed with %s as possibly having changed something", async (_name, outcome) => {
+      vi.mocked(fetch).mockImplementationOnce(outcome);
+      const ctx: UpstreamAuthContext = { tokenType: "authorization_code", origin: "http://x", onRevoked: () => {} };
+
+      await runWithUpstreamAuth(ctx, () => client.startAgent(7, {}).catch(() => {}));
+
+      expect(ctx.pendingMutations).toBe(0);
+      expect(ctx.mutated).toBe(true);
+    });
+
+    it("counts a successful DELETE as having changed something", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+        statusText: "No Content",
+        headers: new Headers(),
+        text: async () => "",
+      } as Response);
+      const ctx: UpstreamAuthContext = { tokenType: "authorization_code", origin: "http://x", onRevoked: () => {} };
+
+      await runWithUpstreamAuth(ctx, () => client.deleteRun(7, 1));
+
+      expect(ctx.pendingMutations).toBe(0);
+      expect(ctx.mutated).toBe(true);
+    });
+
+    it("counts a POST the upstream refused with a 4xx as unchanged", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        headers: new Headers({ "www-authenticate": 'Bearer resource_metadata="https://cc/x"' }),
+        text: async () => "",
+      } as Response);
+      const ctx: UpstreamAuthContext = { tokenType: "authorization_code", origin: "http://x", onRevoked: () => {} };
+
+      await runWithUpstreamAuth(ctx, () => client.startAgent(7, {}).catch(() => {}));
+
+      expect(ctx.pendingMutations).toBe(0);
+      expect(ctx.mutated).toBeUndefined();
+      expect(ctx.revoked).toEqual({ description: null });
+    });
   });
 
   describe("timeout handling", () => {

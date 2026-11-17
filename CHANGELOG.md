@@ -13,7 +13,8 @@
   `WWW-Authenticate` challenge, relaying the upstream `error_description` when there is one.
   Responses are held until their first JSON-RPC message (at most 5 s) to make this
   possible. Client-credentials and agent tokens, 403s, and a 401 that arrives after a
-  progress stream has started keep the previous tool-result behaviour. Logged as
+  progress stream has started, after the 5 s hold, or after a call that changed something
+  (such as starting a build) keep the previous tool-result behaviour. Logged as
   `auth=rejected reason=upstream-revoked`.
 
 ## [3.0.0] - Unreleased

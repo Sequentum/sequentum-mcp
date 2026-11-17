@@ -512,9 +512,36 @@ describe("upstream revocation of a user token", () => {
     await expectChallenge(await callModern(await userToken()));
   });
 
+  it("answers 401 for a write tool whose POST the upstream refuses", async () => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    const token = await userToken("authorization_code", "agents:read agents:write runs:read runs:write");
+    await expectChallenge(await callLegacy(token, "tools/call", { name: "start_agent", arguments: { agentId: 7 } }));
+  });
+
   it("answers 401 for resources/read of sequentum://agents", async () => {
     upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
     await expectChallenge(await callLegacy(await userToken(), "resources/read", { uri: "sequentum://agents" }));
+  });
+
+  it("answers 401 for a batch whose first result needs no upstream call", async () => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    // tools/list answers without calling the upstream, so its result is the first frame;
+    // the revocation only arrives with the list_agents call after it.
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${await userToken()}`,
+        "mcp-protocol-version": "2025-03-26",
+      },
+      body: JSON.stringify([
+        { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
+        { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "list_agents", arguments: {} } },
+      ]),
+    });
+
+    await expectChallenge(res);
   });
 
   it("relays the upstream error_description", async () => {
@@ -638,9 +665,77 @@ describe("upstream revocation of a user token", () => {
     const all = messages(await res.text());
     expect(all.some((m) => m.method === "notifications/progress")).toBe(true);
     expect(all.find((m) => m.id === 2)?.result?.isError).toBe(true);
-    // The revocation did happen, after the progress frame had committed the stream.
+    // The status poll did get the 401. The build had already started, so the request keeps
+    // its tool result either way; the hold's own rule that a revocation recorded after the
+    // first frame leaves the stream alone is pinned in response-hold.test.ts.
     expect(statusPolls).toBe(1);
     // The 401 was never sent, so it must not be logged as one.
+    expect(onError.mock.calls.some((args) => String(args[0]).includes("reason=upstream-revoked"))).toBe(false);
+  });
+
+  it("keeps the tool result when a build already started, so a replay cannot start another", async () => {
+    let starts = 0;
+    respond = (req, res) => {
+      if (req.url === "/api/v1/agent-builder/start") {
+        starts++;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ sessionId: "s" }));
+        return;
+      }
+      res.writeHead(401, { "content-type": "application/json", "www-authenticate": CHALLENGE_A });
+      res.end("");
+    };
+    const token = await userToken("authorization_code", "agents:read agents:write");
+    // No progressToken, so nothing is streamed before the first status poll's 401.
+    const res = await callLegacy(token, "tools/call", {
+      name: "start_agent_build",
+      arguments: { prompt: "Build an agent that lists products on example.com" },
+    });
+
+    expect(res.status).toBe(200);
+    const result = toolText(await res.text());
+    expect(result.isError).toBe(true);
+    expect(starts).toBe(1);
+  });
+
+  it("keeps the batch result when a POST in it succeeds after a sibling's 401", async () => {
+    let starts = 0;
+    respond = (req, res) => {
+      if (req.url === "/api/v1/agent/7/start") {
+        starts++;
+        // Answer after the sibling's 401 has been recorded.
+        setTimeout(() => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ id: 1 }));
+        }, 200);
+        return;
+      }
+      res.writeHead(401, { "content-type": "application/json", "www-authenticate": CHALLENGE_A });
+      res.end("");
+    };
+    const onError = vi.spyOn(console, "error");
+    const token = await userToken("authorization_code", "agents:read agents:write runs:read runs:write");
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+        "mcp-protocol-version": "2025-03-26",
+      },
+      body: JSON.stringify([
+        { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "start_agent", arguments: { agentId: 7 } } },
+        { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "list_agents", arguments: {} } },
+      ]),
+    });
+
+    // A 401 here would make the client replay the batch and start the agent again.
+    expect(res.status).toBe(200);
+    const all = messages(await res.text());
+    expect(all.find((m) => m.id === 1)?.result).toBeDefined();
+    expect(all.find((m) => m.id === 2)?.result?.isError).toBe(true);
+    expect(starts).toBe(1);
+    // The sibling's revocation was recorded, but no 401 was sent, so none is logged.
     expect(onError.mock.calls.some((args) => String(args[0]).includes("reason=upstream-revoked"))).toBe(false);
   });
 

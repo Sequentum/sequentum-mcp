@@ -73,14 +73,14 @@ export class ApiRequestError extends Error {
    * header is absent or carries none. Only meaningful when {@link isInsufficientScope} is true.
    */
   get requiredScope(): string | null {
-    const match = /\bscope="([^"]*)"/.exec(this.wwwAuthenticate ?? "");
-    return match && match[1].length > 0 ? match[1] : null;
+    return this.challengeParam("scope");
   }
 
   /**
    * True when the `WWW-Authenticate` header is a Bearer challenge carrying a
-   * `resource_metadata` parameter. Only the Control Center auth middleware sends this
-   * challenge; controller-level 401s send no header.
+   * `resource_metadata` parameter. On a 401 only the Control Center auth middleware
+   * sends this challenge; controller-level 401s send no header. Its scope 403 carries
+   * one too, so check the status alongside this.
    */
   get isAuthMiddlewareChallenge(): boolean {
     const header = this.wwwAuthenticate ?? "";
@@ -92,7 +92,12 @@ export class ApiRequestError extends Error {
    * header is absent or the description is missing or empty.
    */
   get errorDescription(): string | null {
-    const match = /\berror_description="([^"]*)"/.exec(this.wwwAuthenticate ?? "");
+    return this.challengeParam("error_description");
+  }
+
+  /** The quoted `name="…"` parameter of the `WWW-Authenticate` header, or null if absent or empty. */
+  private challengeParam(name: "scope" | "error_description"): string | null {
+    const match = new RegExp(`\\b${name}="([^"]*)"`).exec(this.wwwAuthenticate ?? "");
     return match && match[1].length > 0 ? match[1] : null;
   }
 

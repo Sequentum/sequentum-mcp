@@ -19,7 +19,7 @@ import {
 import { SequentumApiClient } from "../api/api-client.js";
 import { createMcpServer } from "./handlers.js";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { currentUpstreamAuth, isHoldable } from "../api/upstream-auth.js";
+import { currentUpstreamAuth, isHoldable, mayAnswerUnauthorized } from "../api/upstream-auth.js";
 import { buildAuthChallenge } from "../utils/oauth-metadata.js";
 import { holdUntilFirstFrame } from "./response-hold.js";
 import { UPSTREAM_AUTH_HOLD_MS } from "./constants.js";
@@ -242,7 +242,17 @@ export function createSequentumMcpHandler(apiBaseUrl: string, version: string): 
 
     const ctx = currentUpstreamAuth();
     if (!isHoldable(ctx)) return response;
-    const outcome = await holdUntilFirstFrame(response, () => ctx.revoked !== undefined, UPSTREAM_AUTH_HOLD_MS);
+    // A batch answers each request as it finishes, so its first frame can precede the
+    // revocation a later request in it runs into; hold a batch for all of its results.
+    // Its requests run concurrently, so a state-changing call may succeed after a
+    // sibling's 401 was recorded, or still be running at the cap: answering 401 then
+    // would make the client's replay repeat it.
+    const outcome = await holdUntilFirstFrame(
+      response,
+      () => mayAnswerUnauthorized(ctx),
+      UPSTREAM_AUTH_HOLD_MS,
+      { untilEnd: Array.isArray(parsedBody) },
+    );
     if (outcome.kind === "commit") return outcome.response;
 
     const challenge = buildAuthChallenge(ctx.origin, ctx.revoked?.description);

@@ -51,9 +51,12 @@ A 401 that persists across retries therefore means something other than expiry:
   - a remembered device was removed or revoked.
 
 When the Sequentum sign-in behind a connection is revoked (for example after a
-security change on your account), the server answers your next request with a
-401 and a sign-in challenge, and a compliant client asks you to sign in again.
-You only need to reconnect by hand if your client does not prompt you.
+security change on your account), the server answers the next request that
+reaches your Sequentum account with a 401 and a sign-in challenge, and a
+compliant client asks you to sign in again. A request still answered as an
+error, such as one that had already started reporting progress, needs no action:
+the next one prompts you. You only need to reconnect by hand if your client does
+not prompt you.
 
 After an MFA change, complete the MFA prompt when you sign in again. If your
 organisation now requires MFA, your client may show "Multi-factor authentication
@@ -71,7 +74,7 @@ token:
     [MCP] auth=rejected reason=expired kid="STXjwgTe" age=417s client="claude-desktop"
 
 `reason` is one of `expired`, `bad-signature`, `malformed`, `bad-alg`,
-`unknown-kid` or `wrong-audience`. `unknown-kid` means the latest fetch of the signing keys succeeded
+`unknown-kid`, `wrong-audience` or `upstream-revoked`. `unknown-kid` means the latest fetch of the signing keys succeeded
 and none of them matches the token's key id: the token was not signed with Control
 Center's current key. After a signing-key change it also hits tokens signed with
 the previous key until they expire, and, for up to a minute, genuine new-key
@@ -88,9 +91,12 @@ this server rejects. It must leave `resource` out, or send this server's origin
 where the Control Center is configured to accept it.
 
 A token that passed these checks but that the Control Center then refused as
-revoked is logged as `auth=rejected reason=upstream-revoked`. This is the line
-to expect after an MFA change on the user's account; `described=yes` means the
-Control Center gave a reason, such as the organisation now requiring MFA.
+revoked is logged as `auth=rejected reason=upstream-revoked` when the server
+answers with a 401. This is the line to expect after an MFA change on the user's
+account; `described=yes` means the Control Center gave a reason, such as the
+organisation now requiring MFA. A refusal that arrives after the response has
+started, for example while a build reports progress, is returned as a tool error
+and logs no such line.
 
 Lines reading `auth=unverifiable` are **not** rejections — the request was passed
 through and the API decided it. Two reasons appear there:
@@ -157,9 +163,12 @@ A 401 that persists across retries therefore means something other than expiry:
   - a remembered device was removed or revoked.
 
 When the Sequentum sign-in behind a connection is revoked (for example after a
-security change on your account), the server answers your next request with a
-401 and a sign-in challenge, and a compliant client asks you to sign in again.
-You only need to reconnect by hand if your client does not prompt you.
+security change on your account), the server answers the next request that
+reaches your Sequentum account with a 401 and a sign-in challenge, and a
+compliant client asks you to sign in again. A request still answered as an
+error, such as one that had already started reporting progress, needs no action:
+the next one prompts you. You only need to reconnect by hand if your client does
+not prompt you.
 
 After an MFA change, complete the MFA prompt when you sign in again. If your
 organisation now requires MFA, your client may show "Multi-factor authentication
@@ -177,7 +186,7 @@ token:
     [MCP] auth=rejected reason=expired kid="STXjwgTe" age=417s client="claude-desktop"
 
 `reason` is one of `expired`, `bad-signature`, `malformed`, `bad-alg`,
-`unknown-kid` or `wrong-audience`. `unknown-kid` means the latest fetch of the signing keys succeeded
+`unknown-kid`, `wrong-audience` or `upstream-revoked`. `unknown-kid` means the latest fetch of the signing keys succeeded
 and none of them matches the token's key id: the token was not signed with Control
 Center's current key. After a signing-key change it also hits tokens signed with
 the previous key until they expire, and, for up to a minute, genuine new-key
@@ -194,9 +203,12 @@ this server rejects. It must leave `resource` out, or send this server's origin
 where the Control Center is configured to accept it.
 
 A token that passed these checks but that the Control Center then refused as
-revoked is logged as `auth=rejected reason=upstream-revoked`. This is the line
-to expect after an MFA change on the user's account; `described=yes` means the
-Control Center gave a reason, such as the organisation now requiring MFA.
+revoked is logged as `auth=rejected reason=upstream-revoked` when the server
+answers with a 401. This is the line to expect after an MFA change on the user's
+account; `described=yes` means the Control Center gave a reason, such as the
+organisation now requiring MFA. A refusal that arrives after the response has
+started, for example while a build reports progress, is returned as a tool error
+and logs no such line.
 
 Lines reading `auth=unverifiable` are **not** rejections — the request was passed
 through and the API decided it. Two reasons appear there:

@@ -164,6 +164,24 @@ describe("holdUntilFirstFrame (SSE)", () => {
     expect(await pending).toEqual({ kind: "revoked" });
   });
 
+  it("holds past the first frame until end of stream with untilEnd", async () => {
+    const source = controlledSource();
+    let revoked = false;
+    source.push(RESULT_EVENT);
+
+    const pending = holdUntilFirstFrame(sseResponse(source.stream), () => revoked, 5000, { untilEnd: true });
+    const status = track(pending);
+    await untilHoldWaits(source);
+    expect(status.settled).toBe(false);
+
+    // A later result in the same batch is the one that ran into the revocation.
+    revoked = true;
+    source.push(RESULT_EVENT);
+    source.close();
+
+    expect(await pending).toEqual({ kind: "revoked" });
+  });
+
   it("replays split chunks verbatim", async () => {
     const source = controlledSource();
     const chunks = ["event: mess", 'age\ndata: {"a"', ":1}\n\n", "tail"];
@@ -180,6 +198,24 @@ describe("holdUntilFirstFrame (SSE)", () => {
     expect(outcome.response.status).toBe(200);
     expect([...outcome.response.headers]).toEqual([...response.headers]);
     expect(await outcome.response.text()).toBe(chunks.join(""));
+  });
+
+  it("stays committed when the flag is set after the first frame", async () => {
+    const source = controlledSource();
+    let revoked = false;
+    source.push(RESULT_EVENT);
+
+    const outcome = await holdUntilFirstFrame(sseResponse(source.stream), () => revoked, 5000);
+    expect(outcome.kind).toBe("commit");
+    if (outcome.kind !== "commit") return;
+
+    // A revocation the request learns of later, e.g. while a tool streams progress.
+    revoked = true;
+    source.push("data: late\n\n");
+    source.close();
+
+    expect(await outcome.response.text()).toBe(`${RESULT_EVENT}data: late\n\n`);
+    expect(source.cancel).not.toHaveBeenCalled();
   });
 
   it("detects a frame delimited by CRLF blank lines", async () => {

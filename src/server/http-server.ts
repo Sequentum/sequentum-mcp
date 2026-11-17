@@ -266,17 +266,18 @@ function logAuthOutcome(
   reason: string,
   kid?: string,
   exp?: number,
-  extra?: Record<string, string>
+  described?: boolean
 ): void {
   const client = req.get("user-agent") ?? "unknown";
   const parts = [`[MCP] auth=${outcome}`, `reason=${reason}`];
   if (kid) parts.push(`kid=${loggable(kid.slice(0, 8))}`);
   if (typeof exp === "number") parts.push(`age=${Math.max(0, Math.floor(Date.now() / 1000) - exp)}s`);
-  // Server-chosen keys and values only; never pass request-derived text here.
-  for (const [key, value] of Object.entries(extra ?? {})) parts.push(`${key}=${value}`);
+  if (typeof described === "boolean") parts.push(`described=${described ? "yes" : "no"}`);
   parts.push(`client=${loggable(client)}`);
   console.error(parts.join(" "));
 }
+
+type AuthGateResult = { ok: false } | { ok: true; tokenType?: string; kid?: string };
 
 /**
  * Shared auth gate for POST and GET /mcp.
@@ -289,8 +290,6 @@ function logAuthOutcome(
  * (unverifiable, REQUIRE_AUTH=false) carry neither, so an upstream revocation on
  * them keeps today's tool result instead of turning into a 401.
  */
-type AuthGateResult = { ok: false } | { ok: true; tokenType?: string; kid?: string };
-
 async function passesAuthGate(req: Request, res: Response, keys: JwksKeySource): Promise<AuthGateResult> {
   const requireAuth = process.env.REQUIRE_AUTH !== "false";
   const token = extractBearerToken(req);
@@ -345,10 +344,7 @@ function handleAuthorized(
     {
       tokenType: gate.tokenType,
       origin: getMcpServerOrigin(req),
-      onRevoked: (described) =>
-        logAuthOutcome(req, "rejected", "upstream-revoked", gate.kid, undefined, {
-          described: described ? "yes" : "no",
-        }),
+      onRevoked: (described) => logAuthOutcome(req, "rejected", "upstream-revoked", gate.kid, undefined, described),
     },
     () => nodeHandler(req, res)
   );

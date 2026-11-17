@@ -30,17 +30,28 @@ function eventCarriesData(event: string): boolean {
   return event.split(LINE_DELIMITER).some((line) => DATA_LINE.test(line));
 }
 
+export interface HoldOptions {
+  /**
+   * Hold past the first event, until end of stream or the cap. Used for a batched
+   * POST, whose first result may need no upstream call and so arrive before a later
+   * request in the batch learns that the token was revoked.
+   */
+  untilEnd?: boolean;
+}
+
 /**
  * Resolve once it is safe to decide: immediately for a non-SSE response; for
- * text/event-stream, at the first event with non-empty `data:`, at end of stream,
- * or after capMs. Returns "revoked" iff isRevoked() is true at that moment (the
- * source body is then cancelled). Otherwise returns a Response with the original
- * status/headers whose body replays every byte read so far, then pipes the rest.
+ * text/event-stream, at the first event with non-empty `data:` (unless
+ * `untilEnd`), at end of stream, or after capMs. Returns "revoked" iff
+ * isRevoked() is true at that moment (the source body is then cancelled).
+ * Otherwise returns a Response with the original status/headers whose body
+ * replays every byte read so far, then pipes the rest.
  */
 export async function holdUntilFirstFrame(
   response: Response,
   isRevoked: () => boolean,
   capMs: number,
+  options: HoldOptions = {},
 ): Promise<HoldOutcome> {
   if (!isEventStream(response) || response.body === null) {
     if (!isRevoked()) return { kind: "commit", response };
@@ -81,7 +92,7 @@ export async function holdUntilFirstFrame(
       buffered.push(result.value);
       const events = (partial + decoder.decode(result.value, { stream: true })).split(EVENT_DELIMITER);
       partial = events.pop() ?? "";
-      if (events.some(eventCarriesData)) break;
+      if (!options.untilEnd && events.some(eventCarriesData)) break;
     }
   } catch (error) {
     inflight = undefined;
