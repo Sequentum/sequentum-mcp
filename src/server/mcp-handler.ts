@@ -19,6 +19,10 @@ import {
 import { SequentumApiClient } from "../api/api-client.js";
 import { createMcpServer } from "./handlers.js";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { currentUpstreamAuth, isHoldable, mayAnswerUnauthorized } from "../api/upstream-auth.js";
+import { buildAuthChallenge } from "../utils/oauth-metadata.js";
+import { holdUntilFirstFrame } from "./response-hold.js";
+import { UPSTREAM_AUTH_HOLD_MS } from "./constants.js";
 
 /** Extract a Bearer token from a Web-standard Request, or null. */
 function bearerFrom(request: Request | undefined): string | null {
@@ -215,6 +219,11 @@ export function createSequentumMcpHandler(apiBaseUrl: string, version: string): 
    * with its own 413. The clone stops reading just past the cap, so the original
    * stream buffers at most that much. Behind Express, `toNodeHandler` already refuses
    * an oversized body before this runs; this keeps the cap for any other caller.
+   *
+   * For a user token, the response is then held until its first event (see
+   * {@link holdUntilFirstFrame}): if the Control Center revoked the token while the
+   * request ran, the client gets an HTTP 401 with our challenge instead, so it
+   * re-authorizes by itself. Once anything has been sent the response stands.
    */
   const fetch: McpHttpHandler["fetch"] = async (request, options) => {
     let parsedBody = options?.parsedBody;
@@ -229,7 +238,34 @@ export function createSequentumMcpHandler(apiBaseUrl: string, version: string): 
     const trace = resolveTraceContext(traceContextFromMeta(parsedBody), request.headers);
     const forwarded: McpHandlerRequestOptions | undefined =
       parsedBody === undefined ? options : { ...options, parsedBody };
-    return traceContextStore.run(trace, () => inner.fetch(request, forwarded));
+    const response = await traceContextStore.run(trace, () => inner.fetch(request, forwarded));
+
+    const ctx = currentUpstreamAuth();
+    if (!isHoldable(ctx)) return response;
+    // A batch answers each request as it finishes, so its first frame can precede the
+    // revocation a later request in it runs into; hold a batch for all of its results.
+    // Its requests run concurrently, so a state-changing call may succeed after a
+    // sibling's 401 was recorded, or still be running at the cap: answering 401 then
+    // would make the client's replay repeat it.
+    const outcome = await holdUntilFirstFrame(
+      response,
+      () => mayAnswerUnauthorized(ctx),
+      UPSTREAM_AUTH_HOLD_MS,
+      { untilEnd: Array.isArray(parsedBody) },
+    );
+    if (outcome.kind === "commit") return outcome.response;
+
+    const challenge = buildAuthChallenge(ctx.origin, ctx.revoked?.description);
+    // Log what the client actually receives: a description that sanitizes away is not sent.
+    ctx.onRevoked(challenge.body.error.data.error_description !== undefined);
+    return new Response(JSON.stringify(challenge.body), {
+      status: 401,
+      headers: {
+        "content-type": "application/json",
+        "www-authenticate": challenge.wwwAuthenticate,
+        "cache-control": "no-store",
+      },
+    });
   };
 
   return {
