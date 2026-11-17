@@ -617,6 +617,12 @@ Create a schedule for an agent. Three schedule types are supported:
 | `inputParameters` | string | No | JSON input parameters for runs. |
 | `isEnabled` | boolean | No | Whether schedule is active. Default: `true`. |
 | `parallelism` | number | No | Parallel instances. Default: 1. |
+| `parallelMaxConcurrency` | number | No | Maximum concurrent parallel instances. Only relevant when `parallelism` > 1. |
+| `parallelExport` | string | No | `Combined` merges the output of parallel instances; `Separated` keeps per-instance files. |
+| `isExclusive` | boolean | No | If `true`, prevents concurrent runs of this agent. Default: `false`. |
+| `isWaitOnFailure` | boolean | No | If `true`, waits before retrying after a failure. Default: `false`. |
+| `logLevel` | string | No | `Fatal`, `Error`, `Warning` or `Info`. Default: `Info`. |
+| `logMode` | string | No | `Text`, or `TextAndHtml` for both. Default: `Text`. |
 
 #### Returns
 
@@ -1300,6 +1306,7 @@ Start a new AI-powered agent building session from a natural language descriptio
 |-----------|------|----------|-------------|
 | `prompt` | string | Yes | What you want to scrape or automate, in your own words, passed through verbatim. The agent builder infers technical details (pagination, lazy-load, output format, etc.) server-side. Must be 10–5000 characters. |
 | `spaceId` | number | No | Space ID to associate the agent with. Uses the default space if omitted. |
+| `waitForCompletion` | boolean | No | If `true` (default), wait for the build and return the `agentId` in one call (up to about 5 minutes). If `false`, return the `sessionId` at once for polling with `get_agent_build_status`. |
 
 #### Returns
 

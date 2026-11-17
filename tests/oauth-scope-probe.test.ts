@@ -167,7 +167,7 @@ describe("expectedLogLine smoke (unchanged by this ticket)", () => {
   });
 });
 
-// SE4-3895: a client that sends no scope now gets the six API scopes (the server default). The
+// A client that sends no scope now gets the six API scopes (the server default). The
 // token-exchange row must check what was granted, or the `none` profile passes with or without it.
 describe("judgeGrant (SE4-3895 default scope)", () => {
   const SIX = "agents:read agents:write runs:read spaces:read spaces:write billing:read";

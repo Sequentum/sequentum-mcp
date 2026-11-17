@@ -301,11 +301,11 @@ Run agent 123 synchronously with a 5 minute timeout
 
 ---
 
-### "Unknown tool" error
+### "Tool not found" error
 
 **Error:**
 ```
-Error: Unknown tool: tool_name
+Tool tool_name not found
 ```
 
 **Cause:** You're trying to call a tool that doesn't exist.

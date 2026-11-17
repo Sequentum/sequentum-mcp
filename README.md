@@ -108,7 +108,7 @@ https://mcp.sequentum.com/mcp
 The Sequentum MCP Server follows standard MCP protocols and works with any client that supports:
 
 - **OAuth authentication** (recommended)
-- **Streamable HTTP** with automatic SSE fallback
+- **Streamable HTTP** (the older HTTP+SSE transport is not served)
 
 Use the server URL `https://mcp.sequentum.com/mcp` in your client's MCP configuration.
 
