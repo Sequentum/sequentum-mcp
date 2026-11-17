@@ -40,14 +40,24 @@ should not notice anything beyond a brief pause.
 A 401 that persists across retries therefore means something other than expiry:
 
 - the connector was revoked from your Sequentum account,
-- your user or organisation access changed, or
+- your user or organisation access changed,
 - your token was issued for a different address of this server, for example
-  one you connected through before the server started checking it.
+  one you connected through before the server started checking it, or
+- a multi-factor authentication (MFA) change on your account, which ends existing
+  sign-ins:
+  - you set up MFA, or an administrator reset your MFA,
+  - you turned MFA off in your account settings,
+  - your organisation started requiring MFA, or
+  - a remembered device was removed or revoked.
 
 When the Sequentum sign-in behind a connection is revoked (for example after a
 security change on your account), the server answers your next request with a
 401 and a sign-in challenge, and a compliant client asks you to sign in again.
 You only need to reconnect by hand if your client does not prompt you.
+
+After an MFA change, complete the MFA prompt when you sign in again. If your
+organisation now requires MFA, your client may show "Multi-factor authentication
+is now required for this account. Sign in again to reconnect."
 
 Reconnect from **Settings → Connectors** to resolve any of the causes above. If the 401
 persists after reconnecting, check that the connector's URL is
@@ -76,6 +86,11 @@ An agent that renews its token with the JWT-bearer grant and sends the Control
 Center's own address as `resource` gets a token for the Control Center, which
 this server rejects. It must leave `resource` out, or send this server's origin
 where the Control Center is configured to accept it.
+
+A token that passed these checks but that the Control Center then refused as
+revoked is logged as `auth=rejected reason=upstream-revoked`. This is the line
+to expect after an MFA change on the user's account; `described=yes` means the
+Control Center gave a reason, such as the organisation now requiring MFA.
 
 Lines reading `auth=unverifiable` are **not** rejections — the request was passed
 through and the API decided it. Two reasons appear there:
@@ -131,14 +146,24 @@ should not notice anything beyond a brief pause.
 A 401 that persists across retries therefore means something other than expiry:
 
 - the connector was revoked from your Sequentum account,
-- your user or organisation access changed, or
+- your user or organisation access changed,
 - your token was issued for a different address of this server, for example
-  one you connected through before the server started checking it.
+  one you connected through before the server started checking it, or
+- a multi-factor authentication (MFA) change on your account, which ends existing
+  sign-ins:
+  - you set up MFA, or an administrator reset your MFA,
+  - you turned MFA off in your account settings,
+  - your organisation started requiring MFA, or
+  - a remembered device was removed or revoked.
 
 When the Sequentum sign-in behind a connection is revoked (for example after a
 security change on your account), the server answers your next request with a
 401 and a sign-in challenge, and a compliant client asks you to sign in again.
 You only need to reconnect by hand if your client does not prompt you.
+
+After an MFA change, complete the MFA prompt when you sign in again. If your
+organisation now requires MFA, your client may show "Multi-factor authentication
+is now required for this account. Sign in again to reconnect."
 
 Reconnect from **Settings → Connectors** to resolve any of the causes above. If the 401
 persists after reconnecting, check that the connector's URL is
@@ -167,6 +192,11 @@ An agent that renews its token with the JWT-bearer grant and sends the Control
 Center's own address as `resource` gets a token for the Control Center, which
 this server rejects. It must leave `resource` out, or send this server's origin
 where the Control Center is configured to accept it.
+
+A token that passed these checks but that the Control Center then refused as
+revoked is logged as `auth=rejected reason=upstream-revoked`. This is the line
+to expect after an MFA change on the user's account; `described=yes` means the
+Control Center gave a reason, such as the organisation now requiring MFA.
 
 Lines reading `auth=unverifiable` are **not** rejections — the request was passed
 through and the API decided it. Two reasons appear there:
