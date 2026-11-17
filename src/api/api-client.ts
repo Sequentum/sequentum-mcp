@@ -38,6 +38,7 @@ import {
   ExternalStartAgentBuildResponse,
   ExternalSessionStatusResponse,
 } from "./types.js";
+import { beginUpstreamMutation, noteUpstreamUnauthorized } from "./upstream-auth.js";
 
 /** Default retry configuration for transient failures */
 const DEFAULT_MAX_RETRIES = 3;
@@ -265,12 +266,18 @@ export class SequentumApiClient {
     // POST is NOT retried to avoid duplicate side effects (e.g. starting an agent twice)
     const isIdempotent = method !== "POST";
     const maxAttempts = isIdempotent ? this.maxRetries + 1 : 1;
+    // Anything but a read may change something upstream, so a request that sent one is
+    // not answered with a 401 that the client would replay (see beginUpstreamMutation).
+    const mayChangeState = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
 
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      const endMutation = mayChangeState ? beginUpstreamMutation() : undefined;
+      // Only a 4xx proves the upstream refused the call before changing anything.
+      let refused = false;
 
       try {
         const response = await fetch(url, {
@@ -282,12 +289,14 @@ export class SequentumApiClient {
         if (response.ok) {
           return response;
         }
+        refused = response.status >= 400 && response.status < 500;
 
         // Build typed error from response
         const error = await this.buildErrorFromResponse(response, endpoint);
 
         // Don't retry auth errors (401/403) — they won't resolve with retries
         if (error.isUnauthorized || error.isForbidden) {
+          noteUpstreamUnauthorized(error);
           throw error;
         }
 
@@ -320,6 +329,7 @@ export class SequentumApiClient {
         throw error;
       } finally {
         clearTimeout(timeoutId);
+        endMutation?.(!refused);
       }
     }
 

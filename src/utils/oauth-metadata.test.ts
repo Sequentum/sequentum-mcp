@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildAuthChallenge, SUPPORTED_SCOPES, API_SCOPES } from "./oauth-metadata.js";
+import { buildAuthChallenge, sanitizeErrorDescription, SUPPORTED_SCOPES, API_SCOPES } from "./oauth-metadata.js";
 
 describe("buildAuthChallenge", () => {
   it("uses RFC 9728 resource_metadata parameter (not the wrong `resource=` form)", () => {
@@ -61,6 +61,46 @@ describe("buildAuthChallenge", () => {
     expect(body.error.data.protectedResourceMetadata).toBe(
       "https://example.com/.well-known/oauth-protected-resource"
     );
+  });
+});
+
+describe("buildAuthChallenge error description", () => {
+  const origin = "https://example.com";
+  const text = "Multi-factor authentication is now required for this account. Sign in again to reconnect.";
+
+  it("is unchanged without a description", () => {
+    const base = buildAuthChallenge(origin);
+    expect(JSON.stringify(base)).toBe(JSON.stringify(buildAuthChallenge(origin, null)));
+    expect(base.wwwAuthenticate).toBe(
+      'Bearer realm="example.com", error="invalid_token", resource_metadata="https://example.com/.well-known/oauth-protected-resource"'
+    );
+    expect(base.wwwAuthenticate).not.toContain("error_description");
+    expect(base.body.error.data).not.toHaveProperty("error_description");
+  });
+
+  it("appends error_description to the header and body", () => {
+    const { wwwAuthenticate, body } = buildAuthChallenge(origin, text);
+    expect(wwwAuthenticate.endsWith(`, error_description="${text}"`)).toBe(true);
+    expect(body.error.data.error_description).toBe(text);
+    expect(body.error.message).toBe("Authentication required");
+  });
+
+  it("strips characters RFC 6750 forbids", () => {
+    const { wwwAuthenticate, body } = buildAuthChallenge(origin, 'a"b\\c\r\ndée');
+    expect(wwwAuthenticate.endsWith(', error_description="abcde"')).toBe(true);
+    expect(wwwAuthenticate.match(/error_description=/g)).toHaveLength(1);
+    expect(body.error.data.error_description).toBe("abcde");
+  });
+
+  it("caps the description at 300 characters", () => {
+    const { wwwAuthenticate, body } = buildAuthChallenge(origin, "x".repeat(400));
+    expect(body.error.data.error_description).toBe("x".repeat(300));
+    expect(wwwAuthenticate.endsWith(`error_description="${"x".repeat(300)}"`)).toBe(true);
+  });
+
+  it("omits a description that sanitizes to empty", () => {
+    expect(JSON.stringify(buildAuthChallenge(origin, '"""'))).toBe(JSON.stringify(buildAuthChallenge(origin)));
+    expect(sanitizeErrorDescription('"""')).toBeNull();
   });
 });
 
