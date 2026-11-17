@@ -6,7 +6,7 @@
  *
  * Runs the Streamable HTTP transport for Claude Connectors (claude.ai, Claude Desktop)
  * and other remote MCP clients, which connect to https://mcp.sequentum.com/mcp. The
- * stdio transport and SEQUENTUM_API_KEY authentication were removed in 3.0.0.
+ * stdio transport and SEQUENTUM_API_KEY authentication were removed in 3.0.1.
  *
  * Environment Variables:
  *   PORT - HTTP server port (default: 3000)

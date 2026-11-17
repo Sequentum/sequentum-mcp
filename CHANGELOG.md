@@ -165,7 +165,7 @@
 - **`get_runs_summary` and `list_agents` now describe run statuses and dates the way the API
   uses them.** `get_runs_summary` no longer offers `CompletedWithErrors`, which the API
   rejects; it names the Failure/Failed and Completed/Success filter families, says dates
-  default to the last 24 hours rather than today, and accepts a datetime `startDate`.
+  default to the last 24 hours rather than today, and says `startDate` accepts a datetime.
   `list_agents` accepts status 13 (`UpdatingDataSet`).
 - **A synchronous `start_agent` no longer fails after 30 seconds.** Every API request was
   aborted at 30 s, but a synchronous start asks the Control Center to wait up to its

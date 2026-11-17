@@ -127,7 +127,7 @@ There are no refresh tokens in this flow: when the access token expires, exchang
 
 ## Local stdio mode (removed)
 
-Running the server locally over stdio with `SEQUENTUM_API_KEY` (`npx sequentum-mcp`) was removed in 3.0.0.
+Running the server locally over stdio with `SEQUENTUM_API_KEY` (`npx sequentum-mcp`) was removed in 3.0.1.
 Connect to `https://mcp.sequentum.com/mcp` instead — see [Set Up Your Client](#set-up-your-client). Sequentum API keys still work for the [REST API](https://docs.sequentum.com/api-reference/authentication).
 
 ## Example Usage
@@ -307,7 +307,7 @@ For more troubleshooting help, see the [Troubleshooting Guide](./docs/troublesho
 ## HTTP Mode Configuration
 
 The hosted server at `mcp.sequentum.com` runs the Streamable HTTP transport, the only
-transport as of 3.0.0, behind its own deployment configuration. The following
+transport as of 3.0.1, behind its own deployment configuration. The following
 environment variables tune caching, rate limiting, and proxy trust for that transport.
 They are documented for readers of this source — there is no supported self-hosted
 deployment, and no container image is published.
