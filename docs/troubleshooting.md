@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-This guide covers common issues and their solutions when using the Sequentum MCP server. The supported setup is the remote server at `https://mcp.sequentum.com/mcp` using OAuth authentication. The local `npx` setup (stdio with `SEQUENTUM_API_KEY`) was removed in 3.0.0; see [Local stdio mode (removed)](../README.md#local-stdio-mode-removed).
+This guide covers common issues and their solutions when using the Sequentum MCP server. The supported setup is the remote server at `https://mcp.sequentum.com/mcp` using OAuth authentication. The local `npx` setup (stdio with `SEQUENTUM_API_KEY`) was removed in 3.0.1; see [Local stdio mode (removed)](../README.md#local-stdio-mode-removed).
 
 ## Table of Contents
 

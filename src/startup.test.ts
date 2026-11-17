@@ -101,7 +101,7 @@ describe("issuer normalisation reaches the served document", () => {
   });
 });
 
-// HTTP is the only transport as of 3.0.0. An environment left over from the npm-package
+// HTTP is the only transport as of 3.0.1. An environment left over from the npm-package
 // era — TRANSPORT_MODE=stdio and a SEQUENTUM_API_KEY — must neither revive stdio nor stop
 // the server from booting. Asserted against the built entrypoint because main() runs at
 // module top level and cannot be imported without starting up.

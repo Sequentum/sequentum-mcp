@@ -1,37 +1,8 @@
 # Changelog
 
+<!-- A prod release renames its "Unreleased" section to the released version and date. -->
+
 ## [3.1.2] - Unreleased
-
-### Fixed
-
-- **A revoked sign-in now prompts the client to sign in again instead of failing every tool
-  call.** When the Control Center rejected a user token whose sign-in it had revoked (for
-  example after a security change on the account), the server returned the 401 as a tool
-  result on HTTP 200, so clients never re-authorized and the connection stayed broken until
-  it was reconnected by hand. For OAuth user tokens, an upstream 401 carrying the Control
-  Center's auth challenge now becomes an HTTP 401 with this server's RFC 9728
-  `WWW-Authenticate` challenge, relaying the upstream `error_description` when there is one.
-  Responses are held until their first JSON-RPC message (at most 5 s) to make this
-  possible. Client-credentials and agent tokens, 403s, and a 401 that arrives after a
-  progress stream has started, after the 5 s hold, or after a call that changed something
-  (such as starting a build) keep the previous tool-result behaviour. Logged as
-  `auth=rejected reason=upstream-revoked`.
-
-## [3.0.0] - Unreleased
-
-### BREAKING CHANGES
-
-- **The stdio transport and `SEQUENTUM_API_KEY` authentication are removed.** The server
-  now runs only the Streamable HTTP transport with OAuth 2.1; connect to
-  `https://mcp.sequentum.com/mcp`. This completes the deprecation announced in 2.0.0,
-  which had set no removal version. Versions of the `sequentum-mcp` npm package that are
-  already published stay installable and deprecated; no new versions are published.
-- **`TRANSPORT_MODE` is no longer read.** HTTP is the only mode, so the variable has no
-  effect and can be removed from any deployment configuration.
-- **The package is no longer publishable.** `package.json` is marked `private` and no
-  longer declares the `sequentum-mcp` bin.
-- **The `SequentumApiClient` constructor dropped its `apiKey` parameter.** It is now
-  `(baseUrl, requestTimeoutMs, maxRetries)`; authenticate with `setAccessToken()`.
 
 ### Added
 
@@ -43,13 +14,10 @@
 
 ### Changed
 
-- **Production dependencies upgraded to clear `pnpm audit --prod`.** `@modelcontextprotocol/server`
-  and `client` (with `core`) 2.2.0 to 2.4.0, `@modelcontextprotocol/node` 2.1.0 to 2.1.2,
-  `express` to 4.22.3, `express-rate-limit` to 8.7.2, and the transitive `proxy-addr`, `zod`,
-  `hono`, `@hono/node-server` and `qs`. Fixes the memory-exhaustion advisory in the SDK's request
-  validation and the rate limiter that collapsed all IPv4 clients into one bucket. A `tools/call`
-  whose `arguments` hold more than 1,000 array elements and object members is now rejected
-  (SDK `maxToolInputElements`). CI now fails on a high or critical production advisory.
+- **Tokens issued to an agent registered through the Control Center are now scope-checked
+  too.** A token with `token_type` `agent` gets the same check before dispatch as a user token,
+  including the HTTP 403 `insufficient_scope` challenge when it lacks a tool's scope.
+  Client-credentials tokens are still not checked.
 - **`start_agent_build` and `get_agent_build_status` return the build's Plan and report.** A
   finished build now carries `plan` (what the build set out to deliver, with each line marked as
   the user's request, seen on the site, or an assumption or default), `report` (each Plan line
@@ -57,24 +25,13 @@
   `summary`. Before this, the default synchronous `start_agent_build` returned only the agent id
   and name, so a client could not see what the build guessed. `get_agent_build_status` already
   passed these fields through; its description and output schema now name them.
-
-- **Each tool and resource now declares the OAuth scopes it needs, and the server checks
-  them before dispatch.** A `tools/call` or `resources/read` whose token lacks one is
-  answered with HTTP 403 and `WWW-Authenticate: Bearer error="insufficient_scope",
-  scope="…", resource_metadata="…"`, the challenge MCP clients use to step the user up to
-  the missing scope, and the Sequentum API is not called. The scope list names the scopes
-  the token already holds plus the missing ones, so re-authorizing does not narrow the
-  grant. The requirements mirror the Control Center's own per-endpoint scopes;
-  `start_agent_build` needs both `agents:write` and `agents:read`. User tokens and tokens
-  issued to an agent registered through the Control Center (`token_type` `agent`) are
-  checked; client-credentials tokens, which the Control Center exempts, are not. The
-  "Insufficient Scope" tool error remains as the fallback for a 403 from the API itself.
-- Tool errors for a 401 or 403 from the Sequentum API no longer mention API keys. A 401
-  now says to disconnect and reconnect the Sequentum MCP server to sign in again.
-- **Every HTTP response now carries a `Content-Security-Policy` header.** The policy is
-  `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`. The landing
-  page at `/` extends it with a SHA-256 hash that allows only its own inline stylesheet. MCP
-  clients are unaffected.
+- **Production dependencies upgraded to clear `pnpm audit --prod`.** `@modelcontextprotocol/server`
+  and `client` (with `core`) 2.2.0 to 2.4.0, `@modelcontextprotocol/node` 2.1.0 to 2.1.2,
+  `express` to 4.22.3, `express-rate-limit` to 8.7.2, and the transitive `proxy-addr`, `zod`,
+  `hono`, `@hono/node-server` and `qs`. Fixes the memory-exhaustion advisory in the SDK's request
+  validation and the rate limiter that collapsed all IPv4 clients into one bucket. A `tools/call`
+  whose `arguments` hold more than 1,000 array elements and object members is now rejected
+  (SDK `maxToolInputElements`). CI now fails on a high or critical production advisory.
 - **HTTP responses are hardened further.** `X-Powered-By: Express` is no longer sent. Every
   response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
   `X-Frame-Options: DENY`, and a request that reached the trusted proxy over https (its
@@ -96,9 +53,24 @@
   rejected. Tokens with the legacy `Sequentum Enterprise` audience are still accepted. Without
   the variable, or with a value that does not parse, behaviour is unchanged: the mismatch is
   logged and the request passes through.
+- **Release tooling is pinned.** `mcp-publisher`, the pnpm package hash, the Docker base-image
+  digest and every GitHub Action are pinned to exact versions or hashes, and registry and
+  GitHub secrets are no longer passed on the command line.
 
 ### Fixed
 
+- **A revoked sign-in now prompts the client to sign in again instead of failing every tool
+  call.** When the Control Center rejected a user token whose sign-in it had revoked (for
+  example after a security change on the account), the server returned the 401 as a tool
+  result on HTTP 200, so clients never re-authorized and the connection stayed broken until
+  it was reconnected by hand. For OAuth user tokens, an upstream 401 carrying the Control
+  Center's auth challenge now becomes an HTTP 401 with this server's RFC 9728
+  `WWW-Authenticate` challenge, relaying the upstream `error_description` when there is one.
+  Responses are held until their first JSON-RPC message (at most 5 s) to make this
+  possible. Client-credentials and agent tokens, 403s, and a 401 that arrives after a
+  progress stream has started, after the 5 s hold, or after a call that changed something
+  (such as starting a build) keep the previous tool-result behaviour. Logged as
+  `auth=rejected reason=upstream-revoked`.
 - **A single request with an unparseable `Host` header no longer crashes the server.**
   Without a parseable `MCP_CANONICAL_ORIGIN`, a `Host` the URL parser rejects (such as `a<b` or
   `a:99999`) made `/.well-known/oauth-protected-resource` throw inside an async handler.
@@ -130,6 +102,75 @@
   latest JWKS fetch succeeded and lacks the key id, the token is now rejected with reason
   `unknown-kid`. Validation still fails open, as `jwks-unreachable`, when no usable key
   set has been fetched or the latest fetch failed.
+
+## [3.1.1] - 2026-11-11
+
+### Changed
+
+- **Every HTTP response now carries a `Content-Security-Policy` header.** The policy is
+  `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`. The landing
+  page at `/` extends it with a SHA-256 hash that allows only its own inline stylesheet. MCP
+  clients are unaffected.
+
+## [3.0.1] - 2026-10-26
+
+### BREAKING CHANGES
+
+- **The stdio transport and `SEQUENTUM_API_KEY` authentication are removed.** The server
+  now runs only the Streamable HTTP transport with OAuth 2.1; connect to
+  `https://mcp.sequentum.com/mcp`. This completes the deprecation announced in 2.0.0,
+  which had set no removal version. Versions of the `sequentum-mcp` npm package that are
+  already published stay installable and deprecated; no new versions are published.
+- **`TRANSPORT_MODE` is no longer read.** HTTP is the only mode, so the variable has no
+  effect and can be removed from any deployment configuration.
+- **The package is no longer publishable.** `package.json` is marked `private` and no
+  longer declares the `sequentum-mcp` bin.
+- **The `SequentumApiClient` constructor dropped its `apiKey` parameter.** It is now
+  `(baseUrl, requestTimeoutMs, maxRetries)`; authenticate with `setAccessToken()`.
+- **The Docker image runs Node 24, and the minimum supported Node version is now 22**
+  (`engines.node: ">=22"`, up from `">=20"`). Node 20 reached end of life on 2026-04-30 and
+  received none of the October 2026 Node.js security fixes.
+
+### Added
+
+- **Data-returning tools declare an `outputSchema` and return `structuredContent`.** 36 of the
+  43 tools now return a structured result next to their unchanged text block, so clients can
+  read fields without parsing text. The seven tools that only acknowledge an action are
+  exempt.
+
+### Changed
+
+- **Each tool and resource now declares the OAuth scopes it needs, and the server checks
+  them before dispatch.** A `tools/call` or `resources/read` whose token lacks one is
+  answered with HTTP 403 and `WWW-Authenticate: Bearer error="insufficient_scope",
+  scope="…", resource_metadata="…"`, the challenge MCP clients use to step the user up to
+  the missing scope, and the Sequentum API is not called. The scope list names the scopes
+  the token already holds plus the missing ones, so re-authorizing does not narrow the
+  grant. The requirements mirror the Control Center's own per-endpoint scopes;
+  `start_agent_build` needs both `agents:write` and `agents:read`. User tokens are
+  checked; client-credentials tokens, which the Control Center exempts, are not. The
+  "Insufficient Scope" tool error remains as the fallback for a 403 from the API itself.
+- Tool errors for a 401 or 403 from the Sequentum API no longer mention API keys. A 401
+  now says to disconnect and reconnect the Sequentum MCP server to sign in again.
+- **MCP TypeScript SDK upgraded to 2.2.0** (node adapter 2.1.0). Request bodies are capped at
+  4 MiB (HTTP 413) and legacy JSON-RPC batches at 100 messages, and a `2026-07-28` POST
+  without the `Mcp-Protocol-Version` header is rejected with `-32020`, as the Streamable HTTP
+  spec requires.
+- **The project uses pnpm instead of npm.** pnpm runs through Corepack, and `npm install` now
+  fails with a pointer to pnpm. This affects contributors only; the hosted server is
+  unchanged.
+
+### Fixed
+
+- **`get_runs_summary` and `list_agents` now describe run statuses and dates the way the API
+  uses them.** `get_runs_summary` no longer offers `CompletedWithErrors`, which the API
+  rejects; it names the Failure/Failed and Completed/Success filter families, says dates
+  default to the last 24 hours rather than today, and says `startDate` accepts a datetime.
+  `list_agents` accepts status 13 (`UpdatingDataSet`).
+- **A synchronous `start_agent` no longer fails after 30 seconds.** Every API request was
+  aborted at 30 s, but a synchronous start asks the Control Center to wait up to its
+  `timeout`, so longer starts failed and the Control Center then stopped the run. A
+  synchronous start now waits its `timeout` plus 30 s; other requests keep 30 s.
 - **Glama's browser-based MCP inspector can now reach the server.** `https://glama.ai` and
   its subdomains are in the built-in CORS origin allowlist (`src/server/cors.ts`).
   Requests from the inspector previously got a 403 on `/mcp`, and the preflight carried no
