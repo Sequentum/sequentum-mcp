@@ -320,7 +320,7 @@ export interface ApiErrorBody {
   status?: number;
   detail?: string;
   instance?: string;
-  // SE4-3929: ScopeEnforcementFilter's machine-readable reason code (e.g. "insufficient_scope").
+  // ScopeEnforcementFilter's machine-readable reason code (e.g. "insufficient_scope").
   errorCode?: string;
 }
 

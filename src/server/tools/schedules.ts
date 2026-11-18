@@ -1,9 +1,6 @@
 /**
  * Schedule tool handlers: list/create/update/delete agent schedules, toggle
  * enabled state, and inspect upcoming scheduled runs.
- *
- * Moved verbatim out of the `tools/call` switch in handlers.ts as part of the
- * dispatch-map refactor (see agents.ts for the original TODO reference).
  */
 import type { ToolHandler } from "./types.js";
 import { structuredResult, withStructured } from "./types.js";

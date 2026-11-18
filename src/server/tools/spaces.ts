@@ -1,9 +1,6 @@
 /**
  * Space tool handlers: list/inspect spaces, list agents in a space, search
  * spaces by name, and run all agents in a space.
- *
- * Moved verbatim out of the `tools/call` switch in handlers.ts as part of the
- * dispatch-map refactor (see agents.ts for the original TODO reference).
  */
 import type { ToolHandler } from "./types.js";
 import { structuredResult, withStructured } from "./types.js";

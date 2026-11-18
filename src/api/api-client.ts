@@ -167,7 +167,7 @@ export class SequentumApiClient {
    */
   private async buildErrorFromResponse(response: Response, endpoint: string): Promise<ApiRequestError> {
     let errorMessage = `API Error ${response.status}: ${response.statusText}`;
-    // SE4-3929: preserved alongside the message so ScopeEnforcementFilter's insufficient_scope
+    // Preserved alongside the message so ScopeEnforcementFilter's insufficient_scope
     // 403s can be told apart from any other 403 and the required scope named to the caller.
     let errorCode: string | null = null;
 

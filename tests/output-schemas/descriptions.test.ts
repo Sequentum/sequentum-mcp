@@ -36,7 +36,7 @@ const param = (tool: string, name: string) => {
   return props[name] ?? {};
 };
 
-// SE4-4000: parameter prose must match what the API accepts, or the model picks a wrong argument on the first call.
+// Parameter prose must match what the API accepts, or the model picks a wrong argument on the first call.
 describe("parameters match the API", () => {
   it("get_runs_summary.status lists only real statuses and states the families", () => {
     const text = param("get_runs_summary", "status").description ?? "";

@@ -1014,7 +1014,7 @@ describe("tool registration invariants", () => {
     }
   });
 
-  // SE4-4389: a sync start holds the tool call open for up to `timeout` seconds.
+  // A sync start holds the tool call open for up to `timeout` seconds.
   it("tells clients that a synchronous start_agent waits up to its timeout", () => {
     const startAgent = tools.find((t) => t.name === "start_agent");
     const timeout = startAgent?.inputSchema.properties?.timeout as { description?: string } | undefined;
