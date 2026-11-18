@@ -97,4 +97,7 @@ export const BUILD_RESULT_FIELDS =
   "and up to 3 `questions` for the user, each with suggested `replies` whose first entry is the choice the build already made. " +
   "The build never pauses for an answer. There is no call that applies an answer to a finished build: " +
   "a different answer needs a new start_agent_build whose prompt includes it. " +
-  "`partial: true` means the build stopped early but delivered a working Agent; `summary` then says what is missing.";
+  "`partial: true` means the build stopped early but delivered a working Agent; `summary` then says what is missing. " +
+  "Once the build has run the Agent it carries `sample`: the columns, up to 10 `rows` with `totalRows`, the `pageUrl` the rows came from, " +
+  "`pageCount`/`morePages` from that page's pagination, and `screenshotPath` when a screenshot of it exists. Show the rows to the user " +
+  "before asking the report's questions.";

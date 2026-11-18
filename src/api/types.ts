@@ -789,6 +789,25 @@ export interface ExternalSessionStatusResponse {
   plan?: Record<string, unknown> | null;
   /** The Plan checked against the finished Agent, with up to 3 open questions. */
   report?: AgentBuildReport | null;
+  /** The rows the build's last fresh run returned and the page they came from. Absent before the build has run the Agent. */
+  sample?: AgentBuildSample;
+}
+
+/** The `sample` of a build: the last fresh run's rows, the page they came from, and its screenshot reference. */
+export interface AgentBuildSample {
+  columns?: string[];
+  /** Up to 10 rows, each a column name to value map. */
+  rows?: Record<string, string>[];
+  /** How many rows the run returned; `rows` holds a sample of them. */
+  totalRows?: number;
+  pageUrl?: string | null;
+  /** The page count the page shows ("Page 1 of 12"), when it shows one. */
+  pageCount?: number | null;
+  /** True when the page links to a next page. */
+  morePages?: boolean;
+  hasScreenshot?: boolean;
+  /** Control Center API path (GET) that answers the screenshot as base64 with its content type. */
+  screenshotPath?: string | null;
 }
 
 /** The `report` of a finished build: Plan lines graded met, partial or unmet, plus open questions. */
