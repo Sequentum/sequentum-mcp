@@ -16,7 +16,7 @@ Title: Get Agent Build Status
 
 ## Description
 
-Poll the status of an agent building session. Returns { status, agentId?, agentName?, plan?, report?, partial?, summary?, error? }. status: 'processing' (keep polling) | 'ready' | 'completed' | 'error' | 'cancelled'. The result also carries `plan`: what the build set out to deliver, written after one look at the page. Each plan line has a provenance: 'user' (the request said it), 'site' (seen on the page), 'assumption' or 'default' (a choice the build made without asking). When the build finishes it carries `report`: each plan line graded met, partial or unmet with evidence, and up to 3 `questions` for the user, each with suggested `replies` whose first entry is the choice the build already made. The build never pauses for an answer. There is no call that applies an answer to a finished build: a different answer needs a new start_agent_build whose prompt includes it. `partial: true` means the build stopped early but delivered a working Agent; `summary` then says what is missing. `plan` appears while still 'processing', once the builder has seen the page. STOP POLLING on: completed, ready, error, or cancelled — the session tears down automatically. The returned agentId is the permanent workspace ID usable with get_agent, run_agent, schedule tools, and every other endpoint that takes an agentId. POLLING CADENCE: honor any user-expressed preference (e.g., 'poll quickly', 'every N seconds'); otherwise use moderate backoff (~5s start, max ~30s between polls).
+Poll the status of an agent building session. Returns { status, agentId?, agentName?, plan?, report?, sample?, partial?, summary?, error? }. status: 'processing' (keep polling) | 'ready' | 'completed' | 'error' | 'cancelled'. The result also carries `plan`: what the build set out to deliver, written after one look at the page. Each plan line has a provenance: 'user' (the request said it), 'site' (seen on the page), 'assumption' or 'default' (a choice the build made without asking). When the build finishes it carries `report`: each plan line graded met, partial or unmet with evidence, and up to 3 `questions` for the user, each with suggested `replies` whose first entry is the choice the build already made. The build never pauses for an answer. There is no call that applies an answer to a finished build: a different answer needs a new start_agent_build whose prompt includes it. `partial: true` means the build stopped early but delivered a working Agent; `summary` then says what is missing. Once the build has run the Agent it carries `sample`: the columns, up to 10 `rows` with `totalRows`, the `pageUrl` the rows came from, `pageCount`/`morePages` from that page's pagination, and `screenshotPath` when a screenshot of it exists. Show the rows to the user before asking the report's questions. `plan` appears while still 'processing', once the builder has seen the page. STOP POLLING on: completed, ready, error, or cancelled — the session tears down automatically. The returned agentId is the permanent workspace ID usable with get_agent, run_agent, schedule tools, and every other endpoint that takes an agentId. POLLING CADENCE: honor any user-expressed preference (e.g., 'poll quickly', 'every N seconds'); otherwise use moderate backoff (~5s start, max ~30s between polls).
 
 ## inputSchema
 
@@ -271,6 +271,62 @@ Poll the status of an agent building session. Returns { status, agentId?, agentN
       },
       "required": [],
       "description": "The Plan checked against the finished Agent. Null until a build that wrote a Plan has finished."
+    },
+    "sample": {
+      "type": "object",
+      "properties": {
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "description": "Column name to value."
+          },
+          "description": "Up to 10 sample rows."
+        },
+        "totalRows": {
+          "type": "integer",
+          "description": "How many rows the run returned; rows holds a sample of them."
+        },
+        "pageUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The page the rows came from."
+        },
+        "pageCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The page count the page shows ('Page 1 of 12'), when it shows one."
+        },
+        "morePages": {
+          "type": "boolean",
+          "description": "True when the page links to a next page."
+        },
+        "hasScreenshot": {
+          "type": "boolean",
+          "description": "True when a screenshot of that page is available."
+        },
+        "screenshotPath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Control Center API path (GET) that answers the screenshot as base64 with its content type."
+        }
+      },
+      "required": [],
+      "description": "The rows the build's last fresh run returned and the page they came from. Absent before the build has run the Agent."
     },
     "error": {
       "type": "string",

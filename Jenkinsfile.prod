@@ -39,7 +39,7 @@ pipeline {
 
         stage('Check GitHub App') {
             steps {
-                // SE4-4140: the GitHub Release later in this build uses the org's GitHub
+                // The GitHub Release later in this build uses the org's GitHub
                 // App (credential github-app-sequentum-jenkins). It belongs to the org,
                 // not a person, and Jenkins makes short-lived tokens from it. Check it
                 // here, so a broken credential stops the build before anything is

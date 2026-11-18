@@ -1086,7 +1086,7 @@ describe("SequentumApiClient", () => {
     });
   });
 
-  // SE4-4389: a synchronous start waits on the server for up to `timeout` seconds, so the
+  // A synchronous start waits on the server for up to `timeout` seconds, so the
   // client must not give up at its default 30 s first.
   describe("synchronous start timeout", () => {
     /**

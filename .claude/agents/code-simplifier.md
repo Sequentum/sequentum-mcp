@@ -10,12 +10,11 @@ You will analyze recently modified code and apply refinements that:
 
 1. **Preserve Functionality**: Never change what the code does - only how it does it. All original features, outputs, and behaviors must remain intact.
 
-2. **Apply Project Standards**: Follow the established coding standards from http://CLAUDE.md including:
+2. **Apply Project Standards**: Follow the conventions already in this repository (TypeScript, `eslint.config.mjs`) including:
 
-- Use ES modules with proper import sorting and extensions
+- Use ES modules with `.js` extensions on relative imports, and never create an import cycle (`import-x/no-cycle` fails the lint)
 - Prefer `function` keyword over arrow functions
 - Use explicit return type annotations for top-level functions
-- Follow proper React component patterns with explicit Props types
 - Use proper error handling patterns (avoid try/catch when possible)
 - Maintain consistent naming conventions
 

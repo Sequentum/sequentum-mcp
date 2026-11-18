@@ -803,6 +803,28 @@ describe("agent builder handler dispatch", () => {
       expect(parsed.error).toBe(AGENT_BUILD_ERROR_MESSAGE);
       expect(parsed.error).not.toContain("NullReferenceException");
     });
+
+    it("passes the build's sample through: rows, the page they came from and its screenshot reference", async () => {
+      const sample = {
+        columns: ["title", "price"],
+        rows: [{ title: "Sharp Objects", price: "£47.82" }],
+        totalRows: 20,
+        pageUrl: "https://books.toscrape.com/catalogue/category/books/mystery_3/index.html",
+        pageCount: 2,
+        morePages: true,
+        hasScreenshot: true,
+        screenshotPath: "/api/v1/agent-builder/ab_1/screenshot",
+      };
+      vi.mocked(mockApiClient.getAgentBuildStatus).mockResolvedValueOnce({
+        status: "completed", agentId: 7, agentName: "Mystery books", partial: false, plan: null, report: null, sample,
+      } as unknown as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>);
+
+      const result = await client.callTool({ name: "get_agent_build_status", arguments: { sessionId: "ab_1" } });
+
+      expect(result.isError).toBeFalsy();
+      expect(JSON.parse((result.content[0] as { text: string }).text).sample).toEqual(sample);
+      expect((result.structuredContent as { sample?: unknown }).sample).toEqual(sample);
+    });
   });
 
   describe("stop_agent_build", () => {
@@ -1014,7 +1036,7 @@ describe("tool registration invariants", () => {
     }
   });
 
-  // SE4-4389: a sync start holds the tool call open for up to `timeout` seconds.
+  // A sync start holds the tool call open for up to `timeout` seconds.
   it("tells clients that a synchronous start_agent waits up to its timeout", () => {
     const startAgent = tools.find((t) => t.name === "start_agent");
     const timeout = startAgent?.inputSchema.properties?.timeout as { description?: string } | undefined;

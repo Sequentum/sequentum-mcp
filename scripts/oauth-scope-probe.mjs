@@ -598,7 +598,7 @@ function judgeMcpWithoutScopeChallenge(call, mode, observed) {
 // The scopes judgeGrant compares. Identity scopes (openid, profile, email) carry no API meaning.
 const GRANT_SCOPES = [...API_SCOPES, "offline_access"];
 
-// SE4-3895: returns { expected, ok, note } for the scope a token exchange granted. A profile that
+// Returns { expected, ok, note } for the scope a token exchange granted. A profile that
 // sends no scope must get the server default -- the six API scopes, never offline_access. Every
 // other profile must get exactly what it asked for: an explicit scope is never widened. Compares
 // as sets and ignores scopes outside GRANT_SCOPES.

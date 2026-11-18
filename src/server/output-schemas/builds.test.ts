@@ -64,6 +64,9 @@ describe("get_agent_build_status output schema", () => {
   it.each([
     ["QA processing with plan", qaProcessing],
     ["completed with report", { ...qaProcessing, status: "completed", report }],
+    ["completed with a sample", { ...qaProcessing, status: "completed", report, sample: {
+      columns: ["title"], rows: [{ title: "Olio" }], totalRows: 20, pageUrl: "https://books.toscrape.com/x", pageCount: null,
+      morePages: true, hasScreenshot: true, screenshotPath: "/api/v1/agent-builder/ab_1/screenshot" } }],
     ["processing before the plan", { status: "processing", agentId: null, agentName: null, partial: false, plan: null, report: null }],
     ["error", { status: "error", error: "Build failed." }],
   ])("accepts the %s shape", (_name, value) => {

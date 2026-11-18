@@ -108,7 +108,7 @@ https://mcp.sequentum.com/mcp
 The Sequentum MCP Server follows standard MCP protocols and works with any client that supports:
 
 - **OAuth authentication** (recommended)
-- **Streamable HTTP** with automatic SSE fallback
+- **Streamable HTTP** (the older HTTP+SSE transport is not served)
 
 Use the server URL `https://mcp.sequentum.com/mcp` in your client's MCP configuration.
 
@@ -227,7 +227,7 @@ content see no difference. The seven acknowledgement-only tools (`stop_agent`, `
 
 ## Available Prompts
 
-The server includes 9 reusable prompt templates that guide the AI through common multi-step workflows. See the [Prompts Reference](./docs/prompts-reference.md) for detailed documentation.
+The server includes 11 reusable prompt templates that guide the AI through common multi-step workflows. See the [Prompts Reference](./docs/prompts-reference.md) for detailed documentation.
 
 <!-- BEGIN AUTO GENERATED PROMPTS -->
 
@@ -246,7 +246,7 @@ The server includes 9 reusable prompt templates that guide the AI through common
   - [`cost-analysis`](docs/prompts-reference.md#cost-analysis) -- Analyze costs across agents
 - **Agent Building**
   - [`build-agent-from-prompt`](docs/prompts-reference.md#build-agent-from-prompt) -- Build a new agent from a natural language description
-  - [`inspect-agent-draft`](docs/prompts-reference.md#inspect-agent-draft) -- Inspect a build session and decide whether to save or discard
+  - [`inspect-agent-draft`](docs/prompts-reference.md#inspect-agent-draft) -- Check the status of a build session and show the resulting agent
 
 <!-- END AUTO GENERATED PROMPTS -->
 

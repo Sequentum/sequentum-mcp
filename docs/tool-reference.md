@@ -617,6 +617,12 @@ Create a schedule for an agent. Three schedule types are supported:
 | `inputParameters` | string | No | JSON input parameters for runs. |
 | `isEnabled` | boolean | No | Whether schedule is active. Default: `true`. |
 | `parallelism` | number | No | Parallel instances. Default: 1. |
+| `parallelMaxConcurrency` | number | No | Maximum concurrent parallel instances. Only relevant when `parallelism` > 1. |
+| `parallelExport` | string | No | `Combined` merges the output of parallel instances; `Separated` keeps per-instance files. |
+| `isExclusive` | boolean | No | If `true`, prevents concurrent runs of this agent. Default: `false`. |
+| `isWaitOnFailure` | boolean | No | If `true`, waits before retrying after a failure. Default: `false`. |
+| `logLevel` | string | No | `Fatal`, `Error`, `Warning` or `Info`. Default: `Info`. |
+| `logMode` | string | No | `Text`, or `TextAndHtml` for both. Default: `Text`. |
 
 #### Returns
 
@@ -1300,6 +1306,7 @@ Start a new AI-powered agent building session from a natural language descriptio
 |-----------|------|----------|-------------|
 | `prompt` | string | Yes | What you want to scrape or automate, in your own words, passed through verbatim. The agent builder infers technical details (pagination, lazy-load, output format, etc.) server-side. Must be 10–5000 characters. |
 | `spaceId` | number | No | Space ID to associate the agent with. Uses the default space if omitted. |
+| `waitForCompletion` | boolean | No | If `true` (default), wait for the build and return the `agentId` in one call (up to about 5 minutes). If `false`, return the `sessionId` at once for polling with `get_agent_build_status`. |
 
 #### Returns
 
@@ -1369,6 +1376,16 @@ Poll the current status of an agent building session. Call this repeatedly until
     "questions": [
       { "text": "Do you want every results page?", "replies": ["First page only", "Every page"] }
     ]
+  },
+  "sample": {
+    "columns": ["title", "price"],
+    "rows": [{ "title": "Acer Aspire 5", "price": "$549.99" }],
+    "totalRows": 24,
+    "pageUrl": "https://www.amazon.com/s?k=laptop",
+    "pageCount": null,
+    "morePages": true,
+    "hasScreenshot": true,
+    "screenshotPath": "/api/v1/agent-builder/ab_123/screenshot"
   }
 }
 ```
@@ -1377,6 +1394,7 @@ Poll the current status of an agent building session. Call this repeatedly until
 - `report` appears when a build that wrote a Plan finishes: each Plan line graded `met`, `partial` or `unmet`, and up to 3 `questions`. The first reply of each question is the choice the build already made.
 - The build never pauses for an answer, and no tool applies an answer to a finished build. A different answer needs a new `start_agent_build` whose prompt includes it.
 - `partial: true` means the build stopped early but delivered a working Agent; `summary` says what is missing.
+- `sample` appears once the build has run the Agent: its columns, up to 10 `rows` with `totalRows`, the `pageUrl` the rows came from, `pageCount` (when the page shows "Page 1 of N") and `morePages` (the page links to a next page), and `screenshotPath`, a Control Center API path that answers that page's screenshot as base64.
 
 A finished `start_agent_build` (the default `waitForCompletion: true`) returns the same fields plus `sessionId`.
 

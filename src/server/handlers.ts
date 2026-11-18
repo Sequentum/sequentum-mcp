@@ -56,7 +56,7 @@ export function formatToolError(error: unknown): {
       errorPrefix = "Authentication Failed";
       errorMessage = "Your OAuth token is invalid or has expired. Disconnect and reconnect the Sequentum MCP server to sign in again.";
     } else if (error.isInsufficientScope) {
-      // SE4-3929: distinguished from the generic 403 below so the caller learns this is a
+      // Distinguished from the generic 403 below so the caller learns this is a
       // scope problem, not a permissions problem, and is told what to do about it.
       errorPrefix = "Insufficient Scope";
       // The scope name comes from the upstream WWW-Authenticate header, which is not
