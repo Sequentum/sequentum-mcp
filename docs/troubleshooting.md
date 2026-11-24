@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-This guide covers common issues and their solutions when using the Sequentum MCP server. The supported setup is the remote server at `https://mcp.sequentum.com/mcp` using OAuth authentication. The local `npx` setup (stdio with `SEQUENTUM_API_KEY`) was removed in 3.0.0; see [Local stdio mode (removed)](../README.md#local-stdio-mode-removed).
+This guide covers common issues and their solutions when using the Sequentum MCP server. The supported setup is the remote server at `https://mcp.sequentum.com/mcp` using OAuth authentication. The local `npx` setup (stdio with `SEQUENTUM_API_KEY`) was removed in 3.0.1; see [Local stdio mode (removed)](../README.md#local-stdio-mode-removed).
 
 ## Table of Contents
 
@@ -39,28 +39,76 @@ should not notice anything beyond a brief pause.
 
 A 401 that persists across retries therefore means something other than expiry:
 
-- the connector was revoked from your Sequentum account, or
-- your user or organisation access changed.
+- the connector was revoked from your Sequentum account,
+- your user or organisation access changed,
+- your token was issued for a different address of this server, for example
+  one you connected through before the server started checking it, or
+- a multi-factor authentication (MFA) change on your account, which ends existing
+  sign-ins:
+  - you set up MFA, or an administrator reset your MFA,
+  - you turned MFA off in your account settings,
+  - your organisation started requiring MFA, or
+  - a remembered device was removed or revoked.
 
-Reconnect from **Settings → Connectors** to resolve either case.
+When the Sequentum sign-in behind a connection is revoked (for example after a
+security change on your account), the server answers the next request that
+reaches your Sequentum account with a 401 and a sign-in challenge, and a
+compliant client asks you to sign in again. A request still answered as an
+error, such as one that had already started reporting progress, needs no action:
+the next one prompts you. You only need to reconnect by hand if your client does
+not prompt you.
+
+After an MFA change, complete the MFA prompt when you sign in again. If your
+organisation now requires MFA, your client may show "Multi-factor authentication
+is now required for this account. Sign in again to reconnect."
+
+Reconnect from **Settings → Connectors** to resolve any of the causes above. If the 401
+persists after reconnecting, check that the connector's URL is
+`https://mcp.sequentum.com/mcp`: a token issued through any other address is
+rejected, so re-add the connector with that URL. If the URL is already right,
+your client is reusing its stored tokens: remove the connector and add it again.
 
 **Diagnosing a report as an operator.** The server logs one line per rejected
 token:
 
     [MCP] auth=rejected reason=expired kid="STXjwgTe" age=417s client="claude-desktop"
 
-`reason` is one of `expired`, `bad-signature`, `malformed` or `bad-alg`.
+`reason` is one of `expired`, `bad-signature`, `malformed`, `bad-alg`,
+`unknown-kid`, `wrong-audience` or `upstream-revoked`. `unknown-kid` means the latest fetch of the signing keys succeeded
+and none of them matches the token's key id: the token was not signed with Control
+Center's current key. After a signing-key change it also hits tokens signed with
+the previous key until they expire, and, for up to a minute, genuine new-key
+tokens until the next key fetch picks up the new key. `wrong-audience` means the
+token is correctly signed but was issued for another resource: its audience names
+a different origin from `MCP_CANONICAL_ORIGIN`, or it has none. A refresh cannot
+repair it, so the user must sign in again through the `MCP_CANONICAL_ORIGIN`
+address: a connector added through any other address of this server gets the
+same rejected token back. Disconnect the server and connect it again, removing
+and re-adding it if the client keeps reusing its stored tokens.
+An agent that renews its token with the JWT-bearer grant and sends the Control
+Center's own address as `resource` gets a token for the Control Center, which
+this server rejects. It must leave `resource` out, or send this server's origin
+where the Control Center is configured to accept it.
+
+A token that passed these checks but that the Control Center then refused as
+revoked is logged as `auth=rejected reason=upstream-revoked` when the server
+answers with a 401. This is the line to expect after an MFA change on the user's
+account; `described=yes` means the Control Center gave a reason, such as the
+organisation now requiring MFA. A refusal that arrives after the response has
+started, for example while a build reports progress, is returned as a tool error
+and logs no such line.
 
 Lines reading `auth=unverifiable` are **not** rejections — the request was passed
-through and the API decided it. Three reasons appear there:
+through and the API decided it. Two reasons appear there:
 
-- `jwks-unreachable` — the signing keys could not be fetched.
-- `unknown-kid` — the token was signed by a key we do not recognise, usually a
-  rotation we have not picked up yet.
-- `wrong-audience` — the token was minted for a different origin. This is
-  recorded rather than rejected on purpose: a refresh reuses the original
-  resource, so rejecting it would put the client in a 401/refresh loop it could
-  never escape.
+- `jwks-unreachable` — the signing keys could not be fetched, the fetched
+  document held no usable RS256 key, or the latest fetch failed and the token's
+  key is not among those cached.
+- `wrong-audience` — the token was minted for a different origin, and
+  `MCP_CANONICAL_ORIGIN` is unset or does not parse. The audience was then
+  compared with the caller's own `Host`, so a mismatch is logged and passed
+  through rather than rejected. With the variable set, the same token is
+  rejected and logged as `auth=rejected reason=wrong-audience`.
 
 A sustained run of `jwks-unreachable` means validation has degraded to
 pass-through and needs attention.
@@ -80,7 +128,7 @@ Error: ECONNREFUSED or ETIMEDOUT connecting to mcp.sequentum.com
 
 1. **Check your internet connection**
 2. **Verify the MCP server URL** is correct: `https://mcp.sequentum.com/mcp`
-3. **Test the health endpoint** -- visit `https://mcp.sequentum.com/health` in your browser. A healthy server returns an `OK` response. If this fails, the server may be temporarily unavailable.
+3. **Test the health endpoint** -- visit `https://mcp.sequentum.com/health` in your browser. A healthy server returns JSON with `"status": "ok"`. If this fails, the server may be temporarily unavailable.
 4. **Check firewall/proxy settings** that might be blocking outbound HTTPS connections
 
 ---
@@ -94,40 +142,7 @@ Error: ECONNREFUSED or ETIMEDOUT connecting to mcp.sequentum.com
 Error: API Error 401: Unauthorized
 ```
 
-**Remote connector (OAuth).**
-
-Access tokens last one hour. Your client does not refresh on a timer -- the
-server prompts the renewal by returning a 401 on your next request once the
-token expires, and your client redeems its refresh token right then, so you
-should not notice anything beyond a brief pause.
-
-A 401 that persists across retries therefore means something other than expiry:
-
-- the connector was revoked from your Sequentum account, or
-- your user or organisation access changed.
-
-Reconnect from **Settings → Connectors** to resolve either case.
-
-**Diagnosing a report as an operator.** The server logs one line per rejected
-token:
-
-    [MCP] auth=rejected reason=expired kid="STXjwgTe" age=417s client="claude-desktop"
-
-`reason` is one of `expired`, `bad-signature`, `malformed` or `bad-alg`.
-
-Lines reading `auth=unverifiable` are **not** rejections — the request was passed
-through and the API decided it. Three reasons appear there:
-
-- `jwks-unreachable` — the signing keys could not be fetched.
-- `unknown-kid` — the token was signed by a key we do not recognise, usually a
-  rotation we have not picked up yet.
-- `wrong-audience` — the token was minted for a different origin. This is
-  recorded rather than rejected on purpose: a refresh reuses the original
-  resource, so rejecting it would put the client in a 401/refresh loop it could
-  never escape.
-
-A sustained run of `jwks-unreachable` means validation has degraded to
-pass-through and needs attention.
+The causes and fixes are the same as for [OAuth authentication failed or token expired](#oauth-authentication-failed-or-token-expired) above.
 
 ---
 
@@ -286,11 +301,11 @@ Run agent 123 synchronously with a 5 minute timeout
 
 ---
 
-### "Unknown tool" error
+### "Tool not found" error
 
 **Error:**
 ```
-Error: Unknown tool: tool_name
+Tool tool_name not found
 ```
 
 **Cause:** You're trying to call a tool that doesn't exist.

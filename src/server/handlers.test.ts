@@ -7,6 +7,7 @@ import {
   validateScheduleStartTime,
   AGENT_BUILD_ERROR_MESSAGE,
 } from "./handlers.js";
+import { MAX_TOOL_INPUT_ELEMENTS } from "./constants.js";
 import { tools } from "./tools.js";
 import { resources, resourceTemplates } from "./resources.js";
 import { getPromptMessages, prompts } from "./prompts.js";
@@ -506,6 +507,32 @@ describe("agent builder handler dispatch", () => {
       }
     });
 
+    it("waitForCompletion=true: returns the plan, report and partial flag with the agent", async () => {
+      vi.useFakeTimers();
+      try {
+        const plan = { item: { text: "a book", provenance: "user" }, fields: [] };
+        const report = { met: 1, total: 1, questions: [{ text: "Every page?", replies: ["First page only", "Every page"] }] };
+        vi.mocked(mockApiClient.startAgentBuild).mockResolvedValueOnce({ sessionId: "sess-plan-1" });
+        vi.mocked(mockApiClient.getAgentBuildStatus).mockResolvedValueOnce({
+          status: "completed", agentId: 9, agentName: "Plan Agent", partial: true, summary: "No prices.", plan, report,
+        } as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>);
+
+        const resultPromise = client.callTool({
+          name: "start_agent_build",
+          arguments: { prompt: "scrape book titles from https://books.toscrape.com" },
+        });
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+
+        expect(result.isError).toBeFalsy();
+        const parsed = JSON.parse((result.content[0] as { text: string }).text);
+        expect(parsed).toMatchObject({ status: "completed", agentId: 9, sessionId: "sess-plan-1", partial: true, summary: "No prices.", plan, report });
+        expect(result.structuredContent).toMatchObject({ plan, report });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("waitForCompletion=true: sanitizes raw backend error and returns isError", async () => {
       vi.useFakeTimers();
       try {
@@ -776,6 +803,28 @@ describe("agent builder handler dispatch", () => {
       expect(parsed.error).toBe(AGENT_BUILD_ERROR_MESSAGE);
       expect(parsed.error).not.toContain("NullReferenceException");
     });
+
+    it("passes the build's sample through: rows, the page they came from and its screenshot reference", async () => {
+      const sample = {
+        columns: ["title", "price"],
+        rows: [{ title: "Sharp Objects", price: "£47.82" }],
+        totalRows: 20,
+        pageUrl: "https://books.toscrape.com/catalogue/category/books/mystery_3/index.html",
+        pageCount: 2,
+        morePages: true,
+        hasScreenshot: true,
+        screenshotPath: "/api/v1/agent-builder/ab_1/screenshot",
+      };
+      vi.mocked(mockApiClient.getAgentBuildStatus).mockResolvedValueOnce({
+        status: "completed", agentId: 7, agentName: "Mystery books", partial: false, plan: null, report: null, sample,
+      } as unknown as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>);
+
+      const result = await client.callTool({ name: "get_agent_build_status", arguments: { sessionId: "ab_1" } });
+
+      expect(result.isError).toBeFalsy();
+      expect(JSON.parse((result.content[0] as { text: string }).text).sample).toEqual(sample);
+      expect((result.structuredContent as { sample?: unknown }).sample).toEqual(sample);
+    });
   });
 
   describe("stop_agent_build", () => {
@@ -987,7 +1036,7 @@ describe("tool registration invariants", () => {
     }
   });
 
-  // SE4-4389: a sync start holds the tool call open for up to `timeout` seconds.
+  // A sync start holds the tool call open for up to `timeout` seconds.
   it("tells clients that a synchronous start_agent waits up to its timeout", () => {
     const startAgent = tools.find((t) => t.name === "start_agent");
     const timeout = startAgent?.inputSchema.properties?.timeout as { description?: string } | undefined;
@@ -1022,6 +1071,28 @@ describe("createMcpServer via SDK v2", () => {
         expect(listed.description).toBe(declared.description);
         expect(listed.inputSchema).toEqual(declared.inputSchema);
       }
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("rejects a tools/call whose arguments exceed MAX_TOOL_INPUT_ELEMENTS", async () => {
+    const apiClient = {} as unknown as SequentumApiClient;
+    const server = createMcpServer(apiClient, "9.9.9");
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    try {
+      const result = await client.callTool({
+        name: tools[0]!.name,
+        arguments: { pad: new Array(MAX_TOOL_INPUT_ELEMENTS + 1).fill(0) },
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toMatch(
+        new RegExp(`more than the maximum of ${MAX_TOOL_INPUT_ELEMENTS} elements`)
+      );
     } finally {
       await client.close();
       await server.close();

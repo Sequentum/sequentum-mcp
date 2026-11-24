@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SequentumApiClient } from "./api-client.js";
 import { AuthenticationError, ApiRequestError, RateLimitError } from "./types.js";
+import { runWithUpstreamAuth, type UpstreamAuthContext } from "./upstream-auth.js";
 
 /** A client that authenticates the way the HTTP transport does: with a Bearer token. */
 function authedClient(
@@ -934,6 +935,110 @@ describe("SequentumApiClient", () => {
     });
   });
 
+  describe("upstream revocation context", () => {
+    it("records a middleware 401 on the request context and still rejects", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        headers: new Headers({ "www-authenticate": 'Bearer resource_metadata="https://cc/x"' }),
+        text: async () => "",
+      } as Response);
+
+      const ctx: UpstreamAuthContext = {
+        tokenType: "authorization_code",
+        origin: "http://x",
+        onRevoked: () => {},
+      };
+      let caught: unknown;
+      await runWithUpstreamAuth(ctx, async () => {
+        try {
+          await client.getAllAgents();
+        } catch (e) {
+          caught = e;
+        }
+      });
+
+      expect(caught).toBeInstanceOf(ApiRequestError);
+      expect((caught as ApiRequestError).isUnauthorized).toBe(true);
+      expect(ctx.revoked).toEqual({ description: null });
+    });
+
+    it("counts a POST as in flight until it answers, then records that it changed something", async () => {
+      let answer!: (response: Response) => void;
+      vi.mocked(fetch).mockReturnValueOnce(new Promise<Response>((resolve) => (answer = resolve)));
+
+      const ctx: UpstreamAuthContext = {
+        tokenType: "authorization_code",
+        origin: "http://x",
+        onRevoked: () => {},
+      };
+      await runWithUpstreamAuth(ctx, async () => {
+        const started = client.startAgent(7, {});
+        await vi.waitFor(() => expect(ctx.pendingMutations).toBe(1));
+        expect(ctx.mutated).toBeUndefined();
+        answer({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: new Headers({ "content-type": "application/json" }),
+          text: async () => '{"id":1}',
+          json: async () => ({ id: 1 }),
+        } as Response);
+        await started;
+      });
+
+      expect(ctx.pendingMutations).toBe(0);
+      expect(ctx.mutated).toBe(true);
+    });
+
+    it.each([
+      ["a 5xx", () => Promise.resolve({ ok: false, status: 502, statusText: "Bad Gateway", headers: new Headers(), text: async () => "" } as Response)],
+      ["a network error", () => Promise.reject(new TypeError("fetch failed"))],
+    ])("counts a POST that failed with %s as possibly having changed something", async (_name, outcome) => {
+      vi.mocked(fetch).mockImplementationOnce(outcome);
+      const ctx: UpstreamAuthContext = { tokenType: "authorization_code", origin: "http://x", onRevoked: () => {} };
+
+      await runWithUpstreamAuth(ctx, () => client.startAgent(7, {}).catch(() => {}));
+
+      expect(ctx.pendingMutations).toBe(0);
+      expect(ctx.mutated).toBe(true);
+    });
+
+    it("counts a successful DELETE as having changed something", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+        statusText: "No Content",
+        headers: new Headers(),
+        text: async () => "",
+      } as Response);
+      const ctx: UpstreamAuthContext = { tokenType: "authorization_code", origin: "http://x", onRevoked: () => {} };
+
+      await runWithUpstreamAuth(ctx, () => client.deleteRun(7, 1));
+
+      expect(ctx.pendingMutations).toBe(0);
+      expect(ctx.mutated).toBe(true);
+    });
+
+    it("counts a POST the upstream refused with a 4xx as unchanged", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        headers: new Headers({ "www-authenticate": 'Bearer resource_metadata="https://cc/x"' }),
+        text: async () => "",
+      } as Response);
+      const ctx: UpstreamAuthContext = { tokenType: "authorization_code", origin: "http://x", onRevoked: () => {} };
+
+      await runWithUpstreamAuth(ctx, () => client.startAgent(7, {}).catch(() => {}));
+
+      expect(ctx.pendingMutations).toBe(0);
+      expect(ctx.mutated).toBeUndefined();
+      expect(ctx.revoked).toEqual({ description: null });
+    });
+  });
+
   describe("timeout handling", () => {
     it("should throw timeout error when request is aborted", async () => {
       // Create client with very short timeout and no retries
@@ -981,7 +1086,7 @@ describe("SequentumApiClient", () => {
     });
   });
 
-  // SE4-4389: a synchronous start waits on the server for up to `timeout` seconds, so the
+  // A synchronous start waits on the server for up to `timeout` seconds, so the
   // client must not give up at its default 30 s first.
   describe("synchronous start timeout", () => {
     /**
@@ -2688,6 +2793,43 @@ describe("ApiRequestError", () => {
       const error = new ApiRequestError(403, "Forbidden", "msg", "/api/test", {});
       expect(error.isInsufficientScope).toBe(false);
       expect(error.requiredScope).toBeNull();
+    });
+  });
+
+  describe("isAuthMiddlewareChallenge / errorDescription", () => {
+    const MFA =
+      "Multi-factor authentication is now required for this account. Sign in again to reconnect.";
+    const cases: Array<[string, string | null, boolean, string | null]> = [
+      [
+        "bare resource_metadata challenge",
+        'Bearer realm="MCP Server", resource_metadata="https://cc/.well-known/oauth-protected-resource"',
+        true,
+        null,
+      ],
+      [
+        "challenge with error_description",
+        `Bearer realm="MCP Server", resource_metadata="https://cc/x", error="invalid_token", error_description="${MFA}"`,
+        true,
+        MFA,
+      ],
+      ["lowercase scheme", 'bearer resource_metadata="https://cc/x"', true, null],
+      ["no resource_metadata", 'Bearer realm="x"', false, null],
+      ["non-Bearer scheme", 'Basic realm="x", resource_metadata="https://cc/x"', false, null],
+      ["null header", null, false, null],
+      [
+        "empty error_description",
+        'Bearer resource_metadata="https://cc/x", error_description=""',
+        true,
+        null,
+      ],
+    ];
+
+    it.each(cases)("%s", (_name, wwwAuthenticate, challenge, description) => {
+      const error = new ApiRequestError(401, "Unauthorized", "x", "/api/v1/agent/all", {
+        wwwAuthenticate,
+      });
+      expect(error.isAuthMiddlewareChallenge).toBe(challenge);
+      expect(error.errorDescription).toBe(description);
     });
   });
 });

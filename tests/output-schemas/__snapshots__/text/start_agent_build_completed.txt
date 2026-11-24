@@ -2,5 +2,7 @@
   "status": "completed",
   "agentId": 555,
   "agentName": "Prices",
+  "agentElapsedSeconds": 41.2,
+  "browserIoSeconds": 3.5,
   "sessionId": "sess-0001"
 }

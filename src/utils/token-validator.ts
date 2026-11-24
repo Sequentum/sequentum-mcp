@@ -14,25 +14,25 @@
 
 import type { JwksKeySource } from "./jwks-cache.js";
 
-/** A definite negative verdict: the token cannot work and the client must re-authenticate. */
+/**
+ * A definite negative verdict: the token cannot work here and the client must re-authenticate.
+ * The one exception is `wrong-audience`, which the caller may choose not to enforce.
+ */
 export type RejectReason =
   | "expired"
   | "bad-signature"
   | "malformed"
-  | "bad-alg";
+  | "bad-alg"
+  // The latest JWKS fetch succeeded and lacks the token's kid.
+  | "unknown-kid"
+  // Correctly signed, but issued for another resource. Whether to enforce it is the caller's call.
+  | "wrong-audience";
 
 /**
- * We could not reach a verdict. Distinct from `RejectReason` — see {@link Verdict}.
- *
- * `wrong-audience` lives here, not in `RejectReason`, because it is the one check a
- * client's refresh cannot resolve: Control Center's refresh grant reuses the stored
- * `Resource` and mints a new token with the *same* `aud`, so rejecting on audience
- * would 401 → refresh → 401 forever — worse than the bug SE4-3856 fixes. The backend
- * itself sets `ValidateAudience = false` for the same reason, documenting that a
- * token's audience may legitimately be "any URI (localhost, tunnel URL, external
- * domain)". Treating a mismatch as unverifiable fails the request open instead.
+ * We could not reach a verdict because the signing keys could not be fetched.
+ * Distinct from `RejectReason` — see {@link Verdict}.
  */
-export type UnverifiableReason = "jwks-unreachable" | "unknown-kid" | "wrong-audience";
+export type UnverifiableReason = "jwks-unreachable";
 
 /** The claims a caller may act on, populated only for a `valid` verdict. */
 export interface Claims {
@@ -46,16 +46,21 @@ export interface Claims {
   readonly scopes: readonly string[];
   /** The `clientId` claim (camelCase, as Control Center mints it), when it is a string. */
   readonly clientId?: string;
-  /** The `token_type` claim: `authorization_code` for user tokens, `client_credentials` for server keys. */
+  /**
+   * The `token_type` claim: `authorization_code` for user tokens, `agent` for tokens issued to a
+   * registered agent, `client_credentials` for server keys.
+   */
   readonly tokenType?: string;
 }
 
 /**
  * The three-way split is the core of the design.
  *
- * - `rejected` — a definite verdict. Send 401 + WWW-Authenticate.
- * - `unverifiable` — infrastructure failure (JWKS down, key rotated). Pass the
- *   request through to the API, behaving exactly as before this change. Failing
+ * - `rejected` — a definite verdict. Send 401 + WWW-Authenticate, except that the
+ *   caller may pass a `wrong-audience` through when it has no configured origin to
+ *   compare against.
+ * - `unverifiable` — infrastructure failure (JWKS unreachable). Pass the request
+ *   through to the API, behaving exactly as before this change. Failing
  *   closed here would 401 every user during a JWKS blip, and since their refresh
  *   would succeed but still not validate, it would escalate a brief outage into
  *   mass re-authentication.
@@ -171,9 +176,11 @@ function audienceMatches(entry: string, normalizedCanonicalOrigin: string): bool
  *
  * `exp` deliberately precedes the key lookup. An expiry check can only ever
  * produce a rejection, never an acceptance, so it needs no verified signature —
- * and running it first means an expired token is still rejected during a key
- * rotation, when the lookup returns `unverifiable` and the caller fails open.
- * A forged token claiming a future `exp` is still caught by the signature check.
+ * and running it first means an expired token is still rejected while the JWKS
+ * is unreachable, when the lookup returns `unverifiable` and the caller fails open.
+ * A forged token claiming a future `exp` is caught by the signature check when its
+ * kid is known, and rejected as `unknown-kid` when the latest JWKS fetch succeeded
+ * without it. Only while the JWKS is unreachable does it pass unverified.
  *
  * @param token - the raw Bearer value, with the `Bearer ` prefix already removed
  * @param canonicalOrigin - this server's resource identifier, for the `aud` check
@@ -205,7 +212,7 @@ export async function validateToken(
   }
 
   const lookup = await keys.getKey(kid);
-  if (lookup.kind === "unknown") return { kind: "unverifiable", reason: "unknown-kid", kid };
+  if (lookup.kind === "unknown") return { kind: "rejected", reason: "unknown-kid", kid };
   if (lookup.kind === "unreachable") {
     return { kind: "unverifiable", reason: "jwks-unreachable", kid };
   }
@@ -226,7 +233,7 @@ export async function validateToken(
   const aud = audienceList(parsed.payload.aud);
   const normalizedCanonicalOrigin = normalizeOrigin(canonicalOrigin);
   if (!aud.some((entry) => audienceMatches(entry, normalizedCanonicalOrigin))) {
-    return { kind: "unverifiable", reason: "wrong-audience", kid };
+    return { kind: "rejected", reason: "wrong-audience", kid };
   }
 
   const { scope, clientId, token_type: tokenType } = parsed.payload;

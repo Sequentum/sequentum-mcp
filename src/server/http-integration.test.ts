@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createServer, type Server as HttpServer } from "node:http";
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { startHttpServer } from "./http-server.js";
 import glamaClaim from "./well-known/glama.json" with { type: "json" };
 import { MCP_RATE_LIMIT_MAX, RATE_LIMIT_ERROR_CODE } from "./constants.js";
 import { connect } from "node:net";
-import { SUPPORTED_SCOPES } from "../utils/oauth-metadata.js";
+import { SUPPORTED_SCOPES, buildAuthChallenge } from "../utils/oauth-metadata.js";
 import type { ResourceScopesSource } from "../utils/resource-scopes.js";
 import { API_CONTENT_SECURITY_POLICY } from "./csp.js";
 import { LANDING_PAGE_CSP } from "./landing-page.js";
@@ -34,12 +34,38 @@ function rawRequest(base: string, raw: string): Promise<string> {
   });
 }
 
+// MCP_CANONICAL_ORIGIN now decides the advertised resource, the challenges and the landing
+// page, so a value left exported in the shell running the suite would fail every Host-mode
+// test below. TRUST_PROXY decides whether a spoofed X-Forwarded-Proto reaches req.protocol,
+// so a shell `TRUST_PROXY=false` would make the spoof tests pass vacuously. Suites that need
+// either set it themselves; this restores the shell's values after.
+const SCRUBBED_ENV = ["MCP_CANONICAL_ORIGIN", "TRUST_PROXY"] as const;
+const savedEnv: Partial<Record<(typeof SCRUBBED_ENV)[number], string>> = {};
+beforeEach(() => {
+  for (const name of SCRUBBED_ENV) {
+    savedEnv[name] = process.env[name];
+    delete process.env[name];
+  }
+});
+afterEach(() => {
+  for (const name of SCRUBBED_ENV) {
+    const saved = savedEnv[name];
+    if (saved === undefined) delete process.env[name];
+    else process.env[name] = saved;
+  }
+});
+
 describe("POST /mcp through the real Express app", () => {
   let server: HttpServer;
   let base: string;
+  let savedTrustProxy: string | undefined;
 
   beforeEach(async () => {
     process.env.REQUIRE_AUTH = "false";
+    // Unset so the X-Forwarded-For test below exercises the default, not
+    // whatever TRUST_PROXY the shell running the suite happens to export.
+    savedTrustProxy = process.env.TRUST_PROXY;
+    delete process.env.TRUST_PROXY;
     server = await startHttpServer("https://api.example.test", "https://api.example.test", "9.9.9", 0, "127.0.0.1");
     const addr = server.address();
     if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
@@ -48,6 +74,8 @@ describe("POST /mcp through the real Express app", () => {
 
   afterEach(async () => {
     delete process.env.REQUIRE_AUTH;
+    if (savedTrustProxy === undefined) delete process.env.TRUST_PROXY;
+    else process.env.TRUST_PROXY = savedTrustProxy;
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
@@ -156,6 +184,30 @@ describe("POST /mcp through the real Express app", () => {
     // MCP 2026-07-28 reserves -32020..-32099 for the spec; -32000..-32019 stays ours.
     expect(RATE_LIMIT_ERROR_CODE).toBeGreaterThanOrEqual(-32019);
     expect(RATE_LIMIT_ERROR_CODE).toBeLessThanOrEqual(-32000);
+  });
+
+  it("keys the rate limit on the proxy-written X-Forwarded-For entry, not the client's", async () => {
+    // A reverse proxy appends the address it saw to whatever X-Forwarded-For the
+    // client sent, so only the rightmost entry is trustworthy. Here the test
+    // client plays the proxy: the rightmost entry stays fixed while the leftmost,
+    // client-chosen one rotates. If rotating it opened a fresh bucket, a client
+    // could send unlimited requests per window.
+    const post = (forwardedFor: string) =>
+      fetch(`${base}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "x-forwarded-for": forwardedFor,
+        },
+        body: "{}",
+      });
+
+    const first = await post("203.0.113.10, 192.0.2.1");
+    const second = await post("198.51.100.77, 192.0.2.1");
+
+    const remaining = (res: Response) => Number(res.headers.get("ratelimit-remaining"));
+    expect(remaining(second)).toBe(remaining(first) - 1);
   });
 });
 
@@ -309,6 +361,401 @@ describe("POST /mcp authentication", () => {
   });
 });
 
+// When the Control Center rejects a user's token with its auth-middleware 401, the MCP
+// client must get an HTTP 401 with this server's challenge, so it re-authorizes by itself,
+// instead of a 200 tool result it cannot act on. Every other token type, and every other
+// upstream refusal, keeps the tool result it gets today.
+describe("upstream revocation of a user token", () => {
+  let server: HttpServer;
+  let base: string;
+  let upstream: HttpServer;
+  let pair: CryptoKeyPair;
+  /** Answers every upstream request other than the JWKS document. */
+  let respond: (req: IncomingMessage, res: ServerResponse) => void;
+
+  const KID = "revocation-test-key";
+  const CHALLENGE_A =
+    'Bearer realm="MCP Server", resource_metadata="http://cc/.well-known/oauth-protected-resource"';
+  const DESCRIPTION =
+    "Multi-factor authentication is now required for this account. Sign in again to reconnect.";
+  const CHALLENGE_B = `${CHALLENGE_A}, error="invalid_token", error_description="${DESCRIPTION}"`;
+
+  function segment(obj: unknown): string {
+    return Buffer.from(JSON.stringify(obj), "utf8").toString("base64url");
+  }
+
+  async function mint(payload: Record<string, unknown>): Promise<string> {
+    const input = `${segment({ alg: "RS256", kid: KID })}.${segment(payload)}`;
+    const sig = await crypto.subtle.sign(
+      { name: "RSASSA-PKCS1-v1_5" },
+      pair.privateKey,
+      new TextEncoder().encode(input)
+    );
+    return `${input}.${Buffer.from(sig).toString("base64url")}`;
+  }
+
+  function userToken(tokenType = "authorization_code", scope = "agents:read"): Promise<string> {
+    return mint({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: base,
+      token_type: tokenType,
+      scope,
+      clientId: "c",
+    });
+  }
+
+  function upstreamReplies(status: number, headers: Record<string, string>, body: string): void {
+    respond = (_req, res) => {
+      res.writeHead(status, { "content-type": "application/json", ...headers });
+      res.end(body);
+    };
+  }
+
+  function callModern(token: string): Promise<Response> {
+    return fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+        "Mcp-Method": "tools/call",
+        "Mcp-Protocol-Version": "2026-07-28",
+        "Mcp-Name": "list_agents",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "list_agents", arguments: {}, _meta: ENVELOPE },
+      }),
+    });
+  }
+
+  /** An older-protocol request: no envelope, no Mcp-Method/Mcp-Name, so the stateless legacy path answers it. */
+  function callLegacy(token: string, method = "tools/call", params: unknown = { name: "list_agents", arguments: {} }) {
+    return fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+        "mcp-protocol-version": "2025-06-18",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }),
+    });
+  }
+
+  /** Every JSON-RPC message in an SSE or JSON body, in order. */
+  function messages(text: string): Record<string, any>[] {
+    const data = text
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim())
+      .filter(Boolean);
+    return (data.length > 0 ? data : [text]).map((chunk) => JSON.parse(chunk));
+  }
+
+  function toolText(text: string): { isError: unknown; text: string } {
+    const final = messages(text).find((m) => m.id === 2);
+    return { isError: final?.result?.isError, text: final?.result?.content?.[0]?.text ?? "" };
+  }
+
+  beforeEach(async () => {
+    process.env.REQUIRE_AUTH = "true";
+    pair = await crypto.subtle.generateKey(
+      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["sign", "verify"]
+    );
+    const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+    upstreamReplies(200, {}, "[]");
+    upstream = createServer((req, res) => {
+      if (req.url === "/api/oauth/certs") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ keys: [{ kty: "RSA", use: "sig", alg: "RS256", kid: KID, n: jwk.n, e: jwk.e }] }));
+        return;
+      }
+      respond(req, res);
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", () => resolve()));
+    const upstreamAddr = upstream.address();
+    if (!upstreamAddr || typeof upstreamAddr === "string") throw new Error("expected a TCP address");
+
+    server = await startHttpServer(`http://127.0.0.1:${upstreamAddr.port}`, "https://api.example.test", "9.9.9", 0, "127.0.0.1");
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    base = `http://127.0.0.1:${addr.port}`;
+  });
+
+  afterEach(async () => {
+    delete process.env.REQUIRE_AUTH;
+    vi.restoreAllMocks();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  });
+
+  async function expectChallenge(res: Response): Promise<void> {
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toBe(buildAuthChallenge(base).wwwAuthenticate);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const body = (await res.json()) as { error: { code: number } };
+    expect(body.error.code).toBe(-32001);
+  }
+
+  it("answers 401 for a revoked user token (legacy era)", async () => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    await expectChallenge(await callLegacy(await userToken()));
+  });
+
+  it("answers 401 for a revoked user token (modern era)", async () => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    await expectChallenge(await callModern(await userToken()));
+  });
+
+  it("answers 401 for a write tool whose POST the upstream refuses", async () => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    const token = await userToken("authorization_code", "agents:read agents:write runs:read runs:write");
+    await expectChallenge(await callLegacy(token, "tools/call", { name: "start_agent", arguments: { agentId: 7 } }));
+  });
+
+  it("answers 401 for resources/read of sequentum://agents", async () => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    await expectChallenge(await callLegacy(await userToken(), "resources/read", { uri: "sequentum://agents" }));
+  });
+
+  it("answers 401 for a batch whose first result needs no upstream call", async () => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    // tools/list answers without calling the upstream, so its result is the first frame;
+    // the revocation only arrives with the list_agents call after it.
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${await userToken()}`,
+        "mcp-protocol-version": "2025-03-26",
+      },
+      body: JSON.stringify([
+        { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
+        { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "list_agents", arguments: {} } },
+      ]),
+    });
+
+    await expectChallenge(res);
+  });
+
+  it("relays the upstream error_description", async () => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_B }, "");
+    const res = await callLegacy(await userToken());
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toContain(`error_description="${DESCRIPTION}"`);
+    const body = (await res.json()) as { error: { message: string; data: { error_description: string } } };
+    expect(body.error.data.error_description).toBe(DESCRIPTION);
+    expect(body.error.message).toBe("Authentication required");
+  });
+
+  it("drops an upstream error_description that sanitizes to nothing", async () => {
+    // Node refuses to send C0 controls such as \u0001 in a header, so this uses characters
+    // a header may carry but the sanitizer removes: a tab and a non-ASCII letter.
+    upstreamReplies(401, { "www-authenticate": `${CHALLENGE_A}, error_description="\t\u00e9\t"` }, "");
+    const onError = vi.spyOn(console, "error");
+    const res = await callLegacy(await userToken());
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toBe(buildAuthChallenge(base).wwwAuthenticate);
+    const body = (await res.json()) as { error: { data: Record<string, unknown> } };
+    expect(body.error.data).not.toHaveProperty("error_description");
+    const lines = onError.mock.calls.map((args) => String(args[0])).filter((l) => l.includes("reason=upstream-revoked"));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/described=no/);
+  });
+
+  it("still answers 405 to an authenticated GET", async () => {
+    const res = await fetch(`${base}/mcp`, {
+      method: "GET",
+      headers: { accept: "text/event-stream", authorization: `Bearer ${await userToken()}` },
+    });
+
+    expect(res.status).toBe(405);
+  });
+
+  it("sends the API CSP on the upstream-revoked 401", async () => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    const res = await callLegacy(await userToken());
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get("content-security-policy")).toBe(API_CONTENT_SECURITY_POLICY);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+  });
+
+  it.each(["client_credentials", "agent"])("keeps the tool result for %s tokens", async (tokenType) => {
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    const res = await callLegacy(await userToken(tokenType));
+
+    expect(res.status).toBe(200);
+    const result = toolText(await res.text());
+    expect(result.isError).toBe(true);
+    expect(result.text.startsWith("Authentication Failed:")).toBe(true);
+  });
+
+  it("keeps the tool result for a 401 without the middleware challenge", async () => {
+    upstreamReplies(401, {}, JSON.stringify({ message: "Access denied to this session" }));
+    const res = await callLegacy(await userToken());
+
+    expect(res.status).toBe(200);
+    const result = toolText(await res.text());
+    expect(result.isError).toBe(true);
+    expect(result.text.startsWith("Authentication Failed:")).toBe(true);
+  });
+
+  it("keeps 403 unchanged", async () => {
+    upstreamReplies(
+      403,
+      {
+        "www-authenticate":
+          'Bearer error="insufficient_scope", scope="agents:read", resource_metadata="http://cc/.well-known/oauth-protected-resource"',
+      },
+      ""
+    );
+    const scoped = await callLegacy(await userToken());
+    expect(scoped.status).toBe(200);
+    expect(toolText(await scoped.text()).text.startsWith("Insufficient Scope:")).toBe(true);
+
+    upstreamReplies(403, {}, "");
+    const plain = await callLegacy(await userToken());
+    expect(plain.status).toBe(200);
+    expect(toolText(await plain.text()).text.startsWith("Access Denied:")).toBe(true);
+  });
+
+  it("leaves a normal legacy tools/call byte-identical", async () => {
+    upstreamReplies(200, {}, "[]");
+    const held = await callLegacy(await userToken());
+    const notHeld = await callLegacy(await userToken("client_credentials"));
+
+    expect(held.status).toBe(200);
+    // The legacy path streams, so this goes through the SSE replay, not the immediate commit.
+    expect(held.headers.get("content-type")).toMatch(/^text\/event-stream/);
+    expect(held.headers.get("content-type")).toBe(notHeld.headers.get("content-type"));
+    expect(await held.text()).toBe(await notHeld.text());
+  });
+
+  it("falls back to the tool result once progress has streamed", async () => {
+    let statusPolls = 0;
+    respond = (req, res) => {
+      if (req.url === "/api/v1/agent-builder/start") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ sessionId: "s" }));
+        return;
+      }
+      if (req.url === "/api/v1/agent-builder/s/status") statusPolls++;
+      res.writeHead(401, { "content-type": "application/json", "www-authenticate": CHALLENGE_A });
+      res.end("");
+    };
+    const onError = vi.spyOn(console, "error");
+    const token = await userToken("authorization_code", "agents:read agents:write");
+    const res = await callLegacy(token, "tools/call", {
+      name: "start_agent_build",
+      arguments: { prompt: "Build an agent that lists products on example.com" },
+      _meta: { progressToken: "p" },
+    });
+
+    expect(res.status).toBe(200);
+    const all = messages(await res.text());
+    expect(all.some((m) => m.method === "notifications/progress")).toBe(true);
+    expect(all.find((m) => m.id === 2)?.result?.isError).toBe(true);
+    // The status poll did get the 401. The build had already started, so the request keeps
+    // its tool result either way; the hold's own rule that a revocation recorded after the
+    // first frame leaves the stream alone is pinned in response-hold.test.ts.
+    expect(statusPolls).toBe(1);
+    // The 401 was never sent, so it must not be logged as one.
+    expect(onError.mock.calls.some((args) => String(args[0]).includes("reason=upstream-revoked"))).toBe(false);
+  });
+
+  it("keeps the tool result when a build already started, so a replay cannot start another", async () => {
+    let starts = 0;
+    respond = (req, res) => {
+      if (req.url === "/api/v1/agent-builder/start") {
+        starts++;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ sessionId: "s" }));
+        return;
+      }
+      res.writeHead(401, { "content-type": "application/json", "www-authenticate": CHALLENGE_A });
+      res.end("");
+    };
+    const token = await userToken("authorization_code", "agents:read agents:write");
+    // No progressToken, so nothing is streamed before the first status poll's 401.
+    const res = await callLegacy(token, "tools/call", {
+      name: "start_agent_build",
+      arguments: { prompt: "Build an agent that lists products on example.com" },
+    });
+
+    expect(res.status).toBe(200);
+    const result = toolText(await res.text());
+    expect(result.isError).toBe(true);
+    expect(starts).toBe(1);
+  });
+
+  it("keeps the batch result when a POST in it succeeds after a sibling's 401", async () => {
+    let starts = 0;
+    respond = (req, res) => {
+      if (req.url === "/api/v1/agent/7/start") {
+        starts++;
+        // Answer after the sibling's 401 has been recorded.
+        setTimeout(() => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ id: 1 }));
+        }, 200);
+        return;
+      }
+      res.writeHead(401, { "content-type": "application/json", "www-authenticate": CHALLENGE_A });
+      res.end("");
+    };
+    const onError = vi.spyOn(console, "error");
+    const token = await userToken("authorization_code", "agents:read agents:write runs:read runs:write");
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+        "mcp-protocol-version": "2025-03-26",
+      },
+      body: JSON.stringify([
+        { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "start_agent", arguments: { agentId: 7 } } },
+        { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "list_agents", arguments: {} } },
+      ]),
+    });
+
+    // A 401 here would make the client replay the batch and start the agent again.
+    expect(res.status).toBe(200);
+    const all = messages(await res.text());
+    expect(all.find((m) => m.id === 1)?.result).toBeDefined();
+    expect(all.find((m) => m.id === 2)?.result?.isError).toBe(true);
+    expect(starts).toBe(1);
+    // The sibling's revocation was recorded, but no 401 was sent, so none is logged.
+    expect(onError.mock.calls.some((args) => String(args[0]).includes("reason=upstream-revoked"))).toBe(false);
+  });
+
+  it("logs auth=rejected reason=upstream-revoked", async () => {
+    const onError = vi.spyOn(console, "error");
+    const revokedLines = () =>
+      onError.mock.calls.map((args) => String(args[0])).filter((line) => line.includes("reason=upstream-revoked"));
+
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_B }, "");
+    expect((await callLegacy(await userToken())).status).toBe(401);
+    expect(revokedLines()).toHaveLength(1);
+    expect(revokedLines()[0]).toMatch(/auth=rejected reason=upstream-revoked .*described=yes/);
+
+    upstreamReplies(401, { "www-authenticate": CHALLENGE_A }, "");
+    expect((await callLegacy(await userToken())).status).toBe(401);
+    expect(revokedLines()).toHaveLength(2);
+    expect(revokedLines()[1]).toMatch(/auth=rejected reason=upstream-revoked .*described=no/);
+  });
+});
+
 describe("startHttpServer signal-handler registration", () => {
   // Before this fix, every call added its own un-removable process.on(...)
   // listener. http-integration.test.ts alone calls startHttpServer from two
@@ -388,6 +835,24 @@ describe("/.well-known/oauth-protected-resource", () => {
     expect(text).not.toContain("registration_endpoint");
   });
 
+  it.each(["/auth.md", "/.well-known/auth.md"])(
+    "redirects %s to the issuer's own manifest",
+    async (path) => {
+      const res = await fetch(`${base}${path}`, { redirect: "manual" });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("https://issuer.example.test/auth.md");
+    }
+  );
+
+  it("serves no auth.md body of its own", async () => {
+    // Registration, claims and tokens live on the Control Center; a local copy of the
+    // manifest would drift, exactly as the authorization-server metadata copy did.
+    const res = await fetch(`${base}/auth.md`, { redirect: "manual" });
+    const text = await res.text();
+    expect(text).not.toContain("registration");
+    expect(res.headers.get("content-type") ?? "").not.toMatch(/markdown/);
+  });
+
   it("serves the SUPPORTED_SCOPES fallback when no scope source is injected (default wiring)", async () => {
     // No mock apiBaseUrl in this suite ever resolves to a real Control Center, so this is the
     // server's real default behaviour, not a stub standing in for it.
@@ -442,6 +907,179 @@ describe("/.well-known/oauth-protected-resource", () => {
     } finally {
       await new Promise<void>((resolve) => primed.close(() => resolve()));
     }
+  });
+});
+
+// In Host mode (MCP_CANONICAL_ORIGIN unset) every route that derives this server's origin
+// parses the caller's Host. A Host the URL parser refuses used to throw inside the async
+// protected-resource handler, which Express 4 never forwards, so one unauthenticated
+// request exited the process. Each route must answer 400 instead, and the
+// server must still be serving afterwards.
+describe("a Host the URL parser refuses", () => {
+  let server: HttpServer;
+  let base: string;
+
+  beforeEach(async () => {
+    server = await startHttpServer(
+      "https://api.example.test",
+      "https://issuer.example.test",
+      "9.9.9",
+      0,
+      "127.0.0.1"
+    );
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    base = `http://127.0.0.1:${addr.port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  // `a<b` fails the host code-point check; `a:99999` has a port out of range.
+  const BAD_HOSTS = ["a<b", "a:99999"];
+  const REQUESTS = ["GET /.well-known/oauth-protected-resource", "POST /mcp", "GET /mcp"];
+
+  for (const line of REQUESTS) {
+    for (const host of BAD_HOSTS) {
+      it(`answers ${line} with Host ${host} with a 400 and keeps serving`, async () => {
+        const body = line.startsWith("POST") ? "{}" : "";
+        const res = await rawRequest(
+          base,
+          `${line} HTTP/1.1\r\nHost: ${host}\r\nContent-Type: application/json\r\n` +
+            `Content-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`
+        );
+        expect(res).toContain("400 Bad Request");
+        expect(res).toMatch(/content-type: text\/plain/i);
+        expect(res).toMatch(/cache-control: no-store/i);
+        expect(res).toContain("Bad Host header");
+
+        const health = await fetch(`${base}/health`);
+        expect(health.status).toBe(200);
+      });
+    }
+  }
+
+  it("still tolerates a request with no Host on the protocol routes", async () => {
+    // HTTP/1.0 allows no Host, and the protocol routes have always answered it; only
+    // the landing page, which renders the origin for a human, rejects it.
+    const res = await rawRequest(base, "GET /.well-known/oauth-protected-resource HTTP/1.0\r\n\r\n");
+    expect(res).toContain("200 OK");
+  });
+
+  it("lets a request with no Host through the /mcp Host check to the auth challenge", async () => {
+    // The Host check in front of /mcp must not reject a missing Host the way the landing
+    // page does: an unauthenticated caller still gets the 401 that points it at the PRM.
+    const savedRequireAuth = process.env.REQUIRE_AUTH;
+    delete process.env.REQUIRE_AUTH;
+    try {
+      const res = await rawRequest(base, "GET /mcp HTTP/1.0\r\n\r\n");
+      expect(res).toContain("401 Unauthorized");
+      expect(res).not.toContain("Bad Host header");
+    } finally {
+      if (savedRequireAuth !== undefined) process.env.REQUIRE_AUTH = savedRequireAuth;
+    }
+  });
+});
+
+// Host is caller-controlled, so with MCP_CANONICAL_ORIGIN set every origin this
+// server advertises comes from the env instead. `rawRequest` sends the spoofed Host,
+// because fetch rewrites it.
+describe("MCP_CANONICAL_ORIGIN pins the advertised origin", () => {
+  const CANONICAL = "https://mcp.example.test";
+  let server: HttpServer;
+  let base: string;
+
+  beforeEach(async () => {
+    delete process.env.REQUIRE_AUTH;
+    server = await startHttpServer(
+      "https://api.example.test",
+      "https://issuer.example.test",
+      "9.9.9",
+      0,
+      "127.0.0.1"
+    );
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    base = `http://127.0.0.1:${addr.port}`;
+    process.env.MCP_CANONICAL_ORIGIN = CANONICAL;
+  });
+
+  afterEach(async () => {
+    delete process.env.MCP_CANONICAL_ORIGIN;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("advertises the canonical origin as the PRM resource whatever Host says", async () => {
+    const res = await rawRequest(
+      base,
+      "GET /.well-known/oauth-protected-resource HTTP/1.1\r\nHost: attacker.example.test\r\nConnection: close\r\n\r\n"
+    );
+    expect(res).toContain("200 OK");
+    expect(res).toContain(`"resource":"${CANONICAL}"`);
+    expect(res).not.toContain("attacker.example.test");
+  });
+
+  it("never reads a Host the URL parser refuses when the canonical origin is set", async () => {
+    const res = await rawRequest(
+      base,
+      "GET /.well-known/oauth-protected-resource HTTP/1.1\r\nHost: a<b\r\nConnection: close\r\n\r\n"
+    );
+    expect(res).toContain("200 OK");
+    expect(res).toContain(`"resource":"${CANONICAL}"`);
+  });
+
+  it("ignores a spoofed X-Forwarded-Proto when the canonical origin is set", async () => {
+    // The connection is plain http, so the spoof must claim https to change anything:
+    // the default one-hop TRUST_PROXY trusts loopback, so req.protocol becomes "https"
+    // and an origin that took its scheme from the request would advertise https.
+    process.env.MCP_CANONICAL_ORIGIN = "http://mcp.example.test";
+    const res = await fetch(`${base}/.well-known/oauth-protected-resource`, {
+      headers: { "x-forwarded-proto": "https" },
+    });
+    const body = (await res.json()) as { resource: string };
+    expect(body.resource).toBe("http://mcp.example.test");
+  });
+
+  it("points the 401 challenge at the canonical origin whatever Host says", async () => {
+    const payload = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
+    const res = await rawRequest(
+      base,
+      "POST /mcp HTTP/1.1\r\nHost: attacker.example.test\r\nContent-Type: application/json\r\n" +
+        "Accept: application/json, text/event-stream\r\n" +
+        `Content-Length: ${Buffer.byteLength(payload)}\r\nConnection: close\r\n\r\n${payload}`
+    );
+    expect(res).toContain("401");
+    expect(res).toContain('realm="mcp.example.test"');
+    expect(res).toContain(`resource_metadata="${CANONICAL}/.well-known/oauth-protected-resource"`);
+    expect(res).not.toContain("attacker.example.test");
+  });
+
+  it("falls back to Host for the PRM resource when the value is unparseable", async () => {
+    process.env.MCP_CANONICAL_ORIGIN = "mcp.example.test"; // no scheme, so `new URL` throws
+    const body = (await (await fetch(`${base}/.well-known/oauth-protected-resource`)).json()) as {
+      resource: string;
+    };
+    expect(body.resource).toBe(base);
+  });
+
+  it("falls back to Host for a scheme-less host:port, which new URL parses to the origin \"null\"", async () => {
+    // `new URL("localhost:3000")` reads `localhost:` as a scheme and does not throw; its
+    // origin is the string "null". Taken as configured, that broke every 401 (the
+    // challenge builder cannot parse "null") and advertised "null" as the resource.
+    process.env.MCP_CANONICAL_ORIGIN = "localhost:3000";
+    const body = (await (await fetch(`${base}/.well-known/oauth-protected-resource`)).json()) as {
+      resource: string;
+    };
+    expect(body.resource).toBe(base);
+
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toContain(`resource_metadata="${base}/.well-known/oauth-protected-resource"`);
   });
 });
 
@@ -502,6 +1140,12 @@ describe("GET / landing page", () => {
     expect(body).not.toContain("mcp.sequentum.com");
   });
 
+  it("links the auth.md manifest and says agents can register through it", async () => {
+    const body = await (await fetch(`${base}/`)).text();
+    expect(body).toContain('href="/auth.md"');
+    expect(body).toMatch(/agents can register/i);
+  });
+
   it("does not shadow the protocol routes", async () => {
     // The whole safety argument for adding a root route is that Express matches `/`
     // exactly. If this ever regresses — or the same redirect is re-expressed as a
@@ -537,10 +1181,10 @@ describe("GET / landing page", () => {
 
   it("is cacheable privately but never by a shared cache", async () => {
     // The body varies by Host (which a shared cache keys on) AND by the leftmost
-    // X-Forwarded-Proto (which it does not, and which is client-supplied under the
-    // default trust proxy: true). `public` would let one anonymous request pin an
-    // hour of "connect over http://" onto the canonical page; `private` keeps the
-    // browser cache without exposing a shared one. The absence of `public` is the
+    // X-Forwarded-Proto (which it does not, and which is client-supplied whenever
+    // nothing in front of the server overwrites it). `public` would let one
+    // anonymous request pin an hour of "connect over http://" onto the canonical
+    // page; `private` keeps the browser cache without exposing a shared one. The absence of `public` is the
     // security property here — assert it directly, not just the happy string.
     const res = await fetch(`${base}/`);
     expect(res.headers.get("cache-control")).toBe("private, max-age=3600");
@@ -582,6 +1226,41 @@ describe("GET / landing page", () => {
     const res = await rawRequest(base, "GET / HTTP/1.0\r\n\r\n");
     expect(res).toContain("400 Bad Request");
     expect(res).not.toContain("undefined");
+  });
+
+  it("still rejects a request with no Host when MCP_CANONICAL_ORIGIN is set but unparseable", async () => {
+    // A set but unparseable value is Host mode, so the guard must test the parsed
+    // origin, not whether the variable is present.
+    process.env.MCP_CANONICAL_ORIGIN = "localhost:3000";
+    const res = await rawRequest(base, "GET / HTTP/1.0\r\n\r\n");
+    expect(res).toContain("400 Bad Request");
+    expect(res).not.toContain("undefined");
+  });
+
+  describe("with MCP_CANONICAL_ORIGIN set", () => {
+    // The configured origin is known, so the page neither echoes Host nor needs it.
+    beforeEach(() => {
+      process.env.MCP_CANONICAL_ORIGIN = "https://mcp.example.test";
+    });
+
+    afterEach(() => {
+      delete process.env.MCP_CANONICAL_ORIGIN;
+    });
+
+    it("advertises the canonical endpoint whatever Host says", async () => {
+      const res = await rawRequest(base, "GET / HTTP/1.1\r\nHost: attacker.example.test\r\nConnection: close\r\n\r\n");
+      expect(res).toContain("200 OK");
+      expect(res).toContain("<code>https://mcp.example.test/mcp</code>");
+      expect(res).not.toContain("attacker.example.test");
+      expect(res).toMatch(/cache-control: private, max-age=3600/i);
+    });
+
+    it("serves the page to a request with no Host", async () => {
+      const res = await rawRequest(base, "GET / HTTP/1.0\r\n\r\n");
+      expect(res).toContain("200 OK");
+      expect(res).toContain("https://mcp.example.test/mcp");
+      expect(res).not.toContain("undefined");
+    });
   });
 });
 
@@ -640,6 +1319,8 @@ describe("Content-Security-Policy on every response (IT-2272)", () => {
         await fetch(`${base}/.well-known/oauth-authorization-server`, { redirect: "manual" }),
       ],
       ["GET /.well-known/glama.json", await fetch(`${base}/.well-known/glama.json`)],
+      ["GET /auth.md", await fetch(`${base}/auth.md`, { redirect: "manual" })],
+      ["GET /.well-known/auth.md", await fetch(`${base}/.well-known/auth.md`, { redirect: "manual" })],
       [
         "POST /mcp",
         await fetch(`${base}/mcp`, {
@@ -690,6 +1371,12 @@ describe("Content-Security-Policy on every response (IT-2272)", () => {
     }
     if (!limited) throw new Error("expected the /mcp rate limiter to answer 429");
     expect(limited.headers.get("content-security-policy")).toBe(API_CONTENT_SECURITY_POLICY);
+    // The SE4-4540 hardening headers ride the same first middleware; checked here rather than
+    // in a second suite so the limiter is only exhausted once.
+    expect(limited.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(limited.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(limited.headers.get("x-frame-options")).toBe("DENY");
+    expect(limited.headers.get("x-powered-by")).toBeNull();
   });
 
   it("sends the API policy on a 400 for a malformed JSON body to /mcp", async () => {
@@ -731,6 +1418,111 @@ describe("Content-Security-Policy on every response (IT-2272)", () => {
       if (prior === undefined) delete process.env.OPENAI_APPS_CHALLENGE_TOKEN;
       else process.env.OPENAI_APPS_CHALLENGE_TOKEN = prior;
     }
+  });
+});
+
+describe("hardening headers on every response (SE4-4540)", () => {
+  let server: HttpServer;
+  let base: string;
+  let savedRequireAuth: string | undefined;
+
+  beforeEach(async () => {
+    // The 401 rows below need the auth gate on, whatever REQUIRE_AUTH the shell exports.
+    savedRequireAuth = process.env.REQUIRE_AUTH;
+    delete process.env.REQUIRE_AUTH;
+    server = await startHttpServer(
+      "https://api.example.test",
+      "https://issuer.example.test",
+      "9.9.9",
+      0,
+      "127.0.0.1"
+    );
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    base = `http://127.0.0.1:${addr.port}`;
+  });
+
+  afterEach(async () => {
+    if (savedRequireAuth === undefined) delete process.env.REQUIRE_AUTH;
+    else process.env.REQUIRE_AUTH = savedRequireAuth;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("sends the static hardening headers and no X-Powered-By on every route", async () => {
+    const responses: [string, Response][] = [
+      ["GET /", await fetch(`${base}/`)],
+      ["GET /health", await fetch(`${base}/health`)],
+      ["GET /.well-known/oauth-protected-resource", await fetch(`${base}/.well-known/oauth-protected-resource`)],
+      [
+        "GET /.well-known/oauth-authorization-server",
+        await fetch(`${base}/.well-known/oauth-authorization-server`, { redirect: "manual" }),
+      ],
+      ["GET /mcp (401)", await fetch(`${base}/mcp`)],
+      ["OPTIONS /mcp", await fetch(`${base}/mcp`, { method: "OPTIONS" })],
+    ];
+    for (const [route, res] of responses) {
+      expect({
+        route,
+        poweredBy: res.headers.get("x-powered-by"),
+        nosniff: res.headers.get("x-content-type-options"),
+        referrer: res.headers.get("referrer-policy"),
+        frame: res.headers.get("x-frame-options"),
+      }).toEqual({ route, poweredBy: null, nosniff: "nosniff", referrer: "no-referrer", frame: "DENY" });
+    }
+    // The auth gate answered that row, not the route handler.
+    expect(responses.find(([route]) => route === "GET /mcp (401)")?.[1].status).toBe(401);
+  });
+
+  it("sends the hardening headers on the 403 for a non-allowlisted browser origin", async () => {
+    const res = await rawRequest(
+      base,
+      "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: https://evil.example.test\r\n" +
+        "Content-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    expect(res).toContain("403 Forbidden");
+    expect(res).toMatch(/X-Content-Type-Options: nosniff\r\n/i);
+    expect(res).toMatch(/Referrer-Policy: no-referrer\r\n/i);
+    expect(res).toMatch(/X-Frame-Options: DENY\r\n/i);
+    expect(res).not.toMatch(/X-Powered-By/i);
+  });
+
+  it("sends HSTS when the request arrived over https at the proxy", async () => {
+    // TRUST_PROXY defaults to one hop, so X-Forwarded-Proto makes req.secure true —
+    // the same path production takes behind its TLS-terminating proxy.
+    const res = await fetch(`${base}/health`, { headers: { "X-Forwarded-Proto": "https" } });
+    expect(res.headers.get("strict-transport-security")).toBe("max-age=31536000; includeSubDomains");
+  });
+
+  it("omits HSTS on plain http, so local runs are unaffected", async () => {
+    const res = await fetch(`${base}/health`);
+    expect(res.headers.get("strict-transport-security")).toBeNull();
+  });
+
+  it("omits HSTS for a forwarded https claim when no proxy is trusted", async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    process.env.TRUST_PROXY = "false";
+    server = await startHttpServer("https://api.example.test", "https://issuer.example.test", "9.9.9", 0, "127.0.0.1");
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("expected a TCP address");
+    const res = await fetch(`http://127.0.0.1:${addr.port}/health`, { headers: { "X-Forwarded-Proto": "https" } });
+    expect(res.headers.get("strict-transport-security")).toBeNull();
+  });
+
+  it("marks the protected-resource document no-store", async () => {
+    // The body varies by Host in Host mode; a shared cache must never store it.
+    const res = await fetch(`${base}/.well-known/oauth-protected-resource`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("marks the 401 challenge no-store", async () => {
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("cache-control")).toBe("no-store");
   });
 });
 
@@ -849,6 +1641,23 @@ describe("token validation on /mcp (SE4-3856)", () => {
     expect(res.status).toBe(401);
   });
 
+  it("answers a forged token naming a kid the JWKS lacks with 401, including inside the refetch cooldown", async () => {
+    // RS256, an invented kid, a future exp and a garbage signature used to
+    // reach tools/list unauthenticated. The first request triggers the JWKS fetch;
+    // the second lands inside the 60 s cooldown, which must not reopen the gate.
+    const forged = `${segment({ alg: "RS256", kid: "attacker-chosen" })}.${segment({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: process.env.MCP_CANONICAL_ORIGIN,
+    })}.${Buffer.from("not-a-signature").toString("base64url")}`;
+
+    for (const attempt of [1, 2]) {
+      const res = await post(forged);
+
+      expect(res.status, `attempt ${attempt}`).toBe(401);
+      expect(res.headers.get("www-authenticate"), `attempt ${attempt}`).toContain('error="invalid_token"');
+    }
+  });
+
   it("answers a non-JWT bearer value with 401", async () => {
     const res = await post("sk-not-a-jwt");
     expect(res.status).toBe(401);
@@ -926,10 +1735,93 @@ describe("token validation on /mcp (SE4-3856)", () => {
     }
   });
 
+  it("logs a wrong-audience rejection without the audience value", async () => {
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    });
+    try {
+      const token = await mint({
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        aud: "https://someone-else.test/mcp",
+      });
+
+      const res = await post(token);
+
+      expect(res.status).toBe(401);
+      expect(errors.some((line) => line.includes("auth=rejected reason=wrong-audience"))).toBe(true);
+      // The audience is client-chosen and unbounded, so it never reaches the log.
+      expect(errors.some((line) => line.includes("someone-else.test"))).toBe(false);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("accepts a legacy-audience token when the origin is configured", async () => {
+    // Tokens minted without a resource parameter (and client-credentials tokens)
+    // carry this audience; enforcing the origin must not lock them out.
+    const token = await mint({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: "Sequentum Enterprise",
+    });
+
+    const res = await post(token);
+
+    expect(res.status).toBe(200);
+  });
+
+  it("answers a wrong-audience token on GET /mcp with 401", async () => {
+    const token = await mint({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: "https://someone-else.test",
+    });
+
+    const res = await fetch(`${base}/mcp`, {
+      method: "GET",
+      headers: { accept: "text/event-stream", authorization: `Bearer ${token}` },
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  describe("wrong-audience falls back to pass-through without a configured origin", () => {
+    // Without a configured origin the comparison target is the caller's own Host,
+    // so rejecting would add no security and could lock out every user behind a
+    // proxy whose Host differs from the public origin.
+    let errors: string[];
+
+    beforeEach(() => {
+      errors = [];
+      vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+        errors.push(args.map(String).join(" "));
+      });
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    for (const [label, value] of [["unset", undefined], ["unparseable", "mcp.sequentum.com"]] as const) {
+      it(`passes a wrong-audience token through when MCP_CANONICAL_ORIGIN is ${label}`, async () => {
+        if (value === undefined) delete process.env.MCP_CANONICAL_ORIGIN;
+        else process.env.MCP_CANONICAL_ORIGIN = value;
+        const token = await mint({
+          exp: Math.floor(Date.now() / 1000) + 3600,
+          aud: "https://someone-else.test",
+        });
+
+        const res = await post(token);
+
+        expect(res.status).toBe(200);
+        expect(errors.some((line) => line.includes("auth=unverifiable reason=wrong-audience"))).toBe(true);
+      });
+    }
+  });
+
   describe("MCP_CANONICAL_ORIGIN takes priority over the Host header", () => {
     // The outer beforeEach pins MCP_CANONICAL_ORIGIN to `${ORIGIN_ENV}:${addr.port}`,
     // which is byte-identical to what getMcpServerOrigin derives from the request's
-    // Host header. That makes the env branch in canonicalOrigin() untested: deleting
+    // Host header. That makes the env branch in configuredOrigin() untested: deleting
     // it entirely would not fail a single test above. Overriding it here to a
     // genuinely distinct origin, and then asserting on an audience equal to the
     // Host-derived value (now NOT the canonical one), is what actually proves the
@@ -953,11 +1845,10 @@ describe("token validation on /mcp (SE4-3856)", () => {
       expect(res.status).toBe(200);
     });
 
-    it("fails open (200, not 401) for a token whose audience is the Host-derived origin instead of the pinned one", async () => {
+    it("rejects (401) a token whose audience is the Host-derived origin instead of the pinned one", async () => {
       // This token's aud matches what Host would derive, but MCP_CANONICAL_ORIGIN
-      // now points elsewhere, so it no longer matches. That must produce
-      // unverifiable: wrong-audience (fail-open), not a rejection -- and the
-      // request still reaches the handler and gets a real 200.
+      // now points elsewhere, so it no longer matches. With the origin configured
+      // that is a rejection: the challenge names the pinned origin, not Host.
       const token = await mint({
         exp: Math.floor(Date.now() / 1000) + 3600,
         aud: base,
@@ -965,14 +1856,17 @@ describe("token validation on /mcp (SE4-3856)", () => {
 
       const res = await post(token);
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(401);
+      const challenge = res.headers.get("www-authenticate");
+      expect(challenge).toContain('error="invalid_token"');
+      expect(challenge).toContain(`resource_metadata="${CANONICAL}/.well-known/oauth-protected-resource"`);
     });
   });
 
   describe("an unparseable MCP_CANONICAL_ORIGIN falls back to the Host header", () => {
-    // canonicalOrigin()'s malformed-value path had no coverage: deleting it
+    // configuredOrigin()'s malformed-value path had no coverage: deleting it
     // would not fail a test. Status alone cannot pin it either, because
-    // wrong-audience is fail-open -- a fallback that resolved to the WRONG
+    // wrong-audience passes through whenever no origin is configured -- a fallback that resolved to the WRONG
     // origin also answers 200. The discriminating signal is the ABSENCE of a
     // wrong-audience log line, which only holds if the fallback really landed
     // on the Host-derived origin that this token's `aud` names.
@@ -1004,11 +1898,12 @@ describe("token validation on /mcp (SE4-3856)", () => {
       expect(errors.some((line) => line.includes("wrong-audience"))).toBe(false);
       // The per-request path stays quiet; auditCanonicalOrigin owns the warning.
       // Without this, reinstating a per-request warn would go unnoticed.
-      expect(errors.some((line) => line.includes("not a valid URL"))).toBe(false);
+      expect(errors.some((line) => line.includes("not a valid http(s) URL"))).toBe(false);
     });
 
     it("still rejects an expired token, so the fallback does not weaken the gate", async () => {
-      // The fallback must only affect which origin `aud` is compared against.
+      // The fallback changes which origin is advertised and which `aud` is expected,
+      // never whether the token is checked.
       // Expiry is checked before the audience, so a malformed env value must not
       // turn the SE4-3856 regression guard back into a 200.
       const token = await mint({
@@ -1050,6 +1945,11 @@ describe("per-tool scope challenge on /mcp", () => {
   /** A user token as Control Center's OAuthService.GenerateUserToken mints it. */
   function userToken(scope: string): Promise<string> {
     return mint({ scope, clientId: "https://client.example.test/cimd.json", token_type: "authorization_code" });
+  }
+
+  /** An agent token as Control Center mints it for a claimed agent registration: no clientId. */
+  function agentToken(scope: string): Promise<string> {
+    return mint({ scope, token_type: "agent" });
   }
 
   function callTool(token: string, name: string, era: "modern" | "legacy") {
@@ -1147,6 +2047,33 @@ describe("per-tool scope challenge on /mcp", () => {
     });
   }
 
+  it("points the step-up challenge at the canonical origin, not Host", async () => {
+    // beforeEach pins MCP_CANONICAL_ORIGIN to `base`, which is also what Host derives, so
+    // the test above cannot tell the two apart. A distinct value can. `mint` reads the env
+    // for `aud`, so the token still matches and `req.auth` is attached.
+    process.env.MCP_CANONICAL_ORIGIN = "https://mcp.example.test";
+    const res = await callTool(await userToken("runs:read offline_access"), "list_agents", "modern");
+
+    expect(res.status).toBe(403);
+    expect(res.headers.get("www-authenticate")).toContain(
+      'resource_metadata="https://mcp.example.test/.well-known/oauth-protected-resource"'
+    );
+  });
+
+  it("never forwards a wrong-audience token to the Control Center", async () => {
+    const token = await mint({
+      scope: "agents:read",
+      clientId: "https://client.example.test/cimd.json",
+      token_type: "authorization_code",
+      aud: "https://someone-else.test",
+    });
+
+    const res = await callTool(token, "list_agents", "modern");
+
+    expect(res.status).toBe(401);
+    expect(apiCalls).toEqual([]);
+  });
+
   it("dispatches a tools/call whose token holds the tool's scope", async () => {
     const res = await callTool(await userToken("agents:read"), "list_agents", "modern");
 
@@ -1175,6 +2102,24 @@ describe("per-tool scope challenge on /mcp", () => {
 
     expect(res.status).toBe(403);
     expect(res.headers.get("www-authenticate")).toContain('scope="agents:read runs:read"');
+  });
+
+  it("challenges an agent token missing the tool's scope, as it does a user token", async () => {
+    const token = await agentToken("runs:read");
+
+    const res = await callTool(token, "list_agents", "modern");
+
+    expect(res.status).toBe(403);
+    expect(res.headers.get("www-authenticate")).toContain('error="insufficient_scope"');
+    expect(res.headers.get("www-authenticate")).toContain('scope="runs:read agents:read"');
+    expect(apiCalls).toEqual([]);
+  });
+
+  it("dispatches an agent token that holds the tool's scope", async () => {
+    const res = await callTool(await agentToken("agents:read"), "list_agents", "modern");
+
+    expect(res.status).toBe(200);
+    expect(apiCalls).toEqual(["GET /api/v1/agent/all"]);
   });
 
   it("does not challenge a client_credentials token, which the Control Center exempts", async () => {

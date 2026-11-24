@@ -7,18 +7,20 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  # claude-code-action exchanges an OIDC token for its GitHub App token, because
+  # no github_token input is passed below (the GITHUB_TOKEN env var is not that
+  # input). Removing this breaks the review job.
   id-token: write
-  actions: read
 
 jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 1
 
-      - uses: anthropics/claude-code-action@v1
+      - uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           track_progress: true

@@ -1,9 +1,6 @@
 /**
  * Agent Builder tool handlers: start a build (with an internal polling loop),
  * check build status, and stop an in-progress build.
- *
- * Moved verbatim out of the `tools/call` switch in handlers.ts as part of the
- * dispatch-map refactor (see agents.ts for the original TODO reference).
  */
 import type { ToolHandler } from "./types.js";
 import { structuredResult } from "./types.js";
@@ -63,7 +60,10 @@ const start_agent_build: ToolHandler = async (args, { apiClient, sendProgress, s
     const status = await apiClient.getAgentBuildStatus(sessionId);
 
     if (status.status === "completed" || status.status === "ready") {
-      return structuredResult({ status: status.status, agentId: status.agentId, agentName: status.agentName, sessionId });
+      // Keep the Plan, report, partial flag and summary: they tell the caller what the build
+      // guessed and which questions to put to the user. `error` is never set on these statuses.
+      const { error: _unused, ...finished } = status;
+      return structuredResult({ ...finished, sessionId });
     }
 
     if (status.status === "error") {

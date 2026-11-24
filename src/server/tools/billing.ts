@@ -1,9 +1,6 @@
 /**
  * Billing/credits tool handlers: credits balance, spending summary, credit
  * history, agent usage, and per-agent cost breakdowns.
- *
- * Moved verbatim out of the `tools/call` switch in handlers.ts as part of the
- * dispatch-map refactor (see agents.ts for the original TODO reference).
  */
 import type { ToolHandler } from "./types.js";
 import { structuredResult } from "./types.js";

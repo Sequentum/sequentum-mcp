@@ -1,9 +1,6 @@
 /**
  * Agent tool handlers: list/search/inspect agents, manage runs, download run
  * files, and manage agent versions.
- *
- * Moved verbatim out of the `tools/call` switch in handlers.ts as part of the
- * dispatch-map refactor (see the TODO that used to live at handlers.ts:285).
  */
 import type { ToolHandler } from "./types.js";
 import { structuredResult, withStructured } from "./types.js";

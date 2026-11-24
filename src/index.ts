@@ -6,7 +6,7 @@
  *
  * Runs the Streamable HTTP transport for Claude Connectors (claude.ai, Claude Desktop)
  * and other remote MCP clients, which connect to https://mcp.sequentum.com/mcp. The
- * stdio transport and SEQUENTUM_API_KEY authentication were removed in 3.0.0.
+ * stdio transport and SEQUENTUM_API_KEY authentication were removed in 3.0.1.
  *
  * Environment Variables:
  *   PORT - HTTP server port (default: 3000)
@@ -30,7 +30,7 @@
  *                  resources/templates/list) and server/discover.
  *   MCP_RATE_LIMIT_WINDOW_MS - Rate-limit window (ms) for the /mcp endpoint.
  *   MCP_RATE_LIMIT_MAX - Max requests per window per IP for the /mcp endpoint.
- *   TRUST_PROXY - Express 'trust proxy' setting: 'true'/'false', a hop count, or a
+ *   TRUST_PROXY - Express 'trust proxy' setting (default 1): 'true'/'false', a hop count, or a
  *                  comma-separated CIDR/IP allowlist of trusted reverse proxies.
  *   ALLOWED_ORIGINS - Comma-separated list of additional exact-match Origins to
  *                  allow via CORS, appended to the built-in defaults.
@@ -42,6 +42,7 @@
 import { createRequire } from "module";
 import { startHttpServer } from "./server/http-server.js";
 import { resolveIssuer } from "./utils/issuer.js";
+import { installUnhandledRejectionLogger } from "./utils/process-guards.js";
 
 // Import version from package.json
 const require = createRequire(import.meta.url);
@@ -94,6 +95,8 @@ async function main() {
   const issuer = resolveIssuerOrExit();
   await startHttpServer(API_BASE_URL, issuer, version, HTTP_PORT, HTTP_HOST);
 }
+
+installUnhandledRejectionLogger();
 
 main().catch((error) => {
   console.error("Fatal error starting server:", error);

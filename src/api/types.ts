@@ -73,7 +73,31 @@ export class ApiRequestError extends Error {
    * header is absent or carries none. Only meaningful when {@link isInsufficientScope} is true.
    */
   get requiredScope(): string | null {
-    const match = /\bscope="([^"]*)"/.exec(this.wwwAuthenticate ?? "");
+    return this.challengeParam("scope");
+  }
+
+  /**
+   * True when the `WWW-Authenticate` header is a Bearer challenge carrying a
+   * `resource_metadata` parameter. On a 401 only the Control Center auth middleware
+   * sends this challenge; controller-level 401s send no header. Its scope 403 carries
+   * one too, so check the status alongside this.
+   */
+  get isAuthMiddlewareChallenge(): boolean {
+    const header = this.wwwAuthenticate ?? "";
+    return /^\s*bearer\b/i.test(header) && /\bresource_metadata=/.test(header);
+  }
+
+  /**
+   * The `error_description="…"` parameter of the `WWW-Authenticate` header, or null if the
+   * header is absent or the description is missing or empty.
+   */
+  get errorDescription(): string | null {
+    return this.challengeParam("error_description");
+  }
+
+  /** The quoted `name="…"` parameter of the `WWW-Authenticate` header, or null if absent or empty. */
+  private challengeParam(name: "scope" | "error_description"): string | null {
+    const match = new RegExp(`\\b${name}="([^"]*)"`).exec(this.wwwAuthenticate ?? "");
     return match && match[1].length > 0 ? match[1] : null;
   }
 
@@ -296,7 +320,7 @@ export interface ApiErrorBody {
   status?: number;
   detail?: string;
   instance?: string;
-  // SE4-3929: ScopeEnforcementFilter's machine-readable reason code (e.g. "insufficient_scope").
+  // ScopeEnforcementFilter's machine-readable reason code (e.g. "insufficient_scope").
   errorCode?: string;
 }
 
@@ -754,4 +778,46 @@ export interface ExternalSessionStatusResponse {
   agentName?: string;
   /** Error message when status is "error". */
   error?: string;
+  /** True when the build stopped early but delivered a working Agent; `summary` says what is missing. */
+  partial?: boolean;
+  /** What the Agent collects, what is missing and why the build stopped. Present only when `partial` is true. */
+  summary?: string;
+  /**
+   * What the build set out to deliver. Each line carries a provenance: `user` (the request said it),
+   * `site` (seen on the page), `assumption` (the builder's guess) or `default` (a product default).
+   */
+  plan?: Record<string, unknown> | null;
+  /** The Plan checked against the finished Agent, with up to 3 open questions. */
+  report?: AgentBuildReport | null;
+  /** The rows the build's last fresh run returned and the page they came from. Absent before the build has run the Agent. */
+  sample?: AgentBuildSample;
+}
+
+/** The `sample` of a build: the last fresh run's rows, the page they came from, and its screenshot reference. */
+export interface AgentBuildSample {
+  columns?: string[];
+  /** Up to 10 rows, each a column name to value map. */
+  rows?: Record<string, string>[];
+  /** How many rows the run returned; `rows` holds a sample of them. */
+  totalRows?: number;
+  pageUrl?: string | null;
+  /** The page count the page shows ("Page 1 of 12"), when it shows one. */
+  pageCount?: number | null;
+  /** True when the page links to a next page. */
+  morePages?: boolean;
+  hasScreenshot?: boolean;
+  /** Control Center API path (GET) that answers the screenshot as base64 with its content type. */
+  screenshotPath?: string | null;
+}
+
+/** The `report` of a finished build: Plan lines graded met, partial or unmet, plus open questions. */
+export interface AgentBuildReport {
+  lines?: Record<string, { status: string; evidence?: string | null }>;
+  met?: number;
+  partial?: number;
+  unmet?: number;
+  total?: number;
+  /** Up to 3 questions. The first reply is the default the build already used. */
+  questions?: { text: string; replies: string[] }[];
+  reportedAt?: string;
 }

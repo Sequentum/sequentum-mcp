@@ -206,6 +206,9 @@ function sanitizePromptArg(raw: string | undefined, maxLen: number): string | un
 const AGENT_BUILD_STATUS_BRANCHES =
   `   - status="completed": the agent was saved successfully. Report agentId and agentName to the user. Done — stop polling.\n` +
   `   - status="ready": the agent exists but may not be fully saved yet. Report agentId and agentName. Stop polling — no further action required.\n` +
+  `   - On completed or ready: if partial is true, give the user the summary. Name the plan lines whose provenance is "assumption" or "default", ` +
+  `and put any report.questions to the user in one message with their suggested replies (the first reply is what the build already did). ` +
+  `If the user picks another reply, call start_agent_build again with the original request plus that answer.\n` +
   `   - status="error": report the error field to the user. The session is over. If an agent was partially created, advise the user to delete it via the agents API.\n` +
   `   - status="cancelled": report that the build was aborted early.\n`;
 
