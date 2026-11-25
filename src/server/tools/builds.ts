@@ -198,6 +198,24 @@ function reportText(report: unknown): string[] {
   return lines;
 }
 
+/** The rows the build's last run returned, as a small markdown table, so a text-only client can show them. */
+function sampleText(sample: unknown): string[] {
+  const s = rec(sample);
+  const rows = list(s.rows).map(rec).slice(0, 5);
+  const columns = list(s.columns).map(txt).filter((c): c is string => !!c);
+  if (!rows.length || !columns.length) return [];
+  // ponytail: cells cut at 60 chars; the full rows are in structuredContent.sample.
+  const cell = (v: unknown) => (txt(v) ?? "").replace(/\|/g, "\\|").slice(0, 60);
+  const from = txt(s.pageUrl);
+  const total = typeof s.totalRows === "number" ? `${s.totalRows} rows` : "rows";
+  return [
+    `Sample (${total}${from ? ` from ${from}` : ""}${s.morePages === true ? ", more pages exist" : ""}):`,
+    `| ${columns.map(cell).join(" | ")} |`,
+    `|${columns.map(() => " --- |").join("")}`,
+    ...rows.map((r) => `| ${columns.map((c) => cell(r[c])).join(" | ")} |`),
+  ];
+}
+
 interface CardInput {
   sessionId: string;
   /** Last known status. Undefined when no read has succeeded. */
@@ -250,7 +268,7 @@ function card(input: CardInput): { text: string; value: Record<string, unknown>;
     case "ready":
       headline = `${fields.partial === true ? "Agent partly ready" : "Agent ready"}: ${agent ?? "no agent id returned"}`;
       if (fields.partial === true && txt(fields.summary)) lines.push(`What is missing: ${txt(fields.summary)}`);
-      lines.push(...planText(fields.plan), ...reportText(fields.report));
+      lines.push(...planText(fields.plan), ...sampleText(fields.sample), ...reportText(fields.report));
       if (agentUrl) lines.push(`Open in Sequentum: ${agentUrl}`);
       lines.push(
         `sessionId: "${sessionId}". The build is finished.` +

@@ -1032,7 +1032,12 @@ describe("agent builder handler dispatch", () => {
       const result = await client.callTool({ name: "get_agent_build_status", arguments: { sessionId: "ab_1" } });
 
       expect(result.isError).toBeFalsy();
-      expect((result.content[0] as { text: string }).text).toMatch(/^\*\*Agent ready: Mystery books \(agent 7\)\*\*/);
+      const text = (result.content[0] as { text: string }).text;
+      expect(text).toMatch(/^\*\*Agent ready: Mystery books \(agent 7\)\*\*/);
+      // A client that shows only the text still gets the rows.
+      expect(text).toContain(`Sample (20 rows from ${sample.pageUrl}, more pages exist):`);
+      expect(text).toContain("| title | price |");
+      expect(text).toContain("| Sharp Objects | £47.82 |");
       expect((result.structuredContent as { sample?: unknown }).sample).toEqual(sample);
     });
   });
