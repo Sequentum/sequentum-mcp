@@ -1032,7 +1032,7 @@ describe("agent builder handler dispatch", () => {
       const result = await client.callTool({ name: "get_agent_build_status", arguments: { sessionId: "ab_1" } });
 
       expect(result.isError).toBeFalsy();
-      expect(JSON.parse((result.content[0] as { text: string }).text).sample).toEqual(sample);
+      expect((result.content[0] as { text: string }).text).toMatch(/^\*\*Agent ready: Mystery books \(agent 7\)\*\*/);
       expect((result.structuredContent as { sample?: unknown }).sample).toEqual(sample);
     });
   });
