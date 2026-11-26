@@ -6,9 +6,10 @@ pipeline {
     // Jenkins reads this file from git, so these defaults are what the job shows.
     // When you cut a new release line, change the SourceBranch default too.
     parameters {
-        // Never release/3.0: main's version_state.json is on 3.1 now, so a 3.0 build would
-        // restart at 3.0.1 and overwrite the existing v3.0.1 image tags and release.
-        string(name: 'SourceBranch', defaultValue: 'release/3.1', description: 'Release branch to merge into main, like release/3.1')
+        // Never an older line once main moves on: version_state.json resets the patch count
+        // when the release changes, so after 3.2 ships, a release/3.1 build would restart at
+        // 3.1.1 and overwrite the existing v3.1.1 image tags and release.
+        string(name: 'SourceBranch', defaultValue: 'release/3.2', description: 'Release branch to merge into main, like release/3.2')
         string(name: 'TargetBranch', defaultValue: 'main', description: 'Branch to merge into. Must be main.')
     }
 
