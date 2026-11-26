@@ -30,8 +30,12 @@ export interface WorkflowSkills {
   bodies: ReadonlyMap<string, string>;
 }
 
-/** Removes a leading frontmatter block and the blank lines after it. */
+/**
+ * Removes a leading frontmatter block and the blank lines after it. A leading byte order
+ * mark goes with it, as the SDK's own parser drops one before reading the frontmatter.
+ */
 export function skillBody(markdown: string): string {
+  if (markdown.startsWith("\uFEFF")) markdown = markdown.slice(1);
   const match = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(markdown);
   if (!match) return markdown;
   return markdown.slice(match[0].length).replace(/^(?:[ \t]*\r?\n)+/, "");
@@ -53,6 +57,11 @@ export async function loadWorkflowSkills(
   const missing = promptNames.filter((name) => !skillSet.has(name));
   if (missing.length > 0) {
     throw new Error(`Prompts without a skill: ${missing.join(", ")}`);
+  }
+
+  const missingReference = referenceSkills.filter((name) => !skillSet.has(name));
+  if (missingReference.length > 0) {
+    throw new Error(`Reference skills without a skill: ${missingReference.join(", ")}`);
   }
 
   const promptSet = new Set(promptNames);

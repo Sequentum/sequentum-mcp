@@ -176,7 +176,7 @@ async function readResourceResult(uri: URL, apiClient: SequentumApiClient) {
  *
  * @param apiClient - The API client to use for this server instance
  * @param version - The server version string from package.json
- * @param skills - The workflow skills from loadWorkflowSkills; each prompt's text is its skill body
+ * @param skills - The skills from loadWorkflowSkills; each prompt's text is an argument preamble followed by its skill body
  * @returns Configured MCP Server instance
  */
 export function createMcpServer(

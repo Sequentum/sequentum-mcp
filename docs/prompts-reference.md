@@ -225,11 +225,11 @@ Walk through creating or reviewing schedules for an agent. Checks existing sched
 1. Uses `search_agents` to find the agent by name.
 2. Uses `get_agent` to retrieve its full details and input parameters.
 3. Uses `list_agent_schedules` to check if the agent already has any schedules.
-4. If schedules exist, summarizes them (name, type, timing, enabled status). If the user only wanted to review schedules, stops here.
+4. If schedules exist, summarizes them (name, type, timing, enabled status). If the user only wanted to review schedules, stops here. If the user wants to change an existing schedule rather than add another, it updates that schedule with `update_agent_schedule`, following the `schedule-editing` skill, instead of creating a new one.
 5. Determines the schedule type and its timing: CRON (3) for recurring cron-based, RunEvery (2) for interval-based, or RunOnce (1) for a single execution. If `scheduleDescription` was provided, translates it; otherwise, asks the user which schedule they want (CRON, run-every interval, or one-time).
 6. Uses `create_agent_schedule` to create the new schedule with the correct parameters.
 
-For input parameters and secrets on the schedule, it points to the `run-inputs` skill.
+For input parameters and secrets on the schedule, it points to the `run-inputs` skill (`skill://run-inputs/SKILL.md`).
 
 #### Example Invocations
 

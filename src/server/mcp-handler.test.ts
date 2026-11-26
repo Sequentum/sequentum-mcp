@@ -85,7 +85,7 @@ describe("cache hints", () => {
     await handler.close();
   });
 
-  it("keeps resources/read private and uncached — every resource is per-user", async () => {
+  it("keeps resources/read private and uncached — every API-backed resource is per-user", async () => {
     // The API client must be stubbed so the read SUCCEEDS. Asserting cache fields on a
     // failed read with `?? "private"` fallbacks would pass no matter what the server
     // emitted — a vacuous test guarding the one hint that is a tenant isolation boundary.

@@ -2,7 +2,7 @@
 
 The Sequentum MCP Server exposes 18 resources -- read-only, URI-addressable data that AI clients can browse and pull into context without calling a tool. Resources provide a "discovery" layer for browsing your Sequentum account data alongside the server's [tools](./tool-reference.md).
 
-> **How resources work:** Resources are accessed by URI. Static resources return data with default parameters (e.g., first page of agents, current month's spending). Resource templates accept parameters in the URI (e.g., `sequentum://agents/123`) to retrieve specific items. All resources return `application/json`.
+> **How resources work:** Resources are accessed by URI. Static resources return data with default parameters (e.g., first page of agents, current month's spending). Resource templates accept parameters in the URI (e.g., `sequentum://agents/123`) to retrieve specific items. All resources return `application/json`, except the [skill files](#skills), which are `text/markdown`.
 
 ## Quick Reference
 

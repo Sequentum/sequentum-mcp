@@ -180,8 +180,10 @@ function logEraLine(ctx: McpRequestContext, trace: TraceContext): void {
 /**
  * Build the stateless MCP HTTP handler.
  *
- * The factory runs once per HTTP request, so nothing — not the McpServer, not
- * the API client, not the caller's token — survives between requests. The token
+ * The factory runs once per HTTP request, so nothing caller-specific — not the
+ * McpServer, not the API client, not the caller's token — survives between
+ * requests. The one shared object is the skill catalog in `skills`: static,
+ * public text loaded at startup and attached to every per-request server. The token
  * is read from the request's Authorization header: the SDK deliberately does not
  * populate `ctx.authInfo` from headers (it is strictly pass-through for
  * callers that have already validated a token), so `ctx.requestInfo` is the
@@ -190,6 +192,10 @@ function logEraLine(ctx: McpRequestContext, trace: TraceContext): void {
  * The returned handler wraps the SDK's fetch to parse the body once (see the wrapper
  * below) and the factory emits one observability line per request before doing
  * anything else — see {@link logEraLine}.
+ *
+ * @param apiBaseUrl - Base URL of the Sequentum API
+ * @param version - The server version string from package.json
+ * @param skills - The skills from loadWorkflowSkills, shared by every request
  */
 export function createSequentumMcpHandler(
   apiBaseUrl: string,

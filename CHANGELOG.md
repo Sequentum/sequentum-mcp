@@ -32,6 +32,9 @@
 - **Four tool descriptions gained warnings.** `update_agent_schedule` replaces the whole schedule, so
   omitted fields are reset; and input parameters need the `?` prefix to be encrypted on `start_agent`,
   `create_agent_schedule`, `update_agent_schedule` and `run_space_agents`.
+- **`create_agent_schedule` now documents `isExclusive` as defaulting to `true`.** The server omits
+  the field when it is not given, and the Control Center then treats the schedule as exclusive; the
+  description used to say `false`.
 - **Tokens issued to an agent registered through the Control Center are now scope-checked
   too.** A token with `token_type` `agent` gets the same check before dispatch as a user token,
   including the HTTP 403 `insufficient_scope` challenge when it lacks a tool's scope.

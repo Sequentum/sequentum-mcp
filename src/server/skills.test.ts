@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SkillCatalogError } from "@modelcontextprotocol/server/ext/skills";
 import {
   loadWorkflowSkills,
   REFERENCE_SKILLS,
@@ -43,6 +44,10 @@ describe("skillBody", () => {
     expect(skillBody("---\nname: a\ndescription: d\n---\n\n# T\nbody\n")).toBe("# T\nbody\n");
   });
 
+  it("strips a leading byte order mark with the frontmatter, as the SDK parser does", () => {
+    expect(skillBody("\uFEFF---\nname: a\ndescription: d\n---\n\n# T\nbody\n")).toBe("# T\nbody\n");
+  });
+
   it("returns text without frontmatter unchanged", () => {
     expect(skillBody("# T\nbody\n")).toBe("# T\nbody\n");
   });
@@ -75,12 +80,21 @@ describe("loadWorkflowSkills", () => {
 
   it("rejects a reference skill that is also a prompt name", async () => {
     const dir = fixture({ a: skillMd("a") });
-    await expect(loadWorkflowSkills(dir, ["a"], ["a"])).rejects.toThrow(/\ba\b/);
+    await expect(loadWorkflowSkills(dir, ["a"], ["a"])).rejects.toThrow(
+      /Reference skills that are also prompt names: a$/,
+    );
+  });
+
+  it("rejects a reference skill without a skill folder", async () => {
+    const dir = fixture({ a: skillMd("a") });
+    await expect(loadWorkflowSkills(dir, ["a"], ["r"])).rejects.toThrow(/Reference skills without a skill: r$/);
   });
 
   it("rejects an invalid SKILL.md under strict mode", async () => {
-    const dir = fixture({ x: skillMd("y") });
-    await expect(loadWorkflowSkills(dir, ["x"], [])).rejects.toThrow();
+    // A valid prompt skill beside an invalid reference skill: without strict the SDK would
+    // skip the invalid one with a warning, so only a SkillCatalogError proves strict is on.
+    const dir = fixture({ a: skillMd("a"), x: skillMd("y") });
+    await expect(loadWorkflowSkills(dir, ["a"], ["x"])).rejects.toThrow(SkillCatalogError);
   });
 });
 
@@ -136,7 +150,7 @@ describe("the workflow skills under SKILLS_ROOT", () => {
     }
   });
 
-  it("every skill is within SKILL_LIMITS", async () => {
+  it("every skill loads under strict mode and its folder holds only SKILL.md", async () => {
     // loadWorkflowSkills loads with strict: true and the default limits, so an oversized
     // or malformed skill rejects here.
     await expect(loadWorkflowSkills()).resolves.toBeDefined();
@@ -163,8 +177,36 @@ describe("the workflow skills under SKILLS_ROOT", () => {
     expect(body).toContain(AGENT_BUILD_STATUS_BRANCHES);
   });
 
+  it("build-agent-from-prompt never tells the model to poll: start_agent_build waits server-side", () => {
+    const body = skills.bodies.get("build-agent-from-prompt")!;
+    expect(body).not.toMatch(/poll get_agent_build_status/i);
+    expect(body).not.toMatch(/cadence/i);
+    expect(body).not.toContain("status=\"processing\"");
+  });
+
+  it("schedule-agent asks for the timing it was not given and updates rather than duplicates", () => {
+    const body = skills.bodies.get("schedule-agent")!;
+    expect(body).toContain("otherwise ask which schedule they want");
+    expect(body).toMatch(/change an existing schedule rather than add another, do not create a new one/);
+    expect(body).toContain("update_agent_schedule");
+    // Both exits come before the step that creates a schedule.
+    expect(body.indexOf("update_agent_schedule")).toBeLessThan(body.indexOf("Use create_agent_schedule"));
+    expect(body.indexOf("otherwise ask which schedule")).toBeLessThan(body.indexOf("Use create_agent_schedule"));
+  });
+
   it("inspect-agent-draft contains the status branches verbatim", () => {
     expect(skills.bodies.get("inspect-agent-draft")!).toContain(AGENT_BUILD_STATUS_BRANCHES);
+  });
+
+  it("inspect-agent-draft keeps polling while processing, at the user's cadence or a capped default", () => {
+    const processing = skills.bodies
+      .get("inspect-agent-draft")!
+      .split("\n")
+      .find((line) => line.includes('status="processing"'));
+    expect(processing).toBeDefined();
+    expect(processing).toContain("call get_agent_build_status again");
+    expect(processing).toContain("at the cadence the user asked for if they gave one");
+    expect(processing).toContain("moderate cadence with backoff, never more than ~30s between calls");
   });
 
   it("debug-agent and compare-runs treat possibleCauses as hints", () => {
