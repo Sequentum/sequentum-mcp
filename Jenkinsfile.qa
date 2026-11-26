@@ -4,10 +4,15 @@ pipeline {
     }
 
     // Jenkins reads this file from git (develop), so the poll below works. A
-    // build the poll starts gets the default TargetBranch. QA builds release/3.2, the
-    // minor line for the new features on develop; release/3.1 takes hotfixes only. When
-    // you cut the next release line, change this default in the same commit, and the
-    // SourceBranch default in Jenkinsfile.prod too.
+    // build the poll starts gets the default TargetBranch that the previous build saved,
+    // so the first poll after a switch would merge develop into the old line. Aborting
+    // that build is no substitute: a started one has already pushed the merge, and a
+    // cancelled one saves nothing. So just before merging a switch, set the TargetBranch
+    // default to the new branch on the job's Configure page, with no build in between; the
+    // poll's first build then uses it and saves it again from this file. QA builds
+    // release/3.2, the minor line for the new features on develop; release/3.1 takes
+    // hotfixes only. When you cut the next release line, change this default in the same
+    // commit, and the SourceBranch default in Jenkinsfile.prod too.
     parameters {
         string(name: 'TargetBranch', defaultValue: 'release/3.2', description: 'Release branch to merge develop into, like release/3.2')
     }
