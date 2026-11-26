@@ -18,6 +18,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { SequentumApiClient } from "../api/api-client.js";
 import { createMcpServer } from "./handlers.js";
+import type { WorkflowSkills } from "./skills.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { currentUpstreamAuth, isHoldable, mayAnswerUnauthorized } from "../api/upstream-auth.js";
 import { buildAuthChallenge } from "../utils/oauth-metadata.js";
@@ -190,7 +191,11 @@ function logEraLine(ctx: McpRequestContext, trace: TraceContext): void {
  * below) and the factory emits one observability line per request before doing
  * anything else — see {@link logEraLine}.
  */
-export function createSequentumMcpHandler(apiBaseUrl: string, version: string): McpHttpHandler {
+export function createSequentumMcpHandler(
+  apiBaseUrl: string,
+  version: string,
+  skills: WorkflowSkills
+): McpHttpHandler {
   const inner = createMcpHandler((ctx) => {
     // Set by the fetch wrapper below. The header-only fallback covers any path that
     // reaches the factory without passing through it (none today; defensive).
@@ -203,7 +208,7 @@ export function createSequentumMcpHandler(apiBaseUrl: string, version: string): 
     if (token) {
       apiClient.setAccessToken(token);
     }
-    return createMcpServer(apiClient, version);
+    return createMcpServer(apiClient, version, skills);
   });
 
   /**

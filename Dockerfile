@@ -48,6 +48,9 @@ RUN corepack enable && pnpm install --frozen-lockfile --prod \
 # Copy built files from builder stage
 COPY --from=builder /app/dist ./dist
 
+# The workflow skills are read from disk at startup and served over MCP.
+COPY skills/ ./skills/
+
 # Set environment variables
 ENV NODE_ENV=production
 ENV PORT=3000

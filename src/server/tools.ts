@@ -6,7 +6,13 @@
  */
 
 import type { Tool } from "@modelcontextprotocol/server";
-import { BUILD_RESULT_FIELDS, PRE_CALL_CHECK, PROMPT_HANDLING_POLICY } from "./policies.js";
+import {
+  BUILD_RESULT_FIELDS,
+  ENCRYPTED_INPUT_PARAMETER_NOTE,
+  PRE_CALL_CHECK,
+  PROMPT_HANDLING_POLICY,
+  SCHEDULE_UPDATE_REPLACES_WARNING,
+} from "./policies.js";
 import { AGENT_BUILD_MAX_WAIT_LABEL } from "./constants.js";
 import { outputSchemaFor } from "./output-schemas/index.js";
 
@@ -269,6 +275,7 @@ export const tools: Tool[] = [
       "Returns: In async mode: the run record (its id is the runId; status is a numeric run status code). In sync mode: Scraped data directly as JSON/text. " +
       "REQUIRED: Get agentId first using list_agents, search_agents, or get_agent_build_status (when building a new agent). " +
       "TIP: Use get_agent first to check what inputParameters the agent accepts before running. " +
+      ENCRYPTED_INPUT_PARAMETER_NOTE + " " +
       PRE_CALL_CHECK,
     inputSchema: {
       type: "object" as const,
@@ -511,7 +518,8 @@ export const tools: Tool[] = [
       "Always specify timezone for local time interpretation. " +
       "Examples: CRON daily at 9am: {scheduleType:3, cronExpression:'0 9 * * *'}. " +
       "RunOnce: {scheduleType:1, startTime:'2026-01-20T14:30:00Z'}. " +
-      "RunEvery 30min: {scheduleType:2, runEveryCount:30, runEveryPeriod:1}.",
+      "RunEvery 30min: {scheduleType:2, runEveryCount:30, runEveryPeriod:1}. " +
+      ENCRYPTED_INPUT_PARAMETER_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -562,7 +570,7 @@ export const tools: Tool[] = [
           enum: ["Text", "TextAndHtml"],
           description: "Log format. 'Text' for plain text, 'TextAndHtml' for both. Default: 'Text'.",
         },
-        isExclusive: { type: "boolean", description: "If true, prevents concurrent runs of this agent. Default: false." },
+        isExclusive: { type: "boolean", description: "If true, prevents concurrent runs of this agent. Default: true." },
         isWaitOnFailure: { type: "boolean", description: "If true, waits before retrying after a failure. Default: false." },
         // NOTE: proxyPoolId and serverGroupId are intentionally omitted from the MCP tool.
         // The API supports them, but users have no way to discover valid IDs through the MCP
@@ -632,7 +640,9 @@ export const tools: Tool[] = [
       "Update an existing schedule for an agent. Modify timing, parameters, or other settings. " +
       "Answers: 'Change the schedule to run at 10am', 'Update the cron expression', 'Modify the schedule timezone'. " +
       "Three schedule types: RunOnce (1), RunEvery (2), CRON (3). " +
-      "TIP: Use get_agent_schedule or list_agent_schedules first to see current settings before updating.",
+      "TIP: Use get_agent_schedule or list_agent_schedules first to see current settings before updating. " +
+      SCHEDULE_UPDATE_REPLACES_WARNING + " " +
+      ENCRYPTED_INPUT_PARAMETER_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1051,6 +1061,7 @@ export const tools: Tool[] = [
       "Answers: 'Run all agents in space X', 'Execute the Production folder', 'Start all scrapers in Bot Blocking'. " +
       "Returns: Summary with totalAgents, agentsStarted, agentsFailed, and individual results. " +
       "WARNING: This starts multiple agents. Use get_space_agents first to see what will run. " +
+      ENCRYPTED_INPUT_PARAMETER_NOTE + " " +
       PRE_CALL_CHECK,
     inputSchema: {
       type: "object" as const,

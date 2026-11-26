@@ -27,6 +27,17 @@ import {
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { SequentumApiClient } from "../api/api-client.js";
 import { toolDispatch } from "./tools/index.js";
+import { REFERENCE_SKILLS, SKILLS_ROOT, loadWorkflowSkills } from "./skills.js";
+import {
+  SKILLS_EXTENSION_ID,
+  SKILLS_GET_METHOD,
+  SKILLS_LIST_METHOD,
+} from "@modelcontextprotocol/server/ext/skills";
+import { createSequentumMcpHandler } from "./mcp-handler.js";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const skills = await loadWorkflowSkills();
 
 describe("isPaginatedResponse", () => {
   it("returns true for paginated agent responses", () => {
@@ -452,7 +463,7 @@ describe("agent builder handler dispatch", () => {
 
   beforeEach(async () => {
     mockApiClient = makeMinimalMockClient();
-    const server = createMcpServer(mockApiClient, "test");
+    const server = createMcpServer(mockApiClient, "test", skills);
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     client = new Client({ name: "test-client", version: "1.0" });
@@ -711,7 +722,7 @@ describe("agent builder handler dispatch", () => {
           getAgentBuildStatus: vi.fn().mockResolvedValue({ status: "processing" }),
           stopAgentBuild: vi.fn().mockResolvedValue(undefined),
         });
-        const abortServer = createMcpServer(abortApiClient, "test");
+        const abortServer = createMcpServer(abortApiClient, "test", skills);
         const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
         await abortServer.connect(serverTransport);
         const abortMcpClient = new Client({ name: "abort-client", version: "1.0" });
@@ -1051,7 +1062,7 @@ describe("tool registration invariants", () => {
 describe("createMcpServer via SDK v2", () => {
   it("advertises all 43 tools in declaration order, with annotations intact", async () => {
     const apiClient = {} as unknown as SequentumApiClient;
-    const server = createMcpServer(apiClient, "9.9.9");
+    const server = createMcpServer(apiClient, "9.9.9", skills);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "test", version: "1.0.0" });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -1079,7 +1090,7 @@ describe("createMcpServer via SDK v2", () => {
 
   it("rejects a tools/call whose arguments exceed MAX_TOOL_INPUT_ELEMENTS", async () => {
     const apiClient = {} as unknown as SequentumApiClient;
-    const server = createMcpServer(apiClient, "9.9.9");
+    const server = createMcpServer(apiClient, "9.9.9", skills);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "test", version: "1.0.0" });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -1103,7 +1114,7 @@ describe("createMcpServer via SDK v2", () => {
     // 2026-07-28 reads the top-level `title`; legacy-era clients still read only
     // `annotations.title`. Both must be present so neither era loses the display name.
     const apiClient = {} as unknown as SequentumApiClient;
-    const server = createMcpServer(apiClient, "9.9.9");
+    const server = createMcpServer(apiClient, "9.9.9", skills);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "test", version: "1.0.0" });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -1126,7 +1137,7 @@ describe("createMcpServer via SDK v2", () => {
 
   it("advertises every prompt with its declared arguments", async () => {
     const apiClient = {} as unknown as SequentumApiClient;
-    const server = createMcpServer(apiClient, "9.9.9");
+    const server = createMcpServer(apiClient, "9.9.9", skills);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "test", version: "1.0.0" });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -1162,7 +1173,7 @@ describe("createMcpServer via SDK v2", () => {
       getAllSpaces: vi.fn().mockResolvedValue([{ id: 1, name: "Default" }]),
       getAgent: vi.fn().mockResolvedValue({ id: 7, name: "Agent Seven" }),
     } as unknown as SequentumApiClient;
-    const server = createMcpServer(apiClient, "9.9.9");
+    const server = createMcpServer(apiClient, "9.9.9", skills);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "test", version: "1.0.0" });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -1179,14 +1190,23 @@ describe("createMcpServer via SDK v2", () => {
       const resourceKeys = ["uri", "name", "description", "mimeType"];
       const templateKeys = ["uriTemplate", "name", "description", "mimeType"];
 
+      // The skill:// files are listed next to the API resources; the skills extension
+      // describe below covers them, so this equality is about the API resources only.
       const listed = await client.listResources();
+      listed.resources = listed.resources.filter((r) => !r.uri.startsWith("skill://"));
       expect(byUri(listed.resources).map((r) => pick(r, resourceKeys))).toEqual(
         byUri(resources).map((r) => pick(r, resourceKeys))
       );
 
       const listedTemplates = await client.listResourceTemplates();
+      const skillTemplates = listedTemplates.resourceTemplates.filter((t) =>
+        t.uriTemplate.startsWith("skill://")
+      );
+      expect(skillTemplates).toHaveLength(1);
       expect(
-        byUri(listedTemplates.resourceTemplates).map((t) => pick(t, templateKeys))
+        byUri(
+          listedTemplates.resourceTemplates.filter((t) => !t.uriTemplate.startsWith("skill://"))
+        ).map((t) => pick(t, templateKeys))
       ).toEqual(byUri(resourceTemplates).map((t) => pick(t, templateKeys)));
 
       const spaces = await client.readResource({ uri: "sequentum://spaces" });
@@ -1205,6 +1225,179 @@ describe("createMcpServer via SDK v2", () => {
     }
   });
 });
+
+// ==========================================
+// Skills extension, on both protocol eras
+// ==========================================
+
+/** Passes a result through unvalidated, so the raw request API can carry skills/* methods. */
+const anyResult = {
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate: (value: unknown) => ({ value }),
+  },
+} as never;
+
+type Rpc = (method: string, params?: Record<string, unknown>) => Promise<any>;
+
+describe.each(["legacy (2025)", "modern (2026-07-28)"] as const)(
+  "skills extension, %s era",
+  (era) => {
+    const expectedNames = [...prompts.map((p) => p.name), ...REFERENCE_SKILLS].sort();
+
+    // The in-memory client always speaks the 2025 era. The 2026-07-28 era is the
+    // stateless handler, so it is driven with real requests carrying the envelope.
+    async function connect(): Promise<{
+      rpc: Rpc;
+      capabilities: () => Promise<Record<string, unknown>>;
+      close: () => Promise<void>;
+    }> {
+      if (era === "legacy (2025)") {
+        const server = createMcpServer({} as unknown as SequentumApiClient, "9.9.9", skills);
+        const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+        const client = new Client({ name: "test", version: "1.0.0" });
+        await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+        return {
+          rpc: (method, params) => client.request({ method, params } as never, anyResult),
+          capabilities: async () => client.getServerCapabilities() as Record<string, unknown>,
+          close: async () => {
+            await client.close();
+            await server.close();
+          },
+        };
+      }
+      const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
+      const envelope = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": { name: "test", version: "1.0.0" },
+        "io.modelcontextprotocol/clientCapabilities": {},
+      };
+      const post = async (method: string, params: Record<string, unknown> = {}) => {
+        const name =
+          typeof params.uri === "string"
+            ? params.uri
+            : typeof params.name === "string"
+              ? params.name
+              : undefined;
+        const res = await handler.fetch(
+          new Request("http://localhost/mcp", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              accept: "application/json, text/event-stream",
+              "Mcp-Method": method,
+              "Mcp-Protocol-Version": "2026-07-28",
+              ...(name ? { "Mcp-Name": name } : {}),
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method,
+              params: { _meta: envelope, ...params },
+            }),
+          })
+        );
+        return JSON.parse((await res.text()).replace(/^event: message\ndata: /, ""));
+      };
+      return {
+        rpc: async (method, params) => {
+          const body = await post(method, params);
+          if (body.error) {
+            throw Object.assign(new Error(body.error.message), { code: body.error.code });
+          }
+          return body.result;
+        },
+        capabilities: async () => (await post("server/discover")).result.capabilities,
+        close: () => handler.close(),
+      };
+    }
+
+    async function withConnection(fn: (c: Awaited<ReturnType<typeof connect>>) => Promise<void>) {
+      const connection = await connect();
+      try {
+        await fn(connection);
+      } finally {
+        await connection.close();
+      }
+    }
+
+    const listAll = async (rpc: Rpc, method: string, key: string) => {
+      const out: any[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await rpc(method, cursor ? { cursor } : {});
+        out.push(...page[key]);
+        cursor = page.nextCursor;
+      } while (cursor);
+      return out;
+    };
+
+    it("advertises the skills extension", () =>
+      withConnection(async ({ capabilities }) => {
+        const caps = (await capabilities()) as { extensions?: Record<string, unknown> };
+        expect(caps.extensions?.[SKILLS_EXTENSION_ID]).toBeDefined();
+      }));
+
+    it("skills/list returns every skill", () =>
+      withConnection(async ({ rpc }) => {
+        const listed = await listAll(rpc, SKILLS_LIST_METHOD, "skills");
+        expect(listed.map((s) => s.frontmatter.name).sort()).toEqual(expectedNames);
+      }));
+
+    it("skills/get returns one skill", () =>
+      withConnection(async ({ rpc }) => {
+        const listed = await listAll(rpc, SKILLS_LIST_METHOD, "skills");
+        const entry = listed.find((s) => s.frontmatter.name === "debug-agent");
+        expect(entry.uri.endsWith("debug-agent/SKILL.md")).toBe(true);
+        const got = await rpc(SKILLS_GET_METHOD, { uri: entry.uri });
+        expect(got.skill.frontmatter.name).toBe("debug-agent");
+        expect(got.skill.uri).toBe(entry.uri);
+      }));
+
+    it("resources/read of a skill file returns its text", () =>
+      withConnection(async ({ rpc }) => {
+        const result = await rpc("resources/read", { uri: "skill://debug-agent/SKILL.md" });
+        expect(result.contents[0].text).toBe(
+          readFileSync(join(SKILLS_ROOT, "debug-agent", "SKILL.md"), "utf8")
+        );
+      }));
+
+    it("resources/read of an unknown skill URI is a not-found error", () =>
+      withConnection(async ({ rpc }) => {
+        const error = await rpc("resources/read", { uri: "skill://nope/SKILL.md" }).then(
+          () => undefined,
+          (e: unknown) => e as Error
+        );
+        expect(error).toBeInstanceOf(Error);
+        // -32602 (invalid params) is the code the SDK uses for an unknown resource URI;
+        // a method-not-found (-32601) or internal error (-32603) must not pass.
+        expect((error as Error & { code?: number }).code).toBe(-32602);
+        expect(error!.message).not.toBe("");
+        expect(error!.message).toMatch(/not found|skill:\/\/nope/i);
+        expect(error!.message).not.toMatch(/\/home|\/app/);
+      }));
+
+    it("resources/list contains the skill files next to the existing resources", () =>
+      withConnection(async ({ rpc }) => {
+        const uris = (await listAll(rpc, "resources/list", "resources")).map((r) => r.uri);
+        for (const resource of resources) expect(uris).toContain(resource.uri);
+        const skillUris = uris.filter((u: string) => u.startsWith("skill://")).sort();
+        expect(skillUris).toEqual(expectedNames.map((n) => `skill://${n}/SKILL.md`));
+      }));
+
+    it("prompts/get still answers", () =>
+      withConnection(async ({ rpc }) => {
+        const rendered = await rpc("prompts/get", {
+          name: "debug-agent",
+          arguments: { agentName: "Nightly Scraper" },
+        });
+        const text = rendered.messages[0].content.text as string;
+        expect(text).toContain("Nightly Scraper");
+        expect(text.trimEnd().endsWith(skills.bodies.get("debug-agent")!.trimEnd())).toBe(true);
+      }));
+  }
+);
 
 // ==========================================
 // Policy Wiring Regression Tests
@@ -1228,7 +1421,7 @@ describe("policy wiring", () => {
 
   it("server instructions are SERVER_INSTRUCTIONS: summary first, sufficiency policy verbatim after", async () => {
     const mockApiClient = makeMinimalMockClient();
-    const server = createMcpServer(mockApiClient, "test");
+    const server = createMcpServer(mockApiClient, "test", skills);
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     const connectedClient = new Client({ name: "policy-test-client", version: "1.0" });
@@ -1250,9 +1443,11 @@ describe("policy wiring", () => {
   });
 
   it("build-agent-from-prompt template embeds PROMPT_HANDLING_POLICY under a GUARDRAIL preamble before the numbered steps", () => {
-    const messages = getPromptMessages("build-agent-from-prompt", {
-      prompt: "scrape https://example.com/products for product names",
-    });
+    const messages = getPromptMessages(
+      "build-agent-from-prompt",
+      { prompt: "scrape https://example.com/products for product names" },
+      skills.bodies
+    );
     expect(messages.length).toBeGreaterThan(0);
     const text = (messages[0].content as { text: string }).text;
 
@@ -1270,9 +1465,11 @@ describe("policy wiring", () => {
   });
 
   it("inspect-agent-draft template does NOT inject PROMPT_HANDLING_POLICY", () => {
-    const messages = getPromptMessages("inspect-agent-draft", {
-      sessionId: "sess-test-policy-leak",
-    });
+    const messages = getPromptMessages(
+      "inspect-agent-draft",
+      { sessionId: "sess-test-policy-leak" },
+      skills.bodies
+    );
     expect(messages.length).toBeGreaterThan(0);
     const text = (messages[0].content as { text: string }).text;
     expect(

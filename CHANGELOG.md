@@ -6,6 +6,11 @@
 
 ### Added
 
+- **The server serves 16 skills over the MCP skills extension (`io.modelcontextprotocol/skills`).**
+  Eleven workflow skills, one per prompt, and five reference skills with no prompt: `credit-usage`,
+  `run-inputs`, `run-outcomes`, `run-troubleshooting` and `schedule-editing`. The skill files are
+  listed in `resources/list` as `skill://<name>/SKILL.md`, with a `skill://{+path}` template, and any
+  client can read them without a scope. Claude and Claude Code load them when relevant.
 - **`get_agent_build_status` and a finished `start_agent_build` describe the build's `sample`.** The
   Control Center's status now carries the last fresh run's columns, up to 10 rows, the page they came
   from, its pagination and a screenshot reference; the output schema, types and tool descriptions name
@@ -18,6 +23,15 @@
 
 ### Changed
 
+- **Prompt text now comes from the skills.** Each prompt message is a short preamble stating the
+  arguments, followed by the body of the skill with the same name, so the two cannot drift apart.
+- **`debug-agent` and `compare-runs` treat `possibleCauses` as hints.** They are a keyword match on
+  the error text, so the prompts now reason from the error message, run status, record counts, error
+  count and runtime. The `schedule-agent` prompt determines the schedule the user wants before it
+  creates one.
+- **Four tool descriptions gained warnings.** `update_agent_schedule` replaces the whole schedule, so
+  omitted fields are reset; and input parameters need the `?` prefix to be encrypted on `start_agent`,
+  `create_agent_schedule`, `update_agent_schedule` and `run_space_agents`.
 - **Tokens issued to an agent registered through the Control Center are now scope-checked
   too.** A token with `token_type` `agent` gets the same check before dispatch as a user token,
   including the HTTP 403 `insufficient_scope` challenge when it lacks a tool's scope.

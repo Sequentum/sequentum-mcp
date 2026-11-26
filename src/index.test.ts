@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import {
   getDefaultDateRange,
   validateBoolean,
@@ -12,6 +12,7 @@ import {
 } from "./utils/validation.js";
 import { resources, resourceTemplates, readResource } from "./server/resources.js";
 import { prompts, getPromptMessages } from "./server/prompts.js";
+import { loadWorkflowSkills } from "./server/skills.js";
 
 /**
  * Tests for MCP handler behavior in index.ts
@@ -786,125 +787,7 @@ describe("MCP Prompts", () => {
     });
   });
 
-  describe("getPromptMessages", () => {
-    it("should return messages for debug-agent with agentName", () => {
-      const messages = getPromptMessages("debug-agent", { agentName: "Amazon Scraper" });
-      expect(messages).toHaveLength(1);
-      expect(messages[0].role).toBe("user");
-      expect((messages[0].content as { text: string }).text).toContain("Amazon Scraper");
-      expect((messages[0].content as { text: string }).text).toContain("search_agents");
-      expect((messages[0].content as { text: string }).text).toContain("get_latest_failure");
-    });
-
-    it("should return messages for agent-health-check with agentName", () => {
-      const messages = getPromptMessages("agent-health-check", { agentName: "Price Monitor" });
-      expect(messages).toHaveLength(1);
-      expect((messages[0].content as { text: string }).text).toContain("Price Monitor");
-      expect((messages[0].content as { text: string }).text).toContain("get_agent_runs");
-      expect((messages[0].content as { text: string }).text).toContain("list_agent_schedules");
-      expect((messages[0].content as { text: string }).text).toContain("get_agent_versions");
-    });
-
-    it("should return messages for spending-report without arguments", () => {
-      const messages = getPromptMessages("spending-report", undefined);
-      expect(messages).toHaveLength(1);
-      expect((messages[0].content as { text: string }).text).toContain("get_credits_balance");
-      expect((messages[0].content as { text: string }).text).toContain("get_spending_summary");
-      expect((messages[0].content as { text: string }).text).toContain("get_credit_history");
-    });
-
-    it("should return messages for run-and-monitor with agentName", () => {
-      const messages = getPromptMessages("run-and-monitor", { agentName: "Product Scraper" });
-      expect(messages).toHaveLength(1);
-      expect((messages[0].content as { text: string }).text).toContain("Product Scraper");
-      expect((messages[0].content as { text: string }).text).toContain("start_agent");
-      expect((messages[0].content as { text: string }).text).toContain("get_run_status");
-      expect((messages[0].content as { text: string }).text).toContain("get_run_files");
-    });
-
-    it("should throw for debug-agent without agentName", () => {
-      expect(() => getPromptMessages("debug-agent", {})).toThrow("Missing required argument: agentName");
-      expect(() => getPromptMessages("debug-agent", undefined)).toThrow("Missing required argument: agentName");
-    });
-
-    it("should throw for agent-health-check without agentName", () => {
-      expect(() => getPromptMessages("agent-health-check", {})).toThrow("Missing required argument: agentName");
-    });
-
-    it("should throw for run-and-monitor without agentName", () => {
-      expect(() => getPromptMessages("run-and-monitor", {})).toThrow("Missing required argument: agentName");
-    });
-
-    it("should return messages for space-overview with spaceName", () => {
-      const messages = getPromptMessages("space-overview", { spaceName: "Production" });
-      expect(messages).toHaveLength(1);
-      expect(messages[0].role).toBe("user");
-      expect((messages[0].content as { text: string }).text).toContain("Production");
-      expect((messages[0].content as { text: string }).text).toContain("search_space_by_name");
-      expect((messages[0].content as { text: string }).text).toContain("get_space_agent_count");
-      expect((messages[0].content as { text: string }).text).toContain("get_space_agents");
-      expect((messages[0].content as { text: string }).text).toContain("get_latest_failure");
-    });
-
-    it("should throw for space-overview without spaceName", () => {
-      expect(() => getPromptMessages("space-overview", {})).toThrow("Missing required argument: spaceName");
-      expect(() => getPromptMessages("space-overview", undefined)).toThrow("Missing required argument: spaceName");
-    });
-
-    it("should return messages for daily-operations-report without arguments", () => {
-      const messages = getPromptMessages("daily-operations-report", undefined);
-      expect(messages).toHaveLength(1);
-      expect(messages[0].role).toBe("user");
-      expect((messages[0].content as { text: string }).text).toContain("get_runs_summary");
-      expect((messages[0].content as { text: string }).text).toContain("get_records_summary");
-      expect((messages[0].content as { text: string }).text).toContain("get_credits_balance");
-      expect((messages[0].content as { text: string }).text).toContain("get_spending_summary");
-      expect((messages[0].content as { text: string }).text).toContain("get_scheduled_runs");
-    });
-
-    it("should return messages for schedule-agent with agentName", () => {
-      const messages = getPromptMessages("schedule-agent", { agentName: "Daily Scraper" });
-      expect(messages).toHaveLength(1);
-      expect(messages[0].role).toBe("user");
-      expect((messages[0].content as { text: string }).text).toContain("Daily Scraper");
-      expect((messages[0].content as { text: string }).text).toContain("search_agents");
-      expect((messages[0].content as { text: string }).text).toContain("list_agent_schedules");
-      expect((messages[0].content as { text: string }).text).toContain("create_agent_schedule");
-    });
-
-    it("should include schedule description hint when provided", () => {
-      const messages = getPromptMessages("schedule-agent", {
-        agentName: "Daily Scraper",
-        scheduleDescription: "every Monday at 9am",
-      });
-      expect((messages[0].content as { text: string }).text).toContain("every Monday at 9am");
-    });
-
-    it("should ask for schedule when scheduleDescription is not provided", () => {
-      const messages = getPromptMessages("schedule-agent", { agentName: "Daily Scraper" });
-      expect((messages[0].content as { text: string }).text).toContain("Ask the user what schedule");
-    });
-
-    it("should throw for schedule-agent without agentName", () => {
-      expect(() => getPromptMessages("schedule-agent", {})).toThrow("Missing required argument: agentName");
-      expect(() => getPromptMessages("schedule-agent", undefined)).toThrow("Missing required argument: agentName");
-    });
-
-    it("should return messages for compare-runs with agentName", () => {
-      const messages = getPromptMessages("compare-runs", { agentName: "Price Monitor" });
-      expect(messages).toHaveLength(1);
-      expect(messages[0].role).toBe("user");
-      expect((messages[0].content as { text: string }).text).toContain("Price Monitor");
-      expect((messages[0].content as { text: string }).text).toContain("search_agents");
-      expect((messages[0].content as { text: string }).text).toContain("get_agent_runs");
-      expect((messages[0].content as { text: string }).text).toContain("get_run_diagnostics");
-    });
-
-    it("should throw for compare-runs without agentName", () => {
-      expect(() => getPromptMessages("compare-runs", {})).toThrow("Missing required argument: agentName");
-      expect(() => getPromptMessages("compare-runs", undefined)).toThrow("Missing required argument: agentName");
-    });
-
+  describe("prompt argument definitions", () => {
     it("should include build-agent-from-prompt with prompt + optional spaceName", () => {
       const prompt = prompts.find((p) => p.name === "build-agent-from-prompt");
       expect(prompt).toBeDefined();
@@ -925,99 +808,141 @@ describe("MCP Prompts", () => {
       expect(sessionIdArg?.required).toBe(true);
       expect(pollingArg?.required).toBe(false);
     });
+  });
 
-    it("should return messages for build-agent-from-prompt with prompt only", () => {
-      const messages = getPromptMessages("build-agent-from-prompt", {
-        prompt: "Scrape prices from amazon.com",
-      });
-      expect(messages).toHaveLength(1);
-      expect(messages[0].role).toBe("user");
-      const text = (messages[0].content as { text: string }).text;
-      expect(text).toContain("Scrape prices from amazon.com");
-      expect(text).toContain("start_agent_build");
-      expect(text).toContain("get_agent_build_status");
-      expect(text).toContain("get_agent");
+  describe("getPromptMessages", () => {
+    let bodies: ReadonlyMap<string, string>;
+    beforeAll(async () => {
+      ({ bodies } = await loadWorkflowSkills());
     });
 
-    it("should include search_space_by_name step when spaceName is provided", () => {
-      const messages = getPromptMessages("build-agent-from-prompt", {
-        prompt: "Scrape prices from amazon.com",
+    const CAPS: Record<string, number> = {
+      prompt: 5000,
+      sessionId: 100,
+      agentName: 200,
+      spaceName: 200,
+      pollingPreference: 200,
+      scheduleDescription: 200,
+    };
+
+    const requiredArgs = (name: string): Record<string, string> =>
+      Object.fromEntries(
+        (prompts.find((p) => p.name === name)!.arguments ?? [])
+          .filter((a) => a.required)
+          .map((a) => [a.name, "X"]),
+      );
+
+    const textOf = (name: string, args: Record<string, string> | undefined): string => {
+      const messages = getPromptMessages(name, args, bodies);
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe("user");
+      expect(messages[0].content.type).toBe("text");
+      return (messages[0].content as { text: string }).text;
+    };
+
+    /** The text before the skill body: the argument preamble. */
+    const preambleOf = (name: string, args: Record<string, string> | undefined): string => {
+      const text = textOf(name, args);
+      return text.slice(0, text.length - bodies.get(name)!.length);
+    };
+
+    it("each prompt's message ends with its skill body", () => {
+      for (const prompt of prompts) {
+        const body = bodies.get(prompt.name);
+        expect(body, prompt.name).toBeTruthy();
+        expect(textOf(prompt.name, requiredArgs(prompt.name)).endsWith(body!), prompt.name).toBe(true);
+      }
+    });
+
+    it("no-argument prompts are exactly the skill body", () => {
+      for (const name of ["spending-report", "cost-analysis", "daily-operations-report"]) {
+        expect(textOf(name, undefined), name).toBe(bodies.get(name));
+        expect(textOf(name, {}), name).toBe(bodies.get(name));
+      }
+    });
+
+    it("the preamble names each provided argument", () => {
+      const debug = textOf("debug-agent", { agentName: "Amazon Scraper" });
+      expect(debug.split("\n")[0]).toContain("`Amazon Scraper`");
+
+      const withSchedule = preambleOf("schedule-agent", {
+        agentName: "Daily Scraper",
+        scheduleDescription: "every Monday at 9am",
+      });
+      expect(withSchedule).toContain("`Daily Scraper`");
+      expect(withSchedule).toContain("`every Monday at 9am`");
+      expect(withSchedule).toMatch(/advisory/i);
+      const withoutSchedule = preambleOf("schedule-agent", { agentName: "Daily Scraper" });
+      expect(withoutSchedule).toContain("`Daily Scraper`");
+      expect(withoutSchedule).not.toMatch(/schedule/i);
+
+      const withSpace = preambleOf("build-agent-from-prompt", {
+        prompt: "Scrape prices from example.com",
         spaceName: "My Space",
       });
-      expect(messages).toHaveLength(1);
-      const text = (messages[0].content as { text: string }).text;
-      expect(text).toContain("search_space_by_name");
-      expect(text).toContain("My Space");
-    });
+      expect(withSpace).toContain("`Scrape prices from example.com`");
+      expect(withSpace).toContain("`My Space`");
+      const withoutSpace = preambleOf("build-agent-from-prompt", { prompt: "Scrape prices from example.com" });
+      expect(withoutSpace).toContain("`Scrape prices from example.com`");
+      expect(withoutSpace).not.toMatch(/space/i);
 
-    it("build-agent-from-prompt instructs start_agent_build to wait internally (no manual poll step)", () => {
-      const messages = getPromptMessages("build-agent-from-prompt", {
-        prompt: "Scrape prices from amazon.com",
-      });
-      const text = (messages[0].content as { text: string }).text;
-      expect(text).toContain("wait for the build to complete");
-      expect(text).toContain("agentId directly");
-      expect(text).not.toContain("Poll get_agent_build_status");
-      expect(text).not.toContain("User polling preference (advisory)");
-      expect(text).not.toContain("moderate cadence with backoff");
-    });
-
-    it("build-agent-from-prompt includes timeout fallback guidance with sessionId", () => {
-      const messages = getPromptMessages("build-agent-from-prompt", {
-        prompt: "Scrape prices from amazon.com",
-      });
-      const text = (messages[0].content as { text: string }).text;
-      expect(text).toContain("times out");
-      expect(text).toContain("sessionId");
-      expect(text).toContain("get_agent_build_status");
-    });
-
-    it("should throw for build-agent-from-prompt without prompt", () => {
-      expect(() => getPromptMessages("build-agent-from-prompt", {})).toThrow("Missing required argument: prompt");
-      expect(() => getPromptMessages("build-agent-from-prompt", undefined)).toThrow("Missing required argument: prompt");
-    });
-
-    it("should return messages for inspect-agent-draft with sessionId", () => {
-      const messages = getPromptMessages("inspect-agent-draft", {
-        sessionId: "sess-abc-123",
-      });
-      expect(messages).toHaveLength(1);
-      expect(messages[0].role).toBe("user");
-      const text = (messages[0].content as { text: string }).text;
-      expect(text).toContain("sess-abc-123");
-      expect(text).toContain("get_agent_build_status");
-      expect(text).toContain("get_agent");
-    });
-
-    it("should embed pollingPreference into inspect-agent-draft when provided", () => {
-      const messages = getPromptMessages("inspect-agent-draft", {
+      const withPolling = preambleOf("inspect-agent-draft", {
         sessionId: "sess-abc-123",
         pollingPreference: "be patient, this is a big site",
       });
-      const text = (messages[0].content as { text: string }).text;
-      expect(text).toContain("User polling preference (advisory)");
-      expect(text).toContain("be patient, this is a big site");
-      expect(text).toContain("cadence from the user's advisory above");
-      expect(text).not.toContain("IMPORTANT POLLING DIRECTIVE FROM USER");
+      expect(withPolling).toContain("`sess-abc-123`");
+      const pollingLine = withPolling.split("\n").find((l) => l.includes("be patient, this is a big site"));
+      expect(pollingLine).toMatch(/advisory/i);
+      const withoutPolling = preambleOf("inspect-agent-draft", { sessionId: "sess-abc-123" });
+      expect(withoutPolling).toContain("`sess-abc-123`");
+      expect(withoutPolling).not.toMatch(/poll/i);
     });
 
-    it("should fall back to default polling guidance for inspect-agent-draft when pollingPreference is omitted", () => {
-      const messages = getPromptMessages("inspect-agent-draft", {
-        sessionId: "sess-abc-123",
-      });
-      const text = (messages[0].content as { text: string }).text;
-      expect(text).not.toContain("User polling preference (advisory)");
-      expect(text).not.toContain("IMPORTANT POLLING DIRECTIVE FROM USER");
-      expect(text).toContain("moderate cadence with backoff");
+    it("sanitizes every argument", () => {
+      for (const prompt of prompts) {
+        for (const arg of prompt.arguments ?? []) {
+          const cap = CAPS[arg.name];
+          expect(cap, `${prompt.name}.${arg.name} has no cap in this test`).toBeDefined();
+
+          const multiline = textOf(prompt.name, { ...requiredArgs(prompt.name), [arg.name]: "a\nb\r\nc" });
+          expect(multiline, `${prompt.name}.${arg.name}`).toContain("`a b c`");
+          expect(multiline, `${prompt.name}.${arg.name}`).not.toContain("a\nb");
+
+          const long = "y".repeat(cap + 50);
+          const truncated = textOf(prompt.name, { ...requiredArgs(prompt.name), [arg.name]: long });
+          expect(truncated, `${prompt.name}.${arg.name}`).toContain("`" + "y".repeat(cap) + "`");
+          expect(truncated, `${prompt.name}.${arg.name}`).not.toContain("y".repeat(cap + 1));
+        }
+      }
     });
 
-    it("should throw for inspect-agent-draft without sessionId", () => {
-      expect(() => getPromptMessages("inspect-agent-draft", {})).toThrow("Missing required argument: sessionId");
-      expect(() => getPromptMessages("inspect-agent-draft", undefined)).toThrow("Missing required argument: sessionId");
+    it("throws for a missing required argument", () => {
+      for (const prompt of prompts) {
+        for (const arg of (prompt.arguments ?? []).filter((a) => a.required)) {
+          const args = { ...requiredArgs(prompt.name) };
+          delete args[arg.name];
+          expect(() => getPromptMessages(prompt.name, args, bodies)).toThrow(
+            `Missing required argument: ${arg.name}`,
+          );
+          if (Object.keys(args).length === 0) {
+            expect(() => getPromptMessages(prompt.name, undefined, bodies)).toThrow(
+              `Missing required argument: ${arg.name}`,
+            );
+          }
+        }
+      }
     });
 
     it("should throw for unknown prompt name", () => {
-      expect(() => getPromptMessages("non-existent-prompt", {})).toThrow("Unknown prompt: non-existent-prompt");
+      expect(() => getPromptMessages("non-existent-prompt", {}, bodies)).toThrow(
+        "Unknown prompt: non-existent-prompt",
+      );
+    });
+
+    it("throws when the skill body for a prompt is missing", () => {
+      expect(() => getPromptMessages("spending-report", undefined, new Map())).toThrow(
+        "Missing skill body for prompt: spending-report",
+      );
     });
   });
 });

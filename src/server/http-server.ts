@@ -20,6 +20,7 @@ import { createResourceScopesSource, type ResourceScopesSource } from "../utils/
 import { validateToken, type Claims } from "../utils/token-validator.js";
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import { createSequentumMcpHandler, loggable } from "./mcp-handler.js";
+import { loadWorkflowSkills } from "./skills.js";
 import { runWithUpstreamAuth } from "../api/upstream-auth.js";
 import glamaClaim from "./well-known/glama.json" with { type: "json" };
 
@@ -798,7 +799,9 @@ export async function startHttpServer(
   // The stateless protocol handler: one McpServer and one API client per
   // request. Any `Mcp-Session-Id` a mid-flight client still sends is ignored by
   // construction, so a rolling deploy does not break in-progress clients.
-  const mcpHandler = createSequentumMcpHandler(apiBaseUrl, version);
+  // Loaded once per server; a missing or invalid skills folder fails startup here.
+  const skills = await loadWorkflowSkills();
+  const mcpHandler = createSequentumMcpHandler(apiBaseUrl, version, skills);
   const nodeHandler = toNodeHandler(mcpHandler);
 
   // One cache per server, not per request: the stateless handler builds a fresh

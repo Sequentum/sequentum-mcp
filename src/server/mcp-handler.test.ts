@@ -19,6 +19,9 @@ vi.mock("../api/api-client.js", () => ({
 
 import { SequentumApiClient } from "../api/api-client.js";
 import { createSequentumMcpHandler, resolveTraceContext, traceContextFromMeta } from "./mcp-handler.js";
+import { loadWorkflowSkills } from "./skills.js";
+
+const skills = await loadWorkflowSkills();
 
 /** The SDK's default request body cap (DEFAULT_MAX_REQUEST_BODY_SIZE). */
 const MAX_BODY = 4 * 1024 * 1024;
@@ -75,7 +78,7 @@ describe("cache hints", () => {
     ["resources/templates/list", 3_600_000, "public"],
     ["server/discover", 3_600_000, "public"],
   ])("%s emits ttlMs=%d cacheScope=%s", async (method, ttlMs, scope) => {
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const body = await call(handler, method as string);
     expect(body.result.ttlMs).toBe(ttlMs);
     expect(body.result.cacheScope).toBe(scope);
@@ -86,7 +89,7 @@ describe("cache hints", () => {
     // The API client must be stubbed so the read SUCCEEDS. Asserting cache fields on a
     // failed read with `?? "private"` fallbacks would pass no matter what the server
     // emitted — a vacuous test guarding the one hint that is a tenant isolation boundary.
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const body = await call(handler, "resources/read", { uri: "sequentum://agents" });
 
     expect(body.error, `resources/read failed: ${JSON.stringify(body.error)}`).toBeUndefined();
@@ -108,7 +111,7 @@ describe("resource error codes", () => {
   // this task's fix, and passes unconditionally regardless of whether the fix
   // is present. Kept because it's the literal case the task's spec named.
   it("returns invalid-params, not internal error, for a URI matching no resource or template", async () => {
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const body = await call(handler, "resources/read", { uri: "sequentum://does-not-exist" });
     expect(body.error?.code).not.toBe(-32603);
     expect(body.error?.code).toBe(-32602);
@@ -126,7 +129,7 @@ describe("resource error codes", () => {
   // {"code":-32603,"message":"Failed to read resource sequentum://agents/abc: Unknown resource URI: sequentum://agents/abc"}.
   // After the fix it returns -32602 with the ResourceNotFoundError's typed data.
   it("returns invalid-params, not internal error, for a URI that matches a template but fails id validation", async () => {
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const body = await call(handler, "resources/read", { uri: "sequentum://agents/abc" });
     expect(body.error?.code).not.toBe(-32603);
     expect(body.error?.code).toBe(-32602);
@@ -141,7 +144,7 @@ describe("resource error codes", () => {
       .spyOn(SequentumApiClient.prototype, "getAllAgents")
       .mockRejectedValueOnce(new Error("upstream is on fire"));
 
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const body = await call(handler, "resources/read", { uri: "sequentum://agents" });
     expect(body.error?.code).toBe(-32603);
     await handler.close();
@@ -159,8 +162,8 @@ describe("resource error codes", () => {
 describe("statelessness", () => {
   it("serves one client's sequence identically across two independent handlers", async () => {
     // Stand-in for a round-robin load balancer with no session affinity.
-    const a = createSequentumMcpHandler("https://api.example.test", "9.9.9");
-    const b = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const a = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
+    const b = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
 
     const fromA = await call(a, "tools/list");
     const fromB = await call(b, "tools/list");
@@ -185,8 +188,8 @@ describe("statelessness", () => {
   // from request 1's client on a.
   it("never lets one handler's caller token leak into another handler's client", async () => {
     const setAccessToken = vi.spyOn(SequentumApiClient.prototype, "setAccessToken");
-    const a = createSequentumMcpHandler("https://api.example.test", "9.9.9");
-    const b = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const a = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
+    const b = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
 
     await a.fetch(
       new Request("http://localhost/mcp", {
@@ -229,8 +232,8 @@ describe("statelessness", () => {
   // Mcp-Session-Id rather than fail the request, so a deploy (or a load
   // balancer routing decision) is never disrupted by session affinity.
   it("ignores a stale Mcp-Session-Id from a request routed to a handler that never issued it", async () => {
-    const a = createSequentumMcpHandler("https://api.example.test", "9.9.9");
-    const b = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const a = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
+    const b = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
 
     // "Handshake" against a — b never sees this exchange.
     await call(a, "tools/list");
@@ -272,14 +275,14 @@ describe("statelessness", () => {
  */
 describe("Mcp-Name enforcement", () => {
   it("accepts tools/call when Mcp-Name matches params.name", async () => {
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const body = await call(handler, "tools/call", { name: "list_agents", arguments: {} });
     expect(body.error, `tools/call failed: ${JSON.stringify(body.error)}`).toBeUndefined();
     await handler.close();
   });
 
   it("rejects tools/call without the Mcp-Name header", async () => {
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const res = await handler.fetch(new Request("http://localhost/mcp", {
       method: "POST",
       headers: {
@@ -321,7 +324,7 @@ describe("progress notifications", () => {
           agentName: "Test Agent",
         } as Awaited<ReturnType<SequentumApiClient["getAgentBuildStatus"]>>);
 
-      const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+      const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
       const resPromise = handler.fetch(new Request("http://localhost/mcp", {
         method: "POST",
         headers: {
@@ -363,7 +366,7 @@ describe("progress notifications", () => {
 describe("era logging", () => {
   it("logs the negotiated era, requested method, and client identity for a modern request", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     await call(handler, "tools/list");
     const logged = spy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(logged).toContain("era=modern");
@@ -375,7 +378,7 @@ describe("era logging", () => {
 
   it("logs era=legacy for a handshake-era request with no _meta envelope", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     await handler.fetch(
       new Request("http://localhost/mcp", {
         method: "POST",
@@ -390,7 +393,7 @@ describe("era logging", () => {
 
   it("propagates a traceparent header into the log line when the client sends one", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
     await handler.fetch(
       new Request("http://localhost/mcp", {
@@ -420,7 +423,7 @@ describe("era logging", () => {
   // is exercised independently rather than assumed to work because its sibling does.
   it("propagates a tracestate header into the log line when the client sends one", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const tracestate = "congo=t61rcWkgMzE,rojo=00f067aa0ba902b7";
     await handler.fetch(
       new Request("http://localhost/mcp", {
@@ -448,7 +451,7 @@ describe("era logging", () => {
 
   it("logs a traceparent carried in params._meta when no header is present (SEP-414)", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const traceparent = "00-11111111111111111111111111111111-2222222222222222-01";
     await handler.fetch(
       new Request("http://localhost/mcp", {
@@ -475,7 +478,7 @@ describe("era logging", () => {
 
   it("prefers the params._meta traceparent over the header when both are present", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const fromMeta = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01";
     const fromHeader = "00-cccccccccccccccccccccccccccccccc-dddddddddddddddd-01";
     await handler.fetch(
@@ -505,7 +508,7 @@ describe("era logging", () => {
 
   it("logs baggage from params._meta as a third optional field after tracestate", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     await handler.fetch(
       new Request("http://localhost/mcp", {
         method: "POST",
@@ -531,7 +534,7 @@ describe("era logging", () => {
 
   it("still returns the SDK parse error for a malformed JSON body", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const res = await handler.fetch(
       new Request("http://localhost/mcp", {
         method: "POST",
@@ -551,7 +554,7 @@ describe("era logging", () => {
 
   it("logs a params._meta traceparent from a body just under the 4 MiB cap", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const traceparent = "00-33333333333333333333333333333333-4444444444444444-01";
     const res = await handler.fetch(
       new Request("http://localhost/mcp", {
@@ -579,7 +582,7 @@ describe("era logging", () => {
 
   it("modern-era requests still work end to end when the body is pre-parsed by the wrapper", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const body = await call(handler, "tools/list");
     expect(Array.isArray(body.result.tools)).toBe(true);
     expect(spy.mock.calls.map((c) => String(c[0])).join("\n")).toContain("era=modern");
@@ -592,7 +595,7 @@ describe("era logging", () => {
   // never the Authorization header's value.
   it("never logs the Authorization header's value, even when one is sent", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     await handler.fetch(
       new Request("http://localhost/mcp", {
         method: "POST",
@@ -623,7 +626,7 @@ describe("era logging", () => {
   // real tools/call (not tools/list) must show up with both method= and name=.
   it("logs method and name for a valid tools/call, not just tools/list", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const body = await call(handler, "tools/call", { name: "list_agents", arguments: {} });
     expect(body.error, `tools/call failed: ${JSON.stringify(body.error)}`).toBeUndefined();
     const logged = spy.mock.calls.map((c) => String(c[0])).join("\n");
@@ -641,7 +644,7 @@ describe("era logging", () => {
   // malformed call arrived, with the offending method and name.
   it("still logs method and name for a tools/call the SDK rejects for schema-invalid arguments", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     // get_agent requires a numeric agentId; a string fails schema validation
     // before dispatch ever reaches our handler (or the mocked API client).
     const body = await call(handler, "tools/call", {
@@ -664,7 +667,7 @@ describe("era logging", () => {
   // loggable() must make the whole header value opaque to a naive parser.
   it("quotes the client field so a hostile User-Agent cannot forge extra key=value tokens", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const evilUserAgent = "evil client=fake auth=present traceparent=00-deadbeef";
     await handler.fetch(
       new Request("http://localhost/mcp", {
@@ -694,7 +697,7 @@ describe("era logging", () => {
 
   it("truncates an oversized header instead of emitting it whole", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const hugeUserAgent = "A".repeat(5000);
     await handler.fetch(
       new Request("http://localhost/mcp", {
@@ -739,7 +742,7 @@ describe("request size limits", () => {
 
   it("answers 413 to a body whose Content-Length is over 4 MiB", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const body = oversizedJson();
     const res = await handler.fetch(
       new Request("http://localhost/mcp", {
@@ -756,7 +759,7 @@ describe("request size limits", () => {
 
   it("answers 413 to a streamed body over 4 MiB that declares no Content-Length", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const bytes = new TextEncoder().encode(oversizedJson());
     const chunk = 64 * 1024;
     let offset = 0;
@@ -787,7 +790,7 @@ describe("request size limits", () => {
   // Batches only exist on the legacy wire: 2026-07-28 rejects every batch outright,
   // so these use envelope-free pings to reach the size check.
   async function postLegacyPingBatch(size: number) {
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const batch = Array.from({ length: size }, (_, i) => ({ jsonrpc: "2.0", id: i + 1, method: "ping" }));
     const res = await handler.fetch(
       new Request("http://localhost/mcp", {
@@ -880,7 +883,7 @@ describe("resolveTraceContext", () => {
 
 describe("output schemas on the 2026-07-28 wire", () => {
   it("tools/list leaves array roots bare and object roots as objects", async () => {
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const body = await call(handler, "tools/list");
     const schemaOf = (name: string) =>
       body.result.tools.find((t: { name: string }) => t.name === name)?.outputSchema;
@@ -890,7 +893,7 @@ describe("output schemas on the 2026-07-28 wire", () => {
   });
 
   it("tools/call returns a bare array as structuredContent", async () => {
-    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9");
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
     const body = await call(handler, "tools/call", { name: "list_spaces", arguments: {} });
     expect(body.error, `tools/call failed: ${JSON.stringify(body.error)}`).toBeUndefined();
     expect(body.result.isError).toBeFalsy();

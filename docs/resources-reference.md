@@ -295,6 +295,21 @@ List of agents belonging to a specific space. Shows id, name, status, configType
 
 ---
 
+## Skills
+
+The server also serves 16 skills over the MCP skills extension (`io.modelcontextprotocol/skills`). A skill is a `SKILL.md` file of instructions that a client can load when a task calls for it. Skill files are listed in `resources/list` as `skill://<name>/SKILL.md`, and `resources/templates/list` includes the template `skill://{+path}`. Any client can read them with `resources/read`; no OAuth scope is required, because a skill is static text and carries no account data.
+
+| Kind | Skills |
+|------|--------|
+| Workflow (11) | One per [prompt](./prompts-reference.md), with the same name: `debug-agent`, `compare-runs`, `agent-health-check`, `daily-operations-report`, `space-overview`, `run-and-monitor`, `schedule-agent`, `spending-report`, `cost-analysis`, `build-agent-from-prompt`, `inspect-agent-draft` |
+| Reference (5) | Skill-only background knowledge with no prompt: `credit-usage`, `run-inputs`, `run-outcomes`, `run-troubleshooting`, `schedule-editing` |
+
+**Example:** `skill://run-outcomes/SKILL.md`
+
+The skills are not counted in the 18 resources above. See the [README](../README.md#available-skills) for what each skill covers.
+
+---
+
 ## See Also: Agent Builder
 
 The Agent Builder does not expose any resources — agent build sessions are transient and accessed via tools only. Once a build session reaches a terminal status (`completed` or `ready` in [`get_agent_build_status`](./tool-reference.md#get_agent_build_status)), the resulting agent becomes accessible through the existing `sequentum://agents/{agentId}` resource template and all other agent resources described in this document.

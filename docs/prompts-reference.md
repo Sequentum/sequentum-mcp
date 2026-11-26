@@ -2,7 +2,7 @@
 
 The Sequentum MCP Server provides 11 prompts -- reusable instruction templates that guide the AI through common multi-step workflows. Prompts are explicitly invoked by the user or client and orchestrate the server's existing [tools](./tool-reference.md) to complete complex tasks in a single request.
 
-> **How prompts work:** Each prompt generates a sequence of step-by-step instructions for the AI. When invoked, the AI follows these instructions, calling the appropriate tools in order and synthesizing the results into a final response.
+> **How prompts work:** Each prompt is generated from the [skill](./resources-reference.md#skills) of the same name. The prompt message is a short preamble that states the arguments you gave, followed by the skill's step-by-step instructions. When invoked, the AI follows these instructions, calling the appropriate tools in order and synthesizing the results into a final response. Clients that support the MCP skills extension can load the same instructions as a skill without invoking the prompt.
 
 ## Quick Reference
 
@@ -43,7 +43,7 @@ Diagnose why an agent is failing. Searches for the agent, checks recent runs, re
 
 1. Uses `search_agents` to find the agent by name.
 2. Uses `get_agent_runs` to check recent execution history.
-3. Uses `get_latest_failure` to retrieve detailed failure diagnostics including error messages, possible causes, and suggested fixes.
+3. Uses `get_latest_failure` to retrieve the failure diagnostics: error message, run timing and stats, possible causes, and suggested actions. The possible causes are keyword-match hints, not a diagnosis; the AI reasons from the error message, run status, record counts, error count and runtime.
 4. If needed, uses `get_run_diagnostics` on specific failed runs for additional detail.
 5. Summarizes the root cause and provides actionable recommendations.
 
@@ -74,7 +74,7 @@ Compare the last successful and last failed runs of an agent to identify what ch
 1. Uses `search_agents` to find the agent by name.
 2. Uses `get_agent_runs` to retrieve recent run history.
 3. Identifies the most recent successful run and the most recent failed run.
-4. Uses `get_run_diagnostics` on the failed run for detailed failure information.
+4. Uses `get_run_diagnostics` on the failed run for detailed failure information, treating its possible causes as keyword-match hints rather than a diagnosis.
 5. Compares the two runs side-by-side: status, runtime duration, records extracted, records exported, error count, page loads, and error messages.
 6. Summarizes differences and suggests likely causes for the failure.
 
@@ -225,10 +225,11 @@ Walk through creating or reviewing schedules for an agent. Checks existing sched
 1. Uses `search_agents` to find the agent by name.
 2. Uses `get_agent` to retrieve its full details and input parameters.
 3. Uses `list_agent_schedules` to check if the agent already has any schedules.
-4. If schedules exist, summarizes them (name, type, timing, enabled status).
-5. Determines the appropriate schedule type: CRON (3) for recurring cron-based, RunEvery (2) for interval-based, or RunOnce (1) for a single execution.
+4. If schedules exist, summarizes them (name, type, timing, enabled status). If the user only wanted to review schedules, stops here.
+5. Determines the schedule type and its timing: CRON (3) for recurring cron-based, RunEvery (2) for interval-based, or RunOnce (1) for a single execution. If `scheduleDescription` was provided, translates it; otherwise, asks the user which schedule they want (CRON, run-every interval, or one-time).
 6. Uses `create_agent_schedule` to create the new schedule with the correct parameters.
-7. If `scheduleDescription` was provided, translates it into the appropriate schedule type and parameters. Otherwise, asks the user what schedule they'd like.
+
+For input parameters and secrets on the schedule, it points to the `run-inputs` skill.
 
 #### Example Invocations
 
@@ -313,8 +314,9 @@ Build a new web scraping agent from a natural language description using the AI 
 
 1. *(If `spaceName` provided)* Uses `search_space_by_name` to resolve the name to a `spaceId`.
 2. Uses `start_agent_build` with the given `prompt` (and `spaceId` if resolved). The tool waits for the build to complete, up to about 5 minutes, and returns the `agentId`. If it times out, the response includes a `sessionId` to check with `get_agent_build_status`. The final status is handled as follows:
-   - `completed` → agent was saved successfully. Reports `agentId` and `agentName` to the user. Done.
-   - `ready` → agent exists but may not be fully saved yet. Reports `agentId` and `agentName`. No further action required.
+   - `completed` → agent was saved successfully. Reports `agentId` and `agentName` to the user. Done -- stops polling.
+   - `ready` → agent exists but may not be fully saved yet. Reports `agentId` and `agentName`. Stops polling -- no further action required.
+   - On `completed` or `ready`, if `partial` is true, gives the user the `summary`, names the plan lines whose provenance is an assumption or default, and puts any open questions to the user in one message with their suggested replies (the first reply is what the build already did). If the user picks another reply, calls `start_agent_build` again with the original request plus that answer.
    - `error` → reports the error to the user. If an agent was partially created, advises the user to delete it via the standard agents API.
    - `cancelled` → reports the build was aborted early.
 3. If the build succeeded (`completed` or `ready`), uses `get_agent` with the `agentId` to show the full agent details.
@@ -346,11 +348,12 @@ Check the current status of an agent build session and present the resulting age
 #### Workflow
 
 1. Uses `get_agent_build_status` to get the current status of the session.
-   - `processing` → reports that the AI is still building; continues polling using `pollingPreference` if provided, otherwise a moderate cadence with backoff.
+   - `processing` → reports that the AI is still building, then calls `get_agent_build_status` again at the cadence given in `pollingPreference` if provided, otherwise a moderate cadence with backoff, never more than about 30 seconds between calls.
    - `error` → reports the error. The session is over. If an agent was partially created, advises the user to delete it via the standard agents API.
    - `cancelled` → reports the build was aborted early. Any agent saved before the abort remains in the workspace.
-   - `completed` → agent was saved successfully; shows `agentId` / `agentName`. Done.
-   - `ready` → agent exists and is accessible; shows `agentId` / `agentName`. Done.
+   - `completed` → agent was saved successfully; shows `agentId` / `agentName`. Stops polling.
+   - `ready` → agent exists but may not be fully saved yet; shows `agentId` / `agentName`. Stops polling.
+   - On `completed` or `ready`, if `partial` is true, gives the user the `summary`, names the plan lines whose provenance is an assumption or default, and puts any open questions to the user in one message with their suggested replies. If the user picks another reply, calls `start_agent_build` again with the original request plus that answer.
 2. If `status` is `completed` or `ready` and `agentId` is populated, uses `get_agent` to fetch the full agent details (name, description, configType, input parameters).
 3. Presents the agent details to the user and reminds them it is accessible via `list_agents` and all other agent tools.
 
