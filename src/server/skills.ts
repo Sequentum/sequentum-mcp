@@ -6,7 +6,7 @@
  * never drift apart unnoticed at startup.
  */
 
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SkillCatalog } from "@modelcontextprotocol/server/ext/skills";
@@ -80,7 +80,7 @@ export async function loadWorkflowSkills(
 
   const bodies = new Map<string, string>();
   for (const name of names) {
-    bodies.set(name, skillBody(readFileSync(join(root, name, "SKILL.md"), "utf8")));
+    bodies.set(name, skillBody(await readFile(join(root, name, "SKILL.md"), "utf8")));
   }
   return { catalog, bodies };
 }
