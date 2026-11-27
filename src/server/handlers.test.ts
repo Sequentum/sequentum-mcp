@@ -25,7 +25,7 @@ import {
   RateLimitError,
 } from "../api/types.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import type { SequentumApiClient } from "../api/api-client.js";
+import { SequentumApiClient } from "../api/api-client.js";
 import { toolDispatch } from "./tools/index.js";
 import { REFERENCE_SKILLS, SKILLS_ROOT, loadWorkflowSkills } from "./skills.js";
 import {
@@ -1398,6 +1398,177 @@ describe.each(["legacy (2025)", "modern (2026-07-28)"] as const)(
       }));
   }
 );
+
+// ==========================================
+// Destructive tool confirmation, on both protocol eras
+// ==========================================
+
+describe("destructive tool confirmation", () => {
+  const ACCEPT = { action: "accept", content: { confirm: true } };
+  let deleteRun: ReturnType<typeof vi.spyOn>;
+  let killAgent: ReturnType<typeof vi.spyOn>;
+  let deleteAgentSchedule: ReturnType<typeof vi.spyOn>;
+  let stopAgent: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    deleteRun = vi.spyOn(SequentumApiClient.prototype, "deleteRun").mockResolvedValue(undefined);
+    killAgent = vi.spyOn(SequentumApiClient.prototype, "killAgent").mockResolvedValue(undefined);
+    deleteAgentSchedule = vi
+      .spyOn(SequentumApiClient.prototype, "deleteAgentSchedule")
+      .mockResolvedValue(undefined);
+    stopAgent = vi.spyOn(SequentumApiClient.prototype, "stopAgent").mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** A tools/call on the 2026-07-28 era, through the stateless handler, as a real client sends it. */
+  async function callModern(
+    name: string,
+    args: Record<string, unknown>,
+    clientCapabilities: Record<string, unknown>,
+    extraParams: Record<string, unknown> = {}
+  ): Promise<{ result?: any; error?: any }> {
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
+    try {
+      const res = await handler.fetch(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            "Mcp-Method": "tools/call",
+            "Mcp-Protocol-Version": "2026-07-28",
+            "Mcp-Name": name,
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              _meta: {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientInfo": { name: "test", version: "1.0.0" },
+                "io.modelcontextprotocol/clientCapabilities": clientCapabilities,
+              },
+              name,
+              arguments: args,
+              ...extraParams,
+            },
+          }),
+        })
+      );
+      return JSON.parse((await res.text()).replace(/^event: message\ndata: /, ""));
+    } finally {
+      await handler.close();
+    }
+  }
+
+  /** A tools/call on the 2025 era, through the in-memory client. */
+  async function callLegacy(
+    name: string,
+    args: Record<string, unknown>,
+    capabilities: Record<string, unknown>
+  ): Promise<any> {
+    const server = createMcpServer(new SequentumApiClient("https://api.example.test"), "9.9.9", skills);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "1.0.0" }, { capabilities });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      return await client.callTool({ name, arguments: args });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  }
+
+  it("modern + elicitation: delete_run asks first and deletes nothing", async () => {
+    const body = await callModern("delete_run", { agentId: 44, runId: 812 }, { elicitation: {} });
+    expect(body.result.resultType).toBe("input_required");
+    expect(body.result.inputRequests.confirm.params.message).toBe(
+      "Delete run 812 of agent 44 and all its files? This cannot be undone."
+    );
+    expect(deleteRun).not.toHaveBeenCalled();
+  });
+
+  it("modern + elicitation: the retry carrying accept deletes once", async () => {
+    const body = await callModern("delete_run", { agentId: 44, runId: 812 }, { elicitation: {} }, {
+      inputResponses: { confirm: ACCEPT },
+    });
+    expect(deleteRun).toHaveBeenCalledExactlyOnceWith(44, 812, undefined);
+    expect(body.result.content[0].text).toMatch(/^Successfully deleted run 812/);
+  });
+
+  it.each(["decline", "cancel"])("modern + elicitation: %s deletes nothing", async (action) => {
+    const body = await callModern("delete_run", { agentId: 44, runId: 812 }, { elicitation: {} }, {
+      inputResponses: { confirm: { action } },
+    });
+    expect(deleteRun).not.toHaveBeenCalled();
+    expect(body.result.isError).toBeFalsy();
+    expect(body.result.content[0].text).toBe(
+      "Cancelled: the user did not confirm Delete Run. Nothing was changed."
+    );
+  });
+
+  it("modern + elicitation: an answer the SDK drops cancels instead of asking again", async () => {
+    // The wrapped {method, result} shape is dropped by the SDK into droppedInputResponseKeys; the
+    // gate must still see it through ctx.mcpReq, or every retry would re-ask.
+    const body = await callModern("delete_run", { agentId: 44, runId: 812 }, { elicitation: {} }, {
+      inputResponses: { confirm: { method: "elicitation/create", result: ACCEPT } },
+    });
+    expect(deleteRun).not.toHaveBeenCalled();
+    expect(body.result.resultType).not.toBe("input_required");
+    expect(body.result.isError).toBeFalsy();
+    expect(body.result.content[0].text).toMatch(/^Cancelled: the confirmation answer for Delete Run could not be read/);
+  });
+
+  it("modern without elicitation: deletes in one call", async () => {
+    const body = await callModern("delete_run", { agentId: 44, runId: 812 }, {});
+    expect(deleteRun).toHaveBeenCalledOnce();
+    expect(body.result.resultType).not.toBe("input_required");
+  });
+
+  it("legacy era with elicitation: deletes in one call", async () => {
+    const result = await callLegacy("delete_run", { agentId: 44, runId: 812 }, { elicitation: {} });
+    expect(deleteRun).toHaveBeenCalledOnce();
+    expect(result.content[0].text).toMatch(/^Successfully deleted run 812/);
+  });
+
+  it("legacy era without elicitation: deletes in one call", async () => {
+    await callLegacy("delete_run", { agentId: 44, runId: 812 }, {});
+    expect(deleteRun).toHaveBeenCalledOnce();
+  });
+
+  it("kill_agent and delete_agent_schedule are gated too", async () => {
+    const kill = await callModern("kill_agent", { agentId: 44, runId: 812 }, { elicitation: {} });
+    const schedule = await callModern(
+      "delete_agent_schedule",
+      { agentId: 44, scheduleId: 7 },
+      { elicitation: {} }
+    );
+    expect(kill.result.resultType).toBe("input_required");
+    expect(schedule.result.resultType).toBe("input_required");
+    expect(killAgent).not.toHaveBeenCalled();
+    expect(deleteAgentSchedule).not.toHaveBeenCalled();
+  });
+
+  it("stop_agent is never gated", async () => {
+    const body = await callModern("stop_agent", { agentId: 44, runId: 812 }, { elicitation: {} });
+    expect(stopAgent).toHaveBeenCalledOnce();
+    expect(body.result.resultType).not.toBe("input_required");
+  });
+
+  it("invalid args skip the question", async () => {
+    // runId 0 passes the tool's JSON Schema (type number, no minimum), so the call reaches the
+    // gate's id check and then the handler's validation, unlike a wrong-type id the SDK rejects.
+    const body = await callModern("delete_run", { agentId: 44, runId: 0 }, { elicitation: {} });
+    expect(body.result.resultType).not.toBe("input_required");
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0].text).toContain("must be >= 1");
+    expect(deleteRun).not.toHaveBeenCalled();
+  });
+});
 
 // ==========================================
 // Policy Wiring Regression Tests
