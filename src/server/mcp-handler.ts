@@ -24,7 +24,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { currentUpstreamAuth, isHoldable, mayAnswerUnauthorized } from "../api/upstream-auth.js";
 import { buildAuthChallenge } from "../utils/oauth-metadata.js";
 import { holdUntilFirstFrame } from "./response-hold.js";
-import { UPSTREAM_AUTH_HOLD_MS } from "./constants.js";
+import { MCP_TASKS_ENABLED, UPSTREAM_AUTH_HOLD_MS } from "./constants.js";
 
 /** Extract a Bearer token from a Web-standard Request, or null. */
 function bearerFrom(request: Request | undefined): string | null {
@@ -237,12 +237,20 @@ function logEraLine(ctx: McpRequestContext, trace: TraceContext, extensions: str
  * @param apiBaseUrl - Base URL of the Sequentum API
  * @param version - The server version string from package.json
  * @param skills - The skills from loadWorkflowSkills, shared by every request
+ * @param options - Passed through to createMcpServer (`tasksEnabled` defaults to MCP_TASKS_ENABLED)
  */
 export function createSequentumMcpHandler(
   apiBaseUrl: string,
   version: string,
-  skills: WorkflowSkills
+  skills: WorkflowSkills,
+  options: { tasksEnabled?: boolean } = {}
 ): McpHttpHandler {
+  // installTaskSupport runs inside the per-request factory, so a missing SDK internal would
+  // otherwise fail every /mcp request. Build one throwaway server now so it fails at startup.
+  if (options.tasksEnabled ?? MCP_TASKS_ENABLED) {
+    createMcpServer(new SequentumApiClient(apiBaseUrl), version, skills, options);
+  }
+
   const inner = createMcpHandler((ctx) => {
     // Set by the fetch wrapper below. The header-only fallback covers any path that
     // reaches the factory without passing through it (none today; defensive).
@@ -258,7 +266,7 @@ export function createSequentumMcpHandler(
     if (token) {
       apiClient.setAccessToken(token);
     }
-    return createMcpServer(apiClient, version, skills);
+    return createMcpServer(apiClient, version, skills, options);
   });
 
   /**

@@ -30,7 +30,11 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
  * - json-schema-2020-12: needs the fixture tool `json_schema_2020_12_tool`.
  * - http-custom-header-server-validation: needs a tool annotated with
  *   `x-mcp-header`; revisit if that schema extension is adopted.
- * - tasks-* (10): Tasks extension not implemented.
+ * - tasks-* (10): the Tasks extension is implemented, but only for
+ *   `start_agent_build`, behind MCP_TASKS_ENABLED. In 0.2.0-alpha.12 every
+ *   scenario drives fixture tools this server does not register (`slow_compute`,
+ *   `failing_job`, `confirm_delete`, `multi_input`, `protocol_error_job`), and
+ *   the bootstrap checks only run as part of those scenarios.
  * - input-required-result-* (14): Multi Round-Trip Requests not implemented.
  * - Everything that calls a named fixture (tools-call-*, resources-read-*,
  *   prompts-get-*, completion-complete, resources-subscribe, ...) or a feature

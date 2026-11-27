@@ -3124,4 +3124,221 @@ describe("SequentumApiClient - Agent Builder", () => {
       );
     });
   });
+
+  describe("startAgentBuildTask", () => {
+    it("should POST to /agent-builder/tasks with the prompt only and return the task", async () => {
+      const mockResponse = {
+        taskId: "ab_1",
+        status: "processing",
+        createdAt: "2026-11-27T10:00:00Z",
+        pollIntervalSeconds: 5,
+        resultRetentionSeconds: 3600,
+      };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockResponse,
+      } as Response);
+
+      const result = await client.startAgentBuildTask({
+        prompt: "Scrape prices from amazon.com",
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent-builder/tasks",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ prompt: "Scrape prices from amazon.com" }),
+        })
+      );
+      expect(result).toEqual(mockResponse);
+    });
+
+    it("should include spaceId in the request body when provided", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ taskId: "ab_2" }),
+      } as Response);
+
+      await client.startAgentBuildTask({ prompt: "Extract product data", spaceId: 7 });
+
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: JSON.stringify({ prompt: "Extract product data", spaceId: 7 }),
+        })
+      );
+    });
+
+    it("should throw ApiRequestError with status 404 when the route is not found", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        text: async () => '{"message": "Not found"}',
+      } as Response);
+
+      const error = await client
+        .startAgentBuildTask({ prompt: "Scrape prices from amazon.com" })
+        .catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ApiRequestError);
+      expect((error as ApiRequestError).statusCode).toBe(404);
+    });
+  });
+
+  describe("blocking build calls keep their retries", () => {
+    it("getAgentBuildStatus still retries a 503", async () => {
+      (client as any).baseDelayMs = 0;
+      (client as any).maxDelayMs = 0;
+      vi.mocked(fetch).mockImplementation(async () => new Response("upstream down", { status: 503 }));
+
+      await expect(client.getAgentBuildStatus("sess-1")).rejects.toBeInstanceOf(ApiRequestError);
+      expect(fetch).toHaveBeenCalledTimes(4);
+    });
+  });
+
+  describe("getAgentBuildTask", () => {
+    it("should GET /agent-builder/tasks/{taskId} and return the task", async () => {
+      const mockTask = {
+        status: "ready",
+        agentId: 42,
+        agentName: "Amazon Price Scraper",
+        createdAt: "2026-11-27T10:00:00Z",
+        finishedAt: "2026-11-27T10:05:00Z",
+        expiresAt: "2026-11-27T11:05:00Z",
+      };
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => mockTask,
+      } as Response);
+
+      const result = await client.getAgentBuildTask("ab_1");
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent-builder/tasks/ab_1",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockTask);
+    });
+
+    it("should URL-encode the taskId in the path", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ status: "processing" }),
+      } as Response);
+
+      await client.getAgentBuildTask("ab_1/x");
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent-builder/tasks/ab_1%2Fx",
+        expect.any(Object)
+      );
+    });
+
+    it("should throw ApiRequestError with status 404 for an unknown task", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        text: async () => '{"message": "Task not found"}',
+      } as Response);
+
+      const error = await client.getAgentBuildTask("bad-id").catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ApiRequestError);
+      expect((error as ApiRequestError).statusCode).toBe(404);
+    });
+
+    // The task poll is answered from one upstream attempt: the client's next poll is the retry.
+    for (const status of [429, 500, 502, 503, 504]) {
+      it(`makes exactly one attempt on a ${status}`, async () => {
+        (client as any).baseDelayMs = 0;
+        (client as any).maxDelayMs = 0;
+        vi.mocked(fetch).mockImplementation(
+          async () => new Response("upstream down", { status, headers: { "retry-after": "1" } })
+        );
+
+        const error = await client.getAgentBuildTask("ab_1").catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(ApiRequestError);
+        expect((error as ApiRequestError).statusCode).toBe(status);
+        expect(fetch).toHaveBeenCalledTimes(1);
+      });
+    }
+
+    it("makes exactly one attempt on a timeout, with a 10 s limit", async () => {
+      (client as any).baseDelayMs = 0;
+      (client as any).maxDelayMs = 0;
+      const abortError = new Error("The operation was aborted");
+      abortError.name = "AbortError";
+      vi.mocked(fetch).mockRejectedValue(abortError);
+
+      await expect(client.getAgentBuildTask("ab_1")).rejects.toThrow(/^Request timeout after 10000ms/);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("makes exactly one attempt on a network error", async () => {
+      vi.mocked(fetch).mockRejectedValue(new TypeError("fetch failed"));
+
+      await expect(client.getAgentBuildTask("ab_1")).rejects.toThrow("fetch failed");
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("cancelAgentBuildTask", () => {
+    it("should POST to /agent-builder/tasks/{taskId}/cancel and handle 204 No Content", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+      } as Response);
+
+      await expect(client.cancelAgentBuildTask("ab_1")).resolves.toBeUndefined();
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent-builder/tasks/ab_1/cancel",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+
+    it("should URL-encode the taskId in the path", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+      } as Response);
+
+      await client.cancelAgentBuildTask("ab_1/x");
+
+      expect(fetch).toHaveBeenCalledWith(
+        "https://api.example.com/api/v1/agent-builder/tasks/ab_1%2Fx/cancel",
+        expect.any(Object)
+      );
+    });
+
+    it("should throw ApiRequestError with status 404 for an unknown task", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        text: async () => '{"message": "Task not found"}',
+      } as Response);
+
+      const error = await client.cancelAgentBuildTask("bad-id").catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ApiRequestError);
+      expect((error as ApiRequestError).statusCode).toBe(404);
+    });
+
+    it("makes exactly one attempt on a 503", async () => {
+      vi.mocked(fetch).mockImplementation(async () => new Response("upstream down", { status: 503 }));
+
+      await expect(client.cancelAgentBuildTask("ab_1")).rejects.toBeInstanceOf(ApiRequestError);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+  });
 });

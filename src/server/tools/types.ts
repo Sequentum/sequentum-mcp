@@ -5,6 +5,8 @@ export type CallToolResult = {
   /** Present on tools that declare an outputSchema. The SDK validates it. */
   structuredContent?: unknown;
   isError?: true;
+  /** Private markers read by the server's own wrappers (see tasks.ts); never set by most tools. */
+  _meta?: Record<string, unknown>;
 };
 
 export type ProgressFn = (progress: number, total?: number, message?: string) => Promise<void>;
@@ -18,6 +20,11 @@ export interface ToolDeps {
    * and call `stopAgentBuild` when the MCP client cancels the request mid-poll).
    */
   signal: AbortSignal;
+  /**
+   * True when MCP Tasks are enabled and this 2026-07-28 request declared the Tasks extension.
+   * Only `start_agent_build` reads it, to start the build as a task instead of polling.
+   */
+  tasksDeclared: boolean;
 }
 
 export type ToolHandler = (

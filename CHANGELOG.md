@@ -6,6 +6,17 @@
 
 ### Added
 
+- **`start_agent_build` can return the build as an MCP Task (`io.modelcontextprotocol/tasks`).**
+  A client that declares the extension on a 2026-07-28 `tools/call` gets a task at once (status
+  `working`, poll interval 5 seconds) instead of waiting up to 5 minutes. It polls `tasks/get`, which
+  returns the same result the blocking call returns once the build finishes, and `tasks/cancel`
+  stops the build. The finished result stays retrievable for 1 hour. The task ID is the Agent
+  Builder session ID and the Control Center checks ownership on every call, so the server stores
+  nothing. `tasks/list`, `tasks/update` and task notifications are not offered. Off by default:
+  set `MCP_TASKS_ENABLED=true` only where the Control Center serves `/api/v1/agent-builder/tasks`.
+  Clients that do not declare the extension, legacy clients and `waitForCompletion: false` calls
+  behave as before. With the flag on, a legacy `initialize` also lists the extension, but a legacy
+  `tools/call` never creates a task.
 - **The server serves 16 skills over the MCP skills extension (`io.modelcontextprotocol/skills`).**
   Eleven workflow skills, one per prompt, and five reference skills with no prompt: `credit-usage`,
   `run-inputs`, `run-outcomes`, `run-troubleshooting` and `schedule-editing`. The skill files are

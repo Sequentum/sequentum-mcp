@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { parseListCacheTtlMs, parseRateLimitMax, parseRateLimitWindowMs } from "./constants.js";
+import {
+  parseListCacheTtlMs,
+  parseRateLimitMax,
+  parseRateLimitWindowMs,
+  parseTasksEnabled,
+} from "./constants.js";
+
+describe("parseTasksEnabled", () => {
+  it("is true only for the exact string \"true\"", () => {
+    expect(parseTasksEnabled("true")).toBe(true);
+  });
+
+  it.each([undefined, "", "1", "TRUE", "false"])("is false for %j", (raw) => {
+    expect(parseTasksEnabled(raw)).toBe(false);
+  });
+});
 
 describe("parseListCacheTtlMs", () => {
   it("defaults to 3600000 when unset", () => {
