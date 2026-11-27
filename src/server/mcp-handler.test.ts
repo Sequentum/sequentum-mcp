@@ -18,7 +18,7 @@ vi.mock("../api/api-client.js", () => ({
 }));
 
 import { SequentumApiClient } from "../api/api-client.js";
-import { createSequentumMcpHandler, resolveTraceContext, traceContextFromMeta } from "./mcp-handler.js";
+import { createSequentumMcpHandler, declaredExtensions, resolveTraceContext, traceContextFromMeta } from "./mcp-handler.js";
 import { loadWorkflowSkills } from "./skills.js";
 
 const skills = await loadWorkflowSkills();
@@ -360,6 +360,74 @@ describe("progress notifications", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("declared extensions on the era line", () => {
+  const CAPS_KEY = "io.modelcontextprotocol/clientCapabilities";
+
+  /** Send a 2026-07-28 tools/list declaring the given client capabilities; return the era lines. */
+  async function eraLinesFor(clientCapabilities: Record<string, unknown>): Promise<string[]> {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
+    await handler.fetch(
+      new Request("http://localhost/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "Mcp-Method": "tools/list",
+          "Mcp-Protocol-Version": "2026-07-28",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: { _meta: { ...ENVELOPE, [CAPS_KEY]: clientCapabilities } },
+        }),
+      })
+    );
+    const lines = spy.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith("[MCP] era="));
+    spy.mockRestore();
+    await handler.close();
+    return lines;
+  }
+
+  it("logs ext= with the declared extension ids", async () => {
+    const lines = await eraLinesFor({
+      extensions: { "io.modelcontextprotocol/tasks": {}, "io.modelcontextprotocol/skills": {} },
+    });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("ext=io.modelcontextprotocol/tasks,io.modelcontextprotocol/skills");
+  });
+
+  it("omits ext= when nothing is declared", async () => {
+    const lines = await eraLinesFor({});
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).not.toContain("ext=");
+  });
+
+  it("never logs more than 10 extension ids", async () => {
+    const extensions = Object.fromEntries(Array.from({ length: 15 }, (_, i) => [`vendor/ext-${i}`, {}]));
+    const lines = await eraLinesFor({ extensions });
+    expect(lines).toHaveLength(1);
+    const ids = lines[0].match(/ ext=(\S+)/)![1].split(",");
+    expect(ids).toHaveLength(10);
+  });
+
+  it("keeps a hostile extension id from forging extra fields", async () => {
+    const lines = await eraLinesFor({ extensions: { "evil auth=forged": {} } });
+    expect(lines[0]).toContain('ext="evil auth=forged"');
+  });
+
+  it("declaredExtensions returns [] for anything that is not a body with object extensions", () => {
+    expect(declaredExtensions("nope")).toEqual([]);
+    expect(declaredExtensions(null)).toEqual([]);
+    expect(declaredExtensions([])).toEqual([]);
+    expect(declaredExtensions({ params: {} })).toEqual([]);
+    expect(declaredExtensions({ params: { _meta: {} } })).toEqual([]);
+    expect(declaredExtensions({ params: { _meta: { [CAPS_KEY]: { extensions: "tasks" } } } })).toEqual([]);
+    expect(declaredExtensions({ params: { _meta: { [CAPS_KEY]: { extensions: ["tasks"] } } } })).toEqual([]);
   });
 });
 

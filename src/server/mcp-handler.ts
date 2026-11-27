@@ -87,6 +87,31 @@ export function traceContextFromMeta(body: unknown): TraceContext {
   return out;
 }
 
+/** At most this many declared extension ids reach the era log line. */
+const MAX_LOGGED_EXTENSIONS = 10;
+
+/** Ids made only of these characters (every real extension id) are logged as they are. */
+const PLAIN_EXTENSION_ID = /^[A-Za-z0-9._\/-]{1,200}$/;
+
+/**
+ * The extension ids a 2026-07-28 client declares in
+ * `params._meta["io.modelcontextprotocol/clientCapabilities"].extensions` (an object keyed by
+ * id), for the era log line. At most {@link MAX_LOGGED_EXTENSIONS}; anything else yields `[]`.
+ * The ids are attacker-controlled, so one that is not plain goes through {@link loggable}
+ * (JSON-quoted, length-bounded) and cannot forge extra fields; plain ids stay bare so
+ * `ext=io.modelcontextprotocol/tasks` is greppable. Only ids are returned, never values.
+ */
+export function declaredExtensions(body: unknown): string[] {
+  const isObject = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+  if (!isObject(body) || !isObject(body.params) || !isObject(body.params._meta)) return [];
+  const capabilities = body.params._meta["io.modelcontextprotocol/clientCapabilities"];
+  if (!isObject(capabilities) || !isObject(capabilities.extensions)) return [];
+  return Object.keys(capabilities.extensions)
+    .slice(0, MAX_LOGGED_EXTENSIONS)
+    .map((id) => (PLAIN_EXTENSION_ID.test(id) ? id : loggable(id)));
+}
+
 /**
  * Per key: the `_meta` value if the client sent one, else the HTTP header of the same
  * name. SEP-414 makes `_meta` the spec carrier; headers stay supported for clients that
@@ -108,7 +133,7 @@ export function resolveTraceContext(meta: TraceContext, headers: Headers | undef
  * than a WeakMap keyed by Request because the SDK may clone the request during legacy
  * classification, so object identity is not reliable across that boundary.
  */
-const traceContextStore = new AsyncLocalStorage<TraceContext>();
+const requestContextStore = new AsyncLocalStorage<{ trace: TraceContext; extensions: string[] }>();
 
 /**
  * Log one compact line per request to stderr: negotiated era, the requested
@@ -118,10 +143,11 @@ const traceContextStore = new AsyncLocalStorage<TraceContext>();
  * Format (bracketed segments are omitted, not emitted empty, when the
  * source header is absent):
  *
- *   [MCP] era=<legacy|modern>[ method=<q>][ name=<q>] client=<q> auth=<present|absent>[ traceparent=<q>][ tracestate=<q>][ baggage=<q>]
+ *   [MCP] era=<legacy|modern>[ method=<q>][ name=<q>] client=<q> auth=<present|absent>[ ext=<ids>][ traceparent=<q>][ tracestate=<q>][ baggage=<q>]
  *
  * `<q>` denotes a value run through {@link loggable} (JSON-quoted,
- * length-bounded); `era`/`auth` are bare enums. Keep the field order and
+ * length-bounded); `era`/`auth` are bare enums; `<ids>` is the comma-joined
+ * extension ids from {@link declaredExtensions}. Keep the field order and
  * quoting stable — this line is meant to be machine-parseable.
  *
  * Unconditional (not DEBUG-gated): the Connectors Directory dashboard never
@@ -159,7 +185,7 @@ const traceContextStore = new AsyncLocalStorage<TraceContext>();
  * only whether auth was present. http-server.ts's own debug logging redacts
  * the same headers for the same reason.
  */
-function logEraLine(ctx: McpRequestContext, trace: TraceContext): void {
+function logEraLine(ctx: McpRequestContext, trace: TraceContext, extensions: string[]): void {
   const headers = ctx.requestInfo?.headers;
   const method = headers?.get("Mcp-Method");
   const name = headers?.get("Mcp-Name");
@@ -171,6 +197,7 @@ function logEraLine(ctx: McpRequestContext, trace: TraceContext): void {
       (name ? ` name=${loggable(name)}` : "") +
       ` client=${loggable(agent)}` +
       ` auth=${hasAuth ? "present" : "absent"}` +
+      (extensions.length > 0 ? ` ext=${extensions.join(",")}` : "") +
       (trace.traceparent ? ` traceparent=${loggable(trace.traceparent)}` : "") +
       (trace.tracestate ? ` tracestate=${loggable(trace.tracestate)}` : "") +
       (trace.baggage ? ` baggage=${loggable(trace.baggage)}` : "")
@@ -205,8 +232,11 @@ export function createSequentumMcpHandler(
   const inner = createMcpHandler((ctx) => {
     // Set by the fetch wrapper below. The header-only fallback covers any path that
     // reaches the factory without passing through it (none today; defensive).
-    const trace = traceContextStore.getStore() ?? resolveTraceContext({}, ctx.requestInfo?.headers);
-    logEraLine(ctx, trace);
+    const { trace, extensions } = requestContextStore.getStore() ?? {
+      trace: resolveTraceContext({}, ctx.requestInfo?.headers),
+      extensions: [],
+    };
+    logEraLine(ctx, trace, extensions);
 
     // One API client per request — this is what makes the server stateless.
     const apiClient = new SequentumApiClient(apiBaseUrl);
@@ -249,7 +279,10 @@ export function createSequentumMcpHandler(
     const trace = resolveTraceContext(traceContextFromMeta(parsedBody), request.headers);
     const forwarded: McpHandlerRequestOptions | undefined =
       parsedBody === undefined ? options : { ...options, parsedBody };
-    const response = await traceContextStore.run(trace, () => inner.fetch(request, forwarded));
+    const extensions = declaredExtensions(parsedBody);
+    const response = await requestContextStore.run({ trace, extensions }, () =>
+      inner.fetch(request, forwarded)
+    );
 
     const ctx = currentUpstreamAuth();
     if (!isHoldable(ctx)) return response;
