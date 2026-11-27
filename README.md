@@ -4,7 +4,7 @@
 
 The [Sequentum MCP Server](https://mcp.sequentum.com) connects your AI coding assistant to Sequentum using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction), giving your AI tools the ability to create web scraping agents, run management, scheduling, analytics, and more. Sequentum hosts and manages a remote MCP server with OAuth authentication, so there's nothing to install.
 
-## [Tool Reference](./docs/tool-reference.md) | [Prompts Reference](./docs/prompts-reference.md) | [Resources Reference](./docs/resources-reference.md) | [Troubleshooting](./docs/troubleshooting.md) | [Changelog](./CHANGELOG.md)
+## [Tool Reference](./docs/tool-reference.md) | [Prompts Reference](./docs/prompts-reference.md) | [Resources Reference](./docs/resources-reference.md) | [Skills](#available-skills) | [Troubleshooting](./docs/troubleshooting.md) | [Changelog](./CHANGELOG.md)
 
 ## Key Features
 
@@ -249,6 +249,31 @@ The server includes 11 reusable prompt templates that guide the AI through commo
   - [`inspect-agent-draft`](docs/prompts-reference.md#inspect-agent-draft) -- Check the status of a build session and show the resulting agent
 
 <!-- END AUTO GENERATED PROMPTS -->
+
+## Available Skills
+
+The server also serves 16 skills over the MCP skills extension (`io.modelcontextprotocol/skills`). A skill is a short instruction file that tells the AI how to do a task well. Claude and Claude Code load a skill automatically when it is relevant to what you ask. Other clients keep using the 11 prompts above, and can read any skill through `resources/list` and `resources/read` on `skill://<name>/SKILL.md`; no scope is required. Must-follow rules stay in the tool descriptions and the server instructions, so a client that never loads a skill still gets them.
+
+| Skill | Kind | Purpose |
+|-------|------|---------|
+| `debug-agent` | Workflow | Find out why an agent is failing and recommend fixes |
+| `compare-runs` | Workflow | Compare an agent's last successful and last failed run |
+| `agent-health-check` | Workflow | Health overview: status, recent runs, schedules and version changes |
+| `daily-operations-report` | Workflow | Last 24 hours of runs, failures, records, credits and upcoming runs |
+| `space-overview` | Workflow | List a space's agents with status and recent activity |
+| `run-and-monitor` | Workflow | Start an agent and follow it to completion |
+| `schedule-agent` | Workflow | Review an agent's schedules and set up a new one |
+| `spending-report` | Workflow | Credit balance, monthly spending and recent transactions |
+| `cost-analysis` | Workflow | Find the most expensive agents and recommend savings |
+| `build-agent-from-prompt` | Workflow | Build a new agent from a plain-language description |
+| `inspect-agent-draft` | Workflow | Check an Agent Builder session and show the finished agent |
+| `credit-usage` | Reference | What each usage category charges for, and why runs are refused or stopped for credits |
+| `run-inputs` | Reference | Input parameters, secrets and run options when starting runs or schedules |
+| `run-outcomes` | Reference | What each run status, count and file type means |
+| `run-troubleshooting` | Reference | Decoding run messages, blocked sites and how far to trust diagnostics |
+| `schedule-editing` | Reference | Safely updating or auditing an existing schedule |
+
+See the [Resources Reference](./docs/resources-reference.md#skills) for the resource URIs.
 
 ## Available Resources
 

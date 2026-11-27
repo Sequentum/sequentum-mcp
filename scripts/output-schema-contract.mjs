@@ -124,11 +124,12 @@ async function main() {
   const accessToken = await login(env, { port: Number(values.port), reuseClient: values["reuse-client"] });
 
   const { createMcpServer } = await import(pathToFileURL(path.join(dist, "server", "handlers.js")).href);
+  const { loadWorkflowSkills } = await import(pathToFileURL(path.join(dist, "server", "skills.js")).href);
   const { SequentumApiClient } = await import(pathToFileURL(path.join(dist, "api", "api-client.js")).href);
   const { Client, InMemoryTransport } = await import("@modelcontextprotocol/client");
 
   const apiClient = createApiClient(SequentumApiClient, env.baseUrl, accessToken);
-  const server = createMcpServer(apiClient, "contract-check");
+  const server = createMcpServer(apiClient, "contract-check", await loadWorkflowSkills());
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "output-schema-contract", version: "1.0" });

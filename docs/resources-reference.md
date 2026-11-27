@@ -2,7 +2,7 @@
 
 The Sequentum MCP Server exposes 18 resources -- read-only, URI-addressable data that AI clients can browse and pull into context without calling a tool. Resources provide a "discovery" layer for browsing your Sequentum account data alongside the server's [tools](./tool-reference.md).
 
-> **How resources work:** Resources are accessed by URI. Static resources return data with default parameters (e.g., first page of agents, current month's spending). Resource templates accept parameters in the URI (e.g., `sequentum://agents/123`) to retrieve specific items. All resources return `application/json`.
+> **How resources work:** Resources are accessed by URI. Static resources return data with default parameters (e.g., first page of agents, current month's spending). Resource templates accept parameters in the URI (e.g., `sequentum://agents/123`) to retrieve specific items. All resources return `application/json`, except the [skill files](#skills), which are `text/markdown`.
 
 ## Quick Reference
 
@@ -292,6 +292,21 @@ List of agents belonging to a specific space. Shows id, name, status, configType
 **Example:** `sequentum://spaces/42/agents`
 
 > **See also:** [`get_space_agents`](./tool-reference.md#get_space_agents) tool for the equivalent tool-based access.
+
+---
+
+## Skills
+
+The server also serves 16 skills over the MCP skills extension (`io.modelcontextprotocol/skills`). A skill is a `SKILL.md` file of instructions that a client can load when a task calls for it. Skill files are listed in `resources/list` as `skill://<name>/SKILL.md`, and `resources/templates/list` includes the template `skill://{+path}`. Any client can read them with `resources/read`; no OAuth scope is required, because a skill is static text and carries no account data.
+
+| Kind | Skills |
+|------|--------|
+| Workflow (11) | One per [prompt](./prompts-reference.md), with the same name: `debug-agent`, `compare-runs`, `agent-health-check`, `daily-operations-report`, `space-overview`, `run-and-monitor`, `schedule-agent`, `spending-report`, `cost-analysis`, `build-agent-from-prompt`, `inspect-agent-draft` |
+| Reference (5) | Skill-only background knowledge with no prompt: `credit-usage`, `run-inputs`, `run-outcomes`, `run-troubleshooting`, `schedule-editing` |
+
+**Example:** `skill://run-outcomes/SKILL.md`
+
+The skills are not counted in the 18 resources above. See the [README](../README.md#available-skills) for what each skill covers.
 
 ---
 

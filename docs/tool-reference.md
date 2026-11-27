@@ -289,6 +289,8 @@ Start a web scraping agent execution. Two modes available:
 1. **Async (default)**: Returns immediately with `runId`. Use `get_run_status` to monitor progress.
 2. **Sync**: Set `isRunSynchronously=true` to wait and get scraped data directly (best for quick agents under 60 seconds).
 
+To store an input parameter's value encrypted, prefix its name with "?" (for example "?password"); a name without the prefix stores the value in clear text, even if the agent defines that parameter as encrypted.
+
 #### Parameters
 
 | Name | Type | Required | Description |
@@ -602,6 +604,8 @@ Create a schedule for an agent. Three schedule types are supported:
 | RunEvery | 2 | Run at regular intervals. Requires `runEveryCount` and `runEveryPeriod`. |
 | CRON | 3 | Run based on cron expression. Requires `cronExpression`. |
 
+To store an input parameter's value encrypted, prefix its name with "?" (for example "?password"); a name without the prefix stores the value in clear text, even if the agent defines that parameter as encrypted.
+
 #### Parameters
 
 | Name | Type | Required | Description |
@@ -619,7 +623,7 @@ Create a schedule for an agent. Three schedule types are supported:
 | `parallelism` | number | No | Parallel instances. Default: 1. |
 | `parallelMaxConcurrency` | number | No | Maximum concurrent parallel instances. Only relevant when `parallelism` > 1. |
 | `parallelExport` | string | No | `Combined` merges the output of parallel instances; `Separated` keeps per-instance files. |
-| `isExclusive` | boolean | No | If `true`, prevents concurrent runs of this agent. Default: `false`. |
+| `isExclusive` | boolean | No | If `true`, prevents concurrent runs of this agent. Default: `true`. |
 | `isWaitOnFailure` | boolean | No | If `true`, waits before retrying after a failure. Default: `false`. |
 | `logLevel` | string | No | `Fatal`, `Error`, `Warning` or `Info`. Default: `Info`. |
 | `logMode` | string | No | `Text`, or `TextAndHtml` for both. Default: `Text`. |
@@ -651,6 +655,10 @@ Run agent 456 every 6 hours
 Update an existing schedule for an agent. Modify timing, parameters, or other settings. Supports the same three schedule types as `create_agent_schedule`.
 
 If `scheduleType` is not explicitly provided, it is inferred from the fields you supply (e.g., providing `cronExpression` implies CRON type).
+
+This update replaces the whole schedule: any field you leave out is reset to its default, which can re-enable a disabled schedule and clear its input parameters. Read the schedule with `get_agent_schedule` first and send every field back. This tool cannot send a proxy pool or server group, so an update clears them; if `get_agent_schedule` shows either one set, make the change in the Sequentum dashboard instead.
+
+To store an input parameter's value encrypted, prefix its name with "?" (for example "?password"); a name without the prefix stores the value in clear text, even if the agent defines that parameter as encrypted.
 
 #### Parameters
 
@@ -1118,6 +1126,8 @@ Get the Bot Blocking folder
 Start all agents in a space at once (batch operation). Useful for running a group of related agents together.
 
 **Warning**: This starts multiple agents. Use `get_space_agents` first to see what will run.
+
+To store an input parameter's value encrypted, prefix its name with "?" (for example "?password"); a name without the prefix stores the value in clear text, even if the agent defines that parameter as encrypted.
 
 #### Parameters
 

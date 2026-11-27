@@ -16,7 +16,7 @@ Title: Update Agent Schedule
 
 ## Description
 
-Update an existing schedule for an agent. Modify timing, parameters, or other settings. Answers: 'Change the schedule to run at 10am', 'Update the cron expression', 'Modify the schedule timezone'. Three schedule types: RunOnce (1), RunEvery (2), CRON (3). TIP: Use get_agent_schedule or list_agent_schedules first to see current settings before updating.
+Update an existing schedule for an agent. Modify timing, parameters, or other settings. Answers: 'Change the schedule to run at 10am', 'Update the cron expression', 'Modify the schedule timezone'. Three schedule types: RunOnce (1), RunEvery (2), CRON (3). TIP: Use get_agent_schedule or list_agent_schedules first to see current settings before updating. This update replaces the whole schedule: any field you leave out is reset to its default, which can re-enable a disabled schedule and clear its input parameters. Read the schedule with get_agent_schedule first and send every field back. This tool cannot send a proxy pool or server group, so an update clears them; if get_agent_schedule shows either one set, make the change in the Sequentum dashboard instead. To store an input parameter's value encrypted, prefix its name with "?" (for example "?password"); a name without the prefix stores the value in clear text, even if the agent defines that parameter as encrypted.
 
 ## inputSchema
 

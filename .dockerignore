@@ -24,6 +24,8 @@ vitest.config.ts
 # Documentation
 docs/
 *.md
+# Defensive: *.md only matches root-level files, so this is not strictly needed today.
+!skills/**/SKILL.md
 CHANGELOG.md
 LICENSE
 

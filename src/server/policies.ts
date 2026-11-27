@@ -101,3 +101,19 @@ export const BUILD_RESULT_FIELDS =
   "Once the build has run the Agent it carries `sample`: the columns, up to 10 `rows` with `totalRows`, the `pageUrl` the rows came from, " +
   "`pageCount`/`morePages` from that page's pagination, and `screenshotPath` when a screenshot of it exists. Show the rows to the user " +
   "before asking the report's questions.";
+
+/**
+ * Safety warnings repeated on the tool descriptions that need them. The schedule-editing and
+ * run-inputs skills explain both rules in depth, but a client without skills support only ever
+ * sees tool descriptions, so the rules must ship here as well. Both state what the tool does.
+ */
+export const SCHEDULE_UPDATE_REPLACES_WARNING =
+  "This update replaces the whole schedule: any field you leave out is reset to its default, " +
+  "which can re-enable a disabled schedule and clear its input parameters. " +
+  "Read the schedule with get_agent_schedule first and send every field back. " +
+  "This tool cannot send a proxy pool or server group, so an update clears them; " +
+  "if get_agent_schedule shows either one set, make the change in the Sequentum dashboard instead.";
+
+export const ENCRYPTED_INPUT_PARAMETER_NOTE =
+  "To store an input parameter's value encrypted, prefix its name with \"?\" (for example \"?password\"); " +
+  "a name without the prefix stores the value in clear text, even if the agent defines that parameter as encrypted.";

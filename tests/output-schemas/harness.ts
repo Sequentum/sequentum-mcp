@@ -2,11 +2,14 @@ import { vi } from "vitest";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createMcpServer } from "../../src/server/handlers.js";
 import type { SequentumApiClient } from "../../src/api/api-client.js";
+import { loadWorkflowSkills } from "../../src/server/skills.js";
+
+const skills = await loadWorkflowSkills();
 
 /** Connects an SDK client to a fresh server whose API client resolves each method with `api[method]`. */
 export async function connect(api: Record<string, unknown>): Promise<Client> {
   const mock = Object.fromEntries(Object.entries(api).map(([method, value]) => [method, vi.fn().mockResolvedValue(value)]));
-  const server = createMcpServer(mock as unknown as SequentumApiClient, "test");
+  const server = createMcpServer(mock as unknown as SequentumApiClient, "test", skills);
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "output-schema-test", version: "1.0" });

@@ -16,7 +16,7 @@ Title: Create Agent Schedule
 
 ## Description
 
-Create a scheduled task to automatically run an agent. Three schedule types available: RunOnce (1): Runs once at startTime (required, must be >=1 min in future UTC). RunEvery (2): Repeats every runEveryCount periods (runEveryPeriod: 1=min, 2=hr, 3=day, 4=wk, 5=mo). Optional startTime for first run (must be in future if provided). CRON (3): Uses cronExpression for complex schedules (e.g., '0 9 * * 1,4' = Mon/Thu 9am). Always specify timezone for local time interpretation. Examples: CRON daily at 9am: {scheduleType:3, cronExpression:'0 9 * * *'}. RunOnce: {scheduleType:1, startTime:'2026-01-20T14:30:00Z'}. RunEvery 30min: {scheduleType:2, runEveryCount:30, runEveryPeriod:1}.
+Create a scheduled task to automatically run an agent. Three schedule types available: RunOnce (1): Runs once at startTime (required, must be >=1 min in future UTC). RunEvery (2): Repeats every runEveryCount periods (runEveryPeriod: 1=min, 2=hr, 3=day, 4=wk, 5=mo). Optional startTime for first run (must be in future if provided). CRON (3): Uses cronExpression for complex schedules (e.g., '0 9 * * 1,4' = Mon/Thu 9am). Always specify timezone for local time interpretation. Examples: CRON daily at 9am: {scheduleType:3, cronExpression:'0 9 * * *'}. RunOnce: {scheduleType:1, startTime:'2026-01-20T14:30:00Z'}. RunEvery 30min: {scheduleType:2, runEveryCount:30, runEveryPeriod:1}. To store an input parameter's value encrypted, prefix its name with "?" (for example "?password"); a name without the prefix stores the value in clear text, even if the agent defines that parameter as encrypted.
 
 ## inputSchema
 
@@ -112,7 +112,7 @@ Create a scheduled task to automatically run an agent. Three schedule types avai
     },
     "isExclusive": {
       "type": "boolean",
-      "description": "If true, prevents concurrent runs of this agent. Default: false."
+      "description": "If true, prevents concurrent runs of this agent. Default: true."
     },
     "isWaitOnFailure": {
       "type": "boolean",

@@ -19,6 +19,7 @@ import { ApiRequestError, RateLimitError, AuthenticationError } from "../api/typ
 import { tools } from "./tools.js";
 import { resources, resourceTemplates, readResource } from "./resources.js";
 import { prompts, getPromptMessages } from "./prompts.js";
+import type { WorkflowSkills } from "./skills.js";
 import { toolDispatch, type ProgressFn } from "./tools/index.js";
 import { RESOURCE_SCOPES, TOOL_SCOPES, scopeChallengeFor } from "./tool-scopes.js";
 import { DEBUG, isPaginatedResponse, parseScheduleParams, validateScheduleStartTime } from "./tools/shared.js";
@@ -175,9 +176,14 @@ async function readResourceResult(uri: URL, apiClient: SequentumApiClient) {
  *
  * @param apiClient - The API client to use for this server instance
  * @param version - The server version string from package.json
+ * @param skills - The skills from loadWorkflowSkills; each prompt's text is an argument preamble followed by its skill body
  * @returns Configured MCP Server instance
  */
-export function createMcpServer(apiClient: SequentumApiClient, version: string): McpServer {
+export function createMcpServer(
+  apiClient: SequentumApiClient,
+  version: string,
+  skills: WorkflowSkills
+): McpServer {
   // Capabilities are intentionally NOT declared: McpServer derives them from the
   // registrations below. (It advertises `listChanged: true` for each even though
   // this server never emits those notifications — a known, accepted SDK behaviour
@@ -214,9 +220,10 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
         "resources/list": PUBLIC_LIST_HINT,
         "resources/templates/list": PUBLIC_LIST_HINT,
         "server/discover": PUBLIC_LIST_HINT,
-        // NOT public and NOT tunable: every resource is API-backed and scoped to the
-        // caller's OAuth token (agents, credit balances, spending). A shared
-        // intermediary caching this publicly would serve one tenant's data to another.
+        // NOT public and NOT tunable: every resource except the skill:// files (static
+        // public text with no scope) is API-backed and scoped to the caller's OAuth token
+        // (agents, credit balances, spending). A shared intermediary caching this
+        // publicly would serve one tenant's data to another.
         "resources/read": { ttlMs: 0, cacheScope: "private" as const },
       },
     }
@@ -297,8 +304,9 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
   // Resources
   // ==========================================
 
-  // Every resource is API-backed, so each declares the scope of the endpoint it reads,
-  // exactly like the tools above. scopeChallenge is not part of resources/list output.
+  // Every resource except the skill:// files (static public text with no scope) is
+  // API-backed, so each declares the scope of the endpoint it reads, exactly like the
+  // tools above. scopeChallenge is not part of resources/list output.
   const resourceScopeChallenge = (uriOrTemplate: string) => {
     const requiredScopes = RESOURCE_SCOPES[uriOrTemplate];
     if (!requiredScopes) {
@@ -339,6 +347,14 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
   }
 
   // ==========================================
+  // Skills
+  // ==========================================
+
+  // Serves the workflow skills (skills/list, skills/get, and the skill:// files via
+  // resources/list and resources/read) next to the API-backed resources above.
+  skills.catalog.attach(server);
+
+  // ==========================================
   // Prompts
   // ==========================================
 
@@ -364,7 +380,7 @@ export function createMcpServer(apiClient: SequentumApiClient, version: string):
           console.error(`[DEBUG] Prompt requested: ${prompt.name}`);
           console.error(`[DEBUG] Args: ${JSON.stringify(redactDebugArgs(args))}`);
         }
-        return { messages: getPromptMessages(prompt.name, args) };
+        return { messages: getPromptMessages(prompt.name, args, skills.bodies) };
       }
     );
   }
