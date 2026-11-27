@@ -12,8 +12,9 @@ import {
   AGENT_BUILD_ERROR_MESSAGE,
 } from "../constants.js";
 import { validateBoolean, validateNumber, validateString } from "../../utils/validation.js";
+import { TASK_MARKER_META_KEY } from "../tasks.js";
 
-const start_agent_build: ToolHandler = async (args, { apiClient, sendProgress, signal }) => {
+const start_agent_build: ToolHandler = async (args, { apiClient, sendProgress, signal, tasksDeclared }) => {
   const params = args;
   const prompt = validateString(params, "prompt", {
     required: true,
@@ -23,6 +24,19 @@ const start_agent_build: ToolHandler = async (args, { apiClient, sendProgress, s
   })!;
   const spaceId = validateNumber(params, "spaceId", { required: false, min: 1, integer: true });
   const waitForCompletion = validateBoolean(params, "waitForCompletion", { required: false, default: true })!
+
+  if (tasksDeclared && waitForCompletion) {
+    // The client polls tasks/get instead of holding this request open; the tools/call
+    // wrapper in tasks.ts turns this marked result into the task the client receives.
+    const started = await apiClient.startAgentBuildTask({ prompt, spaceId });
+    const taskId = started.taskId;
+    // Without createdAt the marker would be dropped and the client would get a plain result.
+    const createdAt = (started.createdAt as string | undefined) ?? new Date().toISOString();
+    return {
+      ...structuredResult({ status: "processing", sessionId: taskId }),
+      _meta: { [TASK_MARKER_META_KEY]: { taskId, createdAt } },
+    };
+  }
 
   const startResponse = await apiClient.startAgentBuild({ prompt, spaceId });
 

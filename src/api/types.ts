@@ -793,6 +793,26 @@ export interface ExternalSessionStatusResponse {
   sample?: AgentBuildSample;
 }
 
+/** Response from POST /agent-builder/tasks. */
+export interface ExternalStartAgentBuildTaskResponse {
+  /** Task ID to use for polling and cancelling. */
+  taskId: string;
+  status: "processing";
+  /** When the task was created, as an ISO-8601 string. */
+  createdAt: string;
+  /** Seconds the client should wait between polls. */
+  pollIntervalSeconds: number;
+  /** Seconds the finished task's result stays available. */
+  resultRetentionSeconds: number;
+}
+
+/** Response from GET /agent-builder/tasks/{taskId}: the session status plus the task's timestamps (ISO-8601 strings). */
+export type ExternalAgentBuildTaskResponse = ExternalSessionStatusResponse & {
+  createdAt: string;
+  finishedAt?: string | null;
+  expiresAt?: string | null;
+};
+
 /** The `sample` of a build: the last fresh run's rows, the page they came from, and its screenshot reference. */
 export interface AgentBuildSample {
   columns?: string[];

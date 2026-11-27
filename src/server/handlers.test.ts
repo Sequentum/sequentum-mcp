@@ -878,7 +878,7 @@ describe("toolDispatch", () => {
     const apiClient = { getAllAgents } as unknown as SequentumApiClient;
     await toolDispatch.list_agents(
       {},
-      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal, tasksDeclared: false }
     );
     expect(getAllAgents).toHaveBeenCalledWith({ pageIndex: 1, recordsPerPage: 50 });
   });
@@ -886,7 +886,7 @@ describe("toolDispatch", () => {
   it("list_agents accepts status 13 (UpdatingDataSet) and rejects 14", async () => {
     const getAllAgents = vi.fn().mockResolvedValue([]);
     const apiClient = { getAllAgents } as unknown as SequentumApiClient;
-    const ctx = { apiClient, sendProgress: async () => {}, signal: new AbortController().signal };
+    const ctx = { apiClient, sendProgress: async () => {}, signal: new AbortController().signal, tasksDeclared: false };
 
     await toolDispatch.list_agents({ status: 13 }, ctx);
     expect(getAllAgents).toHaveBeenCalledWith({ pageIndex: 1, recordsPerPage: 50, status: 13 });
@@ -914,7 +914,7 @@ describe("toolDispatch", () => {
     const apiClient = { getSpaceAgentCount } as unknown as SequentumApiClient;
     const result = await toolDispatch.get_space_agent_count(
       { spaceId: 42 },
-      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal, tasksDeclared: false }
     );
 
     expect(getSpaceAgentCount).toHaveBeenCalledWith(42);
@@ -928,7 +928,7 @@ describe("toolDispatch", () => {
     const apiClient = { searchAgents } as unknown as SequentumApiClient;
     const result = await toolDispatch.search_agents(
       { query: "checkout" },
-      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal, tasksDeclared: false }
     );
 
     expect(searchAgents).toHaveBeenCalledWith("checkout", 50);
@@ -943,7 +943,7 @@ describe("toolDispatch", () => {
     const apiClient = { getAgentSearchCount } as unknown as SequentumApiClient;
     const result = await toolDispatch.get_agent_search_count(
       { query: "checkout" },
-      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal, tasksDeclared: false }
     );
 
     expect(getAgentSearchCount).toHaveBeenCalledWith("checkout", undefined);
@@ -955,7 +955,7 @@ describe("toolDispatch", () => {
     const apiClient = { getPersonalAgentCount } as unknown as SequentumApiClient;
     const result = await toolDispatch.get_personal_agent_count(
       {},
-      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal, tasksDeclared: false }
     );
 
     expect(getPersonalAgentCount).toHaveBeenCalledWith();
@@ -971,7 +971,7 @@ describe("toolDispatch", () => {
     const apiClient = { getAgentRunSummary } as unknown as SequentumApiClient;
     const result = await toolDispatch.get_agent_run_summary(
       { agentId: 289 },
-      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal, tasksDeclared: false }
     );
 
     expect(getAgentRunSummary).toHaveBeenCalledWith(289);
@@ -985,7 +985,7 @@ describe("toolDispatch", () => {
     const apiClient = { getAgentRuns } as unknown as SequentumApiClient;
     const result = await toolDispatch.get_agent_runs(
       { agentId: 289 },
-      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal, tasksDeclared: false }
     );
 
     expect(getAgentRuns).toHaveBeenCalledWith(289, 50);
@@ -1001,7 +1001,7 @@ describe("toolDispatch", () => {
     const apiClient = { getAgentRuns } as unknown as SequentumApiClient;
     const result = await toolDispatch.get_agent_runs(
       { agentId: 289, maxRecords: 100 },
-      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal }
+      { apiClient, sendProgress: async () => {}, signal: new AbortController().signal, tasksDeclared: false }
     );
 
     expect(getAgentRuns).toHaveBeenCalledWith(289, 100);

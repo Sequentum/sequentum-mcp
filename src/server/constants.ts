@@ -77,6 +77,20 @@ export function parseListCacheTtlMs(raw: string | undefined): number {
 export const LIST_CACHE_TTL_MS = parseListCacheTtlMs(process.env.LIST_CACHE_TTL_MS);
 
 /**
+ * Parse the MCP_TASKS_ENABLED flag. Only the exact string "true" enables it;
+ * anything else, including unset, "1" and "TRUE", leaves it off.
+ */
+export function parseTasksEnabled(raw: string | undefined): boolean {
+  return raw === "true";
+}
+
+/**
+ * Whether long-running tools may run as MCP tasks. Off by default; set
+ * MCP_TASKS_ENABLED=true to enable.
+ */
+export const MCP_TASKS_ENABLED = parseTasksEnabled(process.env.MCP_TASKS_ENABLED);
+
+/**
  * Rate-limit rejection code. MCP 2026-07-28 reserves -32020..-32099 for the
  * specification (-32020 HeaderMismatch, -32021 MissingRequiredClientCapability,
  * -32022 UnsupportedProtocolVersion) and leaves -32000..-32019 implementation-defined.

@@ -1324,6 +1324,8 @@ Start a new AI-powered agent building session from a natural language descriptio
 | `spaceId` | number | No | Space ID to associate the agent with. Uses the default space if omitted. |
 | `waitForCompletion` | boolean | No | If `true` (default), wait for the build and return the `agentId` in one call (up to about 5 minutes). If `false`, return the `sessionId` at once for polling with `get_agent_build_status`. |
 
+> **MCP Tasks:** When the server runs with `MCP_TASKS_ENABLED=true`, a client that declares the `io.modelcontextprotocol/tasks` extension on a 2026-07-28 `tools/call` gets a task at once (status `working`, poll interval 5 seconds) and reads the result through `tasks/get`; `tasks/cancel` stops the build. The finished result stays retrievable for 1 hour. Other clients, and calls with `waitForCompletion: false`, behave as described above. See [MCP Tasks](../README.md#mcp-tasks).
+
 #### Returns
 
 ```json

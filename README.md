@@ -275,6 +275,15 @@ The server also serves 16 skills over the MCP skills extension (`io.modelcontext
 
 See the [Resources Reference](./docs/resources-reference.md#skills) for the resource URIs.
 
+## MCP Tasks
+
+`start_agent_build` can return the build as an MCP Task (extension `io.modelcontextprotocol/tasks`, protocol 2026-07-28). A client that declares the extension on a `tools/call` of `start_agent_build` gets a task at once (status `working`, poll interval 5 seconds) instead of waiting for the build. It polls `tasks/get`, which returns the same result the blocking call returns once the build finishes, and `tasks/cancel` stops the build. The finished result stays retrievable for 1 hour after the build finished.
+
+- **Other clients are unchanged.** Clients that do not declare the extension, legacy (2025-era) clients and calls with `waitForCompletion: false` keep the blocking call with its 5-minute wait.
+- **Nothing is stored on the server.** The task ID is the Agent Builder session ID, and the Control Center checks ownership on every call.
+- **Not offered:** `tasks/list`, `tasks/update` and task notifications.
+- **Off by default.** Set `MCP_TASKS_ENABLED=true` (the exact string `true`) to turn it on, and only against a Control Center that serves `/api/v1/agent-builder/tasks`. While it is on, a legacy `initialize` also lists the extension and legacy `tasks/get` and `tasks/cancel` requests are answered, but a legacy `tools/call` never creates a task.
+
 ## Available Resources
 
 The server exposes 18 read-only resources (7 static + 11 templates) that AI clients can browse and pull into context. See the [Resources Reference](./docs/resources-reference.md) for detailed documentation.
@@ -355,6 +364,7 @@ down. `MAX_SESSIONS` is no longer read.
 | `MCP_RATE_LIMIT_WINDOW_MS` | `60000` (1 minute) | Rate-limit window applied to the `/mcp` endpoint. |
 | `MCP_RATE_LIMIT_MAX` | `100` | Maximum `/mcp` requests per window, per process, per IP. See "Rate limiting across replicas" below before scaling horizontally. |
 | `TRUST_PROXY` | `1` | Passed to Express's `trust proxy` setting. Accepts `true`, `false`, a hop count (e.g. `1`), or a comma-separated CIDR/IP allowlist. The default trusts exactly one reverse proxy; see "TRUST_PROXY and rate-limit evasion" below before changing it, and never set it to `true` in production. |
+| `MCP_TASKS_ENABLED` | `false` | Set to `true` (the exact string) to let `start_agent_build` return the build as an MCP Task to 2026-07-28 clients that declare `io.modelcontextprotocol/tasks`, and to answer `tasks/get` and `tasks/cancel`. Enable it only against a Control Center that serves `/api/v1/agent-builder/tasks`. While it is on, a legacy `initialize` also lists the extension, but a legacy `tools/call` never creates a task. |
 | `REQUIRE_AUTH` | `true` | Set to `false` to bypass the OAuth Bearer-token requirement on `/mcp`. For local testing only: the connection succeeds, but tools still fail without a valid backend token. |
 
 ### Rate limiting across replicas

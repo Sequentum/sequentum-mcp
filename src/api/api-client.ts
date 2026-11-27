@@ -36,6 +36,8 @@ import {
   RunRemoveMethod,
   ExternalStartAgentBuildRequest,
   ExternalStartAgentBuildResponse,
+  ExternalStartAgentBuildTaskResponse,
+  ExternalAgentBuildTaskResponse,
   ExternalSessionStatusResponse,
 } from "./types.js";
 import { beginUpstreamMutation, noteUpstreamUnauthorized } from "./upstream-auth.js";
@@ -50,6 +52,17 @@ const RETRYABLE_STATUS_CODES = new Set([429, 502, 503, 504]);
 
 /** Extra client time on a synchronous start, on top of its server-side wait, for run creation and the round trip */
 const SYNC_START_TIMEOUT_MARGIN_SEC = 30;
+
+/** Per-attempt timeout for a task poll: the client polls again, so a slow upstream must not hold it. */
+const TASK_POLL_TIMEOUT_MS = 10_000;
+
+/** Per-call overrides for {@link SequentumApiClient.fetchWithRetry}. */
+interface CallOptions {
+  /** Per-attempt timeout in milliseconds (default: the client's request timeout). */
+  timeoutMs?: number;
+  /** Retries for this call (default: the client's maxRetries). */
+  maxRetries?: number;
+}
 
 export class SequentumApiClient {
   private baseUrl: string;
@@ -242,7 +255,7 @@ export class SequentumApiClient {
    *
    * @param endpoint - API path (e.g. "/api/v1/agent/all")
    * @param options - fetch() options (method, body, etc.)
-   * @param timeoutMs - Per-attempt timeout in milliseconds (default: the client's request timeout)
+   * @param call - Per-call timeout and retry overrides (default: the client's own)
    * @returns The raw Response object on success
    * @throws ApiRequestError (or subclass) on HTTP errors after retries are exhausted
    * @throws AuthenticationError if no credentials are configured
@@ -251,8 +264,10 @@ export class SequentumApiClient {
   private async fetchWithRetry(
     endpoint: string,
     options: RequestInit = {},
-    timeoutMs: number = this.requestTimeoutMs
+    call: CallOptions = {}
   ): Promise<Response> {
+    const timeoutMs = call.timeoutMs ?? this.requestTimeoutMs;
+    const maxRetries = call.maxRetries ?? this.maxRetries;
     const url = `${this.baseUrl}${endpoint}`;
     const headers: Record<string, string> = {
       Authorization: this.getAuthorizationHeader(),
@@ -265,7 +280,7 @@ export class SequentumApiClient {
     // Only retry on idempotent methods (GET, HEAD, PUT, DELETE, OPTIONS)
     // POST is NOT retried to avoid duplicate side effects (e.g. starting an agent twice)
     const isIdempotent = method !== "POST";
-    const maxAttempts = isIdempotent ? this.maxRetries + 1 : 1;
+    const maxAttempts = isIdempotent ? maxRetries + 1 : 1;
     // Anything but a read may change something upstream, so a request that sent one is
     // not answered with a 401 that the client would replay (see beginUpstreamMutation).
     const mayChangeState = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
@@ -340,14 +355,16 @@ export class SequentumApiClient {
   /**
    * Make an authenticated request to the API and parse the JSON response.
    * Includes automatic retry for transient failures (429, 502, 503, 504) on
-   * idempotent methods. `timeoutMs` overrides the client's request timeout for this call.
+   * idempotent methods. `timeoutMs` overrides the client's request timeout for this call,
+   * and `maxRetries` its retry count.
    */
   private async request<T>(
     endpoint: string,
     options: RequestInit = {},
-    timeoutMs?: number
+    timeoutMs?: number,
+    maxRetries?: number
   ): Promise<T> {
-    const response = await this.fetchWithRetry(endpoint, options, timeoutMs);
+    const response = await this.fetchWithRetry(endpoint, options, { timeoutMs, maxRetries });
 
     // Handle redirect for file downloads
     if (response.redirected) {
@@ -365,13 +382,14 @@ export class SequentumApiClient {
   /**
    * Make an authenticated request that doesn't expect a response body.
    * Includes automatic retry for transient failures (429, 502, 503, 504) on
-   * idempotent methods.
+   * idempotent methods. `maxRetries` overrides the client's retry count for this call.
    */
   private async requestVoid(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    maxRetries?: number
   ): Promise<void> {
-    await this.fetchWithRetry(endpoint, options);
+    await this.fetchWithRetry(endpoint, options, { maxRetries });
     // 204 No Content or any success status — just return
   }
 
@@ -1161,6 +1179,58 @@ export class SequentumApiClient {
     await this.requestVoid(
       `/api/v1/agent-builder/${encodeURIComponent(sessionId)}/stop`,
       { method: "POST" }
+    );
+  }
+
+  /**
+   * Start a new agent building task.
+   * Returns immediately with a taskId — building runs asynchronously.
+   * Poll getAgentBuildTask until status reaches a terminal value: "completed", "ready", "error", or "cancelled".
+   * @param request - The prompt and optional spaceId
+   */
+  async startAgentBuildTask(
+    request: ExternalStartAgentBuildRequest
+  ): Promise<ExternalStartAgentBuildTaskResponse> {
+    return this.request<ExternalStartAgentBuildTaskResponse>(
+      `/api/v1/agent-builder/tasks`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          prompt: request.prompt,
+          ...(request.spaceId !== undefined && { spaceId: request.spaceId }),
+        }),
+      }
+    );
+  }
+
+  /**
+   * Get the current state of an agent building task.
+   * Lightweight polling endpoint — call this until status reaches a terminal value: "completed", "ready", "error", or "cancelled".
+   * One attempt with a short timeout and no retries: the MCP client's next tasks/get is the retry.
+   * @param taskId - The task ID returned from startAgentBuildTask
+   */
+  async getAgentBuildTask(
+    taskId: string
+  ): Promise<ExternalAgentBuildTaskResponse> {
+    return this.request<ExternalAgentBuildTaskResponse>(
+      `/api/v1/agent-builder/tasks/${encodeURIComponent(taskId)}`,
+      {},
+      TASK_POLL_TIMEOUT_MS,
+      0
+    );
+  }
+
+  /**
+   * Cancel an in-progress agent building task.
+   * Has no effect once the task has already reached a terminal status.
+   * Returns 204 No Content on success. One attempt, no retries.
+   * @param taskId - The task ID
+   */
+  async cancelAgentBuildTask(taskId: string): Promise<void> {
+    await this.requestVoid(
+      `/api/v1/agent-builder/tasks/${encodeURIComponent(taskId)}/cancel`,
+      { method: "POST" },
+      0
     );
   }
 }

@@ -13,7 +13,8 @@ import {
   type JsonSchemaType,
 } from "@modelcontextprotocol/server";
 import { SERVER_INSTRUCTIONS } from "./policies.js";
-import { AGENT_BUILD_ERROR_MESSAGE, LIST_CACHE_TTL_MS, MAX_TOOL_INPUT_ELEMENTS } from "./constants.js";
+import { AGENT_BUILD_ERROR_MESSAGE, LIST_CACHE_TTL_MS, MAX_TOOL_INPUT_ELEMENTS, MCP_TASKS_ENABLED } from "./constants.js";
+import { clientDeclaresTasks, installTaskSupport } from "./tasks.js";
 import { SequentumApiClient } from "../api/api-client.js";
 import { ApiRequestError, RateLimitError, AuthenticationError } from "../api/types.js";
 import { tools } from "./tools.js";
@@ -178,13 +179,16 @@ async function readResourceResult(uri: URL, apiClient: SequentumApiClient) {
  * @param apiClient - The API client to use for this server instance
  * @param version - The server version string from package.json
  * @param skills - The skills from loadWorkflowSkills; each prompt's text is an argument preamble followed by its skill body
+ * @param options.tasksEnabled - Serve MCP Tasks for start_agent_build; defaults to MCP_TASKS_ENABLED
  * @returns Configured MCP Server instance
  */
 export function createMcpServer(
   apiClient: SequentumApiClient,
   version: string,
-  skills: WorkflowSkills
+  skills: WorkflowSkills,
+  options: { tasksEnabled?: boolean } = {}
 ): McpServer {
+  const tasksEnabled = options.tasksEnabled ?? MCP_TASKS_ENABLED;
   // Capabilities are intentionally NOT declared: McpServer derives them from the
   // registrations below. (It advertises `listChanged: true` for each even though
   // this server never emits those notifications — a known, accepted SDK behaviour
@@ -305,6 +309,8 @@ export function createMcpServer(
             // start_agent_build stops the backend build when the client cancels
             // mid-poll; ToolDeps.signal is required so this cannot be dropped.
             signal: ctx.mcpReq.signal,
+            tasksDeclared:
+              tasksEnabled && clientDeclaresTasks(ctx.mcpReq.envelope as Record<string, unknown> | undefined),
           });
         } catch (error) {
           return formatToolError(error);
@@ -396,6 +402,15 @@ export function createMcpServer(
         return { messages: getPromptMessages(prompt.name, args, skills.bodies) };
       }
     );
+  }
+
+  // ==========================================
+  // Tasks
+  // ==========================================
+
+  // Last, so the tools/call handler it wraps is already registered.
+  if (tasksEnabled) {
+    installTaskSupport(server, apiClient);
   }
 
   return server;
