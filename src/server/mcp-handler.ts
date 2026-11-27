@@ -9,6 +9,7 @@ import {
   createMcpHandler,
   readRequestBody,
   BAGGAGE_META_KEY,
+  CLIENT_CAPABILITIES_META_KEY,
   DEFAULT_MAX_REQUEST_BODY_SIZE,
   TRACEPARENT_META_KEY,
   TRACESTATE_META_KEY,
@@ -90,26 +91,35 @@ export function traceContextFromMeta(body: unknown): TraceContext {
 /** At most this many declared extension ids reach the era log line. */
 const MAX_LOGGED_EXTENSIONS = 10;
 
-/** Ids made only of these characters (every real extension id) are logged as they are. */
+/**
+ * Ids of 1 to 200 of these characters (every real extension id) are logged bare; any other
+ * id, including a longer one made of the same characters, is logged through {@link loggable}.
+ */
 const PLAIN_EXTENSION_ID = /^[A-Za-z0-9._\/-]{1,200}$/;
 
 /**
  * The extension ids a 2026-07-28 client declares in
  * `params._meta["io.modelcontextprotocol/clientCapabilities"].extensions` (an object keyed by
- * id), for the era log line. At most {@link MAX_LOGGED_EXTENSIONS}; anything else yields `[]`.
- * The ids are attacker-controlled, so one that is not plain goes through {@link loggable}
- * (JSON-quoted, length-bounded) and cannot forge extra fields; plain ids stay bare so
- * `ext=io.modelcontextprotocol/tasks` is greppable. Only ids are returned, never values.
+ * id), in declaration order, for the era log line. At most {@link MAX_LOGGED_EXTENSIONS};
+ * anything that is not such an object yields `[]`. The ids are raw and attacker-controlled:
+ * {@link extensionField} formats each one for the line. Only ids are returned, never values.
  */
 export function declaredExtensions(body: unknown): string[] {
   const isObject = (v: unknown): v is Record<string, unknown> =>
     typeof v === "object" && v !== null && !Array.isArray(v);
   if (!isObject(body) || !isObject(body.params) || !isObject(body.params._meta)) return [];
-  const capabilities = body.params._meta["io.modelcontextprotocol/clientCapabilities"];
+  const capabilities = body.params._meta[CLIENT_CAPABILITIES_META_KEY];
   if (!isObject(capabilities) || !isObject(capabilities.extensions)) return [];
-  return Object.keys(capabilities.extensions)
-    .slice(0, MAX_LOGGED_EXTENSIONS)
-    .map((id) => (PLAIN_EXTENSION_ID.test(id) ? id : loggable(id)));
+  return Object.keys(capabilities.extensions).slice(0, MAX_LOGGED_EXTENSIONS);
+}
+
+/**
+ * One ` ext=<id>` field. A plain id stays bare so `ext=io.modelcontextprotocol/tasks` is
+ * greppable; any other id goes through {@link loggable}, so its opening quote sits right after
+ * `ext=` and a space, `=` or `,` inside it cannot forge a field.
+ */
+function extensionField(id: string): string {
+  return ` ext=${PLAIN_EXTENSION_ID.test(id) ? id : loggable(id)}`;
 }
 
 /**
@@ -127,7 +137,8 @@ export function resolveTraceContext(meta: TraceContext, headers: Headers | undef
 }
 
 /**
- * Carries the resolved trace context from the fetch wrapper (which can see the body) to
+ * Carries the resolved trace context and the declared extension ids from the fetch wrapper
+ * (which can see the body) to
  * the server factory (which cannot: `McpRequestContext` exposes only era, authInfo and
  * the raw Request, and the SDK has already consumed the body by then). Async-local rather
  * than a WeakMap keyed by Request because the SDK may clone the request during legacy
@@ -137,17 +148,18 @@ const requestContextStore = new AsyncLocalStorage<{ trace: TraceContext; extensi
 
 /**
  * Log one compact line per request to stderr: negotiated era, the requested
- * method/name, client identity, auth presence, and OTel trace context when
- * the caller sent it.
+ * method/name, client identity, auth presence, the declared extension ids, and
+ * OTel trace context when the caller sent it.
  *
  * Format (bracketed segments are omitted, not emitted empty, when the
  * source header is absent):
  *
- *   [MCP] era=<legacy|modern>[ method=<q>][ name=<q>] client=<q> auth=<present|absent>[ ext=<ids>][ traceparent=<q>][ tracestate=<q>][ baggage=<q>]
+ *   [MCP] era=<legacy|modern>[ method=<q>][ name=<q>] client=<q> auth=<present|absent>[ ext=<id>]...[ traceparent=<q>][ tracestate=<q>][ baggage=<q>]
  *
  * `<q>` denotes a value run through {@link loggable} (JSON-quoted,
- * length-bounded); `era`/`auth` are bare enums; `<ids>` is the comma-joined
- * extension ids from {@link declaredExtensions}. Keep the field order and
+ * length-bounded); `era`/`auth` are bare enums. `ext=` repeats once per id from
+ * {@link declaredExtensions}, up to 10 times, in declaration order; each `<id>` is bare
+ * when plain and `<q>` otherwise (see {@link extensionField}). Keep the field order and
  * quoting stable — this line is meant to be machine-parseable.
  *
  * Unconditional (not DEBUG-gated): the Connectors Directory dashboard never
@@ -158,10 +170,12 @@ const requestContextStore = new AsyncLocalStorage<{ trace: TraceContext; extensi
  *
  * The factory sees headers only, not the parsed JSON-RPC body, so client
  * identity comes from user-agent rather than the envelope's clientInfo.
- * Trace context is the one exception: SEP-414 carries traceparent,
- * tracestate and baggage in params._meta, so createSequentumMcpHandler's
- * fetch wrapper parses the body once, resolves _meta-over-header per key,
- * and hands the result here through an AsyncLocalStorage. Richer client
+ * Trace context and the declared extension ids are the two exceptions:
+ * SEP-414 carries traceparent, tracestate and baggage in params._meta, and a
+ * 2026-07-28 client declares its extensions there too, so
+ * createSequentumMcpHandler's fetch wrapper parses the body once, resolves
+ * _meta-over-header per trace key, reads the extension ids (never their
+ * values), and hands both here through an AsyncLocalStorage. Richer client
  * identity (io.modelcontextprotocol/clientInfo) is reachable inside tool
  * handlers via ctx.mcpReq.envelope, but not here.
  *
@@ -181,8 +195,8 @@ const requestContextStore = new AsyncLocalStorage<{ trace: TraceContext; extensi
  * EITHER era — for those this fix contributes zero visibility beyond
  * era=/client=/auth=.
  *
- * Never log the Authorization header, a bearer token, or any request body —
- * only whether auth was present. http-server.ts's own debug logging redacts
+ * Never log the Authorization header, a bearer token, or any other request
+ * body content than the two exceptions above — only whether auth was present. http-server.ts's own debug logging redacts
  * the same headers for the same reason.
  */
 function logEraLine(ctx: McpRequestContext, trace: TraceContext, extensions: string[]): void {
@@ -197,7 +211,7 @@ function logEraLine(ctx: McpRequestContext, trace: TraceContext, extensions: str
       (name ? ` name=${loggable(name)}` : "") +
       ` client=${loggable(agent)}` +
       ` auth=${hasAuth ? "present" : "absent"}` +
-      (extensions.length > 0 ? ` ext=${extensions.join(",")}` : "") +
+      extensions.map(extensionField).join("") +
       (trace.traceparent ? ` traceparent=${loggable(trace.traceparent)}` : "") +
       (trace.tracestate ? ` tracestate=${loggable(trace.tracestate)}` : "") +
       (trace.baggage ? ` baggage=${loggable(trace.baggage)}` : "")
@@ -248,16 +262,16 @@ export function createSequentumMcpHandler(
   });
 
   /**
-   * Parse a POST body once so the trace context can be read from params._meta, then
-   * hand the parsed value to the SDK via `parsedBody` so it does not read the stream
-   * again. The clone leaves the original stream intact for the SDK's own error path:
+   * Parse a POST body once so the trace context and the declared extension ids can be read
+   * from params._meta, then hand the parsed value to the SDK via `parsedBody` so it does
+   * not read the stream again. The clone leaves the original stream intact for the SDK's own error path:
    * when the body is not JSON we pass no `parsedBody`, the SDK reads the original and
    * returns its usual 400 / -32700, unchanged from before this wrapper existed.
    *
    * The clone is read with the SDK's own bounded reader. The SDK enforces its body cap
    * only when it reads the body itself, so a supplied `parsedBody` would skip it. An
-   * oversized body gets no `parsedBody` and no trace context, and the SDK answers it
-   * with its own 413. The clone stops reading just past the cap, so the original
+   * oversized body gets no `parsedBody`, no trace context and no extension ids, and the
+   * SDK answers it with its own 413. The clone stops reading just past the cap, so the original
    * stream buffers at most that much. Behind Express, `toNodeHandler` already refuses
    * an oversized body before this runs; this keeps the cap for any other caller.
    *
