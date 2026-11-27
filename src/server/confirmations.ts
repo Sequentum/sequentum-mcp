@@ -15,6 +15,8 @@
  */
 
 import {
+  CLIENT_CAPABILITIES_META_KEY,
+  PROTOCOL_VERSION_META_KEY,
   inputRequired,
   inputResponse,
   type CallToolResult,
@@ -27,9 +29,6 @@ type Args = Record<string, unknown>;
 /** Key of the confirmation entry in `inputRequests` / `inputResponses`. */
 export const CONFIRM_KEY = "confirm";
 
-const PROTOCOL_VERSION_KEY = "io.modelcontextprotocol/protocolVersion";
-const CLIENT_CAPABILITIES_KEY = "io.modelcontextprotocol/clientCapabilities";
-
 /** The same rule the handlers apply through `validateNumber(..., { min: 1, integer: true })`. */
 function isId(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1;
@@ -37,8 +36,8 @@ function isId(value: unknown): value is number {
 
 /**
  * The question shown to the user for each destructive tool. A builder returns `undefined` when the
- * ids are invalid: the call then skips the question and the handler reports the validation error,
- * so nobody is asked to confirm a call that would fail anyway.
+ * ids are invalid: the call then skips the question and validation (the SDK's schema check or the
+ * handler's) reports the error, so nobody is asked to confirm a call that would fail anyway.
  */
 export const TOOL_CONFIRMATIONS: Readonly<Record<string, (args: Args) => string | undefined>> = {
   kill_agent: ({ agentId, runId }) =>
@@ -71,8 +70,8 @@ function isObject(value: unknown): value is Record<string, unknown> {
  * that declares only `url` does not support forms.
  */
 export function clientSupportsFormElicitation(envelope: Record<string, unknown> | undefined): boolean {
-  if (!envelope || typeof envelope[PROTOCOL_VERSION_KEY] !== "string") return false;
-  const capabilities = envelope[CLIENT_CAPABILITIES_KEY];
+  if (!envelope || typeof envelope[PROTOCOL_VERSION_META_KEY] !== "string") return false;
+  const capabilities = envelope[CLIENT_CAPABILITIES_META_KEY];
   if (!isObject(capabilities) || !isObject(capabilities.elicitation)) return false;
   const elicitation = capabilities.elicitation;
   return "form" in elicitation || !("url" in elicitation);
@@ -90,48 +89,75 @@ const confirmationSchema = {
   required: [CONFIRM_KEY],
 };
 
-function cancelled(toolName: string): ConfirmationOutcome {
+/**
+ * The non-error result for a call that does not run. `declined` is a real user answer; `unreadable`
+ * is an answer the server could not read, which must not be reported to the model as the user's
+ * choice.
+ */
+function cancelled(toolName: string, reason: "declined" | "unreadable"): ConfirmationOutcome {
   const title = tools.find((t) => t.name === toolName)?.annotations?.title ?? toolName;
-  return {
-    kind: "respond",
-    result: {
-      content: [
-        { type: "text" as const, text: `Cancelled: the user did not confirm ${title}. Nothing was changed.` },
-      ],
-    },
-  };
+  const text =
+    reason === "declined"
+      ? `Cancelled: the user did not confirm ${title}. Nothing was changed.`
+      : `Cancelled: the confirmation answer for ${title} could not be read, so it did not run. ` +
+        "Retrying from this client will give the same result. Nothing was changed.";
+  return { kind: "respond", result: { content: [{ type: "text" as const, text }] } };
 }
 
 /**
  * Decide what a tool call does before dispatch: run it, ask for confirmation, or answer that the
  * user declined. `mcpReq` is the handler context's `ctx.mcpReq`.
+ *
+ * Any answer under the confirm key is final, whatever the retry declares, and is never asked again:
+ * without `requestState` the server cannot count rounds, so re-asking could loop. Only an accepted
+ * `confirm: true` runs the tool. A decline, a cancel, or an accept whose `confirm` is `false` or
+ * absent (from absent or object `content`) is the user's choice. Anything else (an accept whose
+ * `content` is present but not an object, or whose `confirm` is not a boolean, an unknown action,
+ * a non-object, or an entry the SDK dropped) is unreadable and cancels without saying the user
+ * declined.
  */
 export function confirmationGate(
   toolName: string,
   args: Args,
-  mcpReq: { envelope?: unknown; inputResponses?: Record<string, unknown> }
+  mcpReq: {
+    envelope?: unknown;
+    inputResponses?: Record<string, unknown>;
+    droppedInputResponseKeys?: string[];
+  }
 ): ConfirmationOutcome {
   const build = TOOL_CONFIRMATIONS[toolName];
   if (!build) return RUN;
+
+  const answered =
+    (isObject(mcpReq.inputResponses) && CONFIRM_KEY in mcpReq.inputResponses) ||
+    (mcpReq.droppedInputResponseKeys?.includes(CONFIRM_KEY) ?? false);
+  if (answered) {
+    const response = inputResponse(mcpReq.inputResponses, CONFIRM_KEY);
+    if (response.kind !== "elicit") return cancelled(toolName, "unreadable");
+    if (response.action !== "accept") return cancelled(toolName, "declined");
+    // The SDK drops `content` that is not a plain object, so read the raw entry to tell a malformed
+    // payload (a string, null, an array) from an absent one.
+    const rawContent = (mcpReq.inputResponses?.[CONFIRM_KEY] as Record<string, unknown>).content;
+    if (rawContent !== undefined && !isObject(rawContent)) return cancelled(toolName, "unreadable");
+    const confirm = response.content?.[CONFIRM_KEY];
+    if (confirm === true) return RUN;
+    // An accept without `confirm` is a form submitted with the box unticked: the client SDK does not
+    // enforce `required`, so that is the user not confirming, not an unreadable answer.
+    return cancelled(toolName, confirm === false || confirm === undefined ? "declined" : "unreadable");
+  }
+
   if (!clientSupportsFormElicitation(mcpReq.envelope as Record<string, unknown> | undefined)) {
     return RUN;
   }
   const message = build(args);
   if (message === undefined) return RUN;
 
-  const response = inputResponse(mcpReq.inputResponses, CONFIRM_KEY);
-  if (response.kind === "missing") {
-    return {
-      kind: "respond",
-      result: inputRequired({
-        inputRequests: {
-          [CONFIRM_KEY]: inputRequired.elicit({ message, requestedSchema: confirmationSchema }),
-        },
-      }),
-    };
-  }
-  if (response.kind === "elicit" && response.action === "accept" && response.content?.[CONFIRM_KEY] === true) {
-    return RUN;
-  }
-  return cancelled(toolName);
+  return {
+    kind: "respond",
+    result: inputRequired({
+      inputRequests: {
+        [CONFIRM_KEY]: inputRequired.elicit({ message, requestedSchema: confirmationSchema }),
+      },
+    }),
+  };
 }

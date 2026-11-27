@@ -295,10 +295,11 @@ export function createMcpServer(
         try {
           // Destructive tools ask the user first when the client can show a form;
           // see confirmations.ts for when that applies.
-          const gate = confirmationGate(tool.name, (args ?? {}) as Record<string, unknown>, ctx.mcpReq);
+          const toolArgs = (args ?? {}) as Record<string, unknown>;
+          const gate = confirmationGate(tool.name, toolArgs, ctx.mcpReq);
           if (gate.kind === "respond") return gate.result;
 
-          return await handler((args ?? {}) as Record<string, unknown>, {
+          return await handler(toolArgs, {
             apiClient,
             sendProgress,
             // start_agent_build stops the backend build when the client cancels

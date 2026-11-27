@@ -1400,10 +1400,6 @@ describe.each(["legacy (2025)", "modern (2026-07-28)"] as const)(
 );
 
 // ==========================================
-// Policy Wiring Regression Tests
-// ==========================================
-
-// ==========================================
 // Destructive tool confirmation, on both protocol eras
 // ==========================================
 
@@ -1515,6 +1511,18 @@ describe("destructive tool confirmation", () => {
     );
   });
 
+  it("modern + elicitation: an answer the SDK drops cancels instead of asking again", async () => {
+    // The wrapped {method, result} shape is dropped by the SDK into droppedInputResponseKeys; the
+    // gate must still see it through ctx.mcpReq, or every retry would re-ask.
+    const body = await callModern("delete_run", { agentId: 44, runId: 812 }, { elicitation: {} }, {
+      inputResponses: { confirm: { method: "elicitation/create", result: ACCEPT } },
+    });
+    expect(deleteRun).not.toHaveBeenCalled();
+    expect(body.result.resultType).not.toBe("input_required");
+    expect(body.result.isError).toBeFalsy();
+    expect(body.result.content[0].text).toMatch(/^Cancelled: the confirmation answer for Delete Run could not be read/);
+  });
+
   it("modern without elicitation: deletes in one call", async () => {
     const body = await callModern("delete_run", { agentId: 44, runId: 812 }, {});
     expect(deleteRun).toHaveBeenCalledOnce();
@@ -1552,12 +1560,19 @@ describe("destructive tool confirmation", () => {
   });
 
   it("invalid args skip the question", async () => {
-    const body = await callModern("delete_run", { agentId: 44, runId: "abc" }, { elicitation: {} });
+    // runId 0 passes the tool's JSON Schema (type number, no minimum), so the call reaches the
+    // gate's id check and then the handler's validation, unlike a wrong-type id the SDK rejects.
+    const body = await callModern("delete_run", { agentId: 44, runId: 0 }, { elicitation: {} });
     expect(body.result.resultType).not.toBe("input_required");
     expect(body.result.isError).toBe(true);
+    expect(body.result.content[0].text).toContain("must be >= 1");
     expect(deleteRun).not.toHaveBeenCalled();
   });
 });
+
+// ==========================================
+// Policy Wiring Regression Tests
+// ==========================================
 
 describe("policy wiring", () => {
   it("SERVER_INSTRUCTIONS is the capability summary, a blank line, then SUFFICIENCY_POLICY verbatim", () => {

@@ -126,14 +126,50 @@ describe("confirmationGate", () => {
     { action: "decline" },
     { action: "cancel" },
     { action: "accept", content: { confirm: false } },
-    { action: "accept", content: { confirm: "true" } },
+    { action: "accept", content: {} }, // submitted with the box unticked
     { action: "accept" },
-  ])("cancels on %j", (response) => {
+  ])("cancels as the user's choice on %j", (response) => {
     expect(confirmationGate("delete_run", args, answered(response))).toEqual({
       kind: "respond",
       result: {
         content: [
           { type: "text", text: "Cancelled: the user did not confirm Delete Run. Nothing was changed." },
+        ],
+      },
+    });
+  });
+
+  it("honours a decline even when the retry declares no elicitation", () => {
+    const out = confirmationGate("delete_run", args, {
+      envelope: env({}),
+      inputResponses: { confirm: { action: "decline" } },
+    });
+    expect(out.kind).toBe("respond");
+    expect((out as { result: any }).result.content[0].text).toBe(
+      "Cancelled: the user did not confirm Delete Run. Nothing was changed."
+    );
+  });
+
+  it.each([
+    ["an accept with a non-boolean confirm", { inputResponses: { confirm: { action: "accept", content: { confirm: "true" } } } }],
+    ["an accept with string content", { inputResponses: { confirm: { action: "accept", content: '{"confirm":true}' } } }],
+    ["an accept with null content", { inputResponses: { confirm: { action: "accept", content: null } } }],
+    ["an accept with array content", { inputResponses: { confirm: { action: "accept", content: [true] } } }],
+    ["an unknown action", { inputResponses: { confirm: { action: "maybe" } } }],
+    ["a non-object answer", { inputResponses: { confirm: "yes" } }],
+    ["an answer the SDK dropped", { inputResponses: {}, droppedInputResponseKeys: ["confirm"] }],
+  ])("cancels without blaming the user on %s", (_label, extra) => {
+    const out = confirmationGate("delete_run", args, { ...capable, ...extra });
+    expect(out).toEqual({
+      kind: "respond",
+      result: {
+        content: [
+          {
+            type: "text",
+            text:
+              "Cancelled: the confirmation answer for Delete Run could not be read, so it did not run. " +
+              "Retrying from this client will give the same result. Nothing was changed.",
+          },
         ],
       },
     });
