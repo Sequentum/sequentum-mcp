@@ -46,9 +46,11 @@ describe("start_agent_build output schema", () => {
     ["no wait", { sessionId: "s" }],
     ["completed", { status: "completed", agentId: 5, agentName: "A", sessionId: "s" }],
     ["completed with null agent", { status: "ready", agentId: null, agentName: null, sessionId: "s" }],
-    ["timeout", { status: "timeout", sessionId: "s", message: "Build did not complete within 5 minutes." }],
+    ["still building at the hold limit", { status: "processing", sessionId: "s", stage: "Looking at the page", done: false, elapsedSeconds: 45, nextCheckSeconds: 45, watchUrl: "https://cc/agent-builder?sessionId=s" }],
+    ["status read failed", { status: "processing", sessionId: "s", stage: "Checking", done: false, elapsedSeconds: 3, nextCheckSeconds: 45 }],
+    ["cancelled by the client", { status: "processing", sessionId: "s", stage: "Starting", done: false, elapsedSeconds: 0, nextCheckSeconds: 45, message: "The tool call was cancelled, but the build keeps running." }],
     ["completed with plan and report", { ...qaProcessing, status: "completed", report, sessionId: "s" }],
-    ["partial", { status: "completed", agentId: 5, agentName: "A", partial: true, summary: "No prices.", plan: null, report: null, sessionId: "s" }],
+    ["partial", { status: "completed", agentId: 5, agentName: "A", partial: true, summary: "No prices.", plan: null, report: null, sessionId: "s", stage: "Partially completed", done: true, elapsedSeconds: 122, agentUrl: "https://cc/space/0/config/5/details/runs" }],
   ])("accepts the %s shape", (_name, value) => {
     expect(validate(value), JSON.stringify(validate.errors)).toBe(true);
   });
@@ -58,18 +60,29 @@ describe("start_agent_build output schema", () => {
   });
 });
 
+const card = { sessionId: "s", stage: "Looking at the page", done: false, nextCheckSeconds: 45 };
+
 describe("get_agent_build_status output schema", () => {
   const validate = ajv.compile(buildOutputSchemas.get_agent_build_status);
 
   it.each([
-    ["QA processing with plan", qaProcessing],
-    ["completed with report", { ...qaProcessing, status: "completed", report }],
-    ["completed with a sample", { ...qaProcessing, status: "completed", report, sample: {
+    ["QA processing with plan", { ...qaProcessing, ...card, stage: "Building the Agent", elapsedSeconds: 56 }],
+    ["completed with report", { ...qaProcessing, status: "completed", report, ...card, stage: "Task completed", done: true }],
+    ["completed with a sample", { ...qaProcessing, status: "completed", report, ...card, stage: "Task completed", done: true, sample: {
       columns: ["title"], rows: [{ title: "Olio" }], totalRows: 20, pageUrl: "https://books.toscrape.com/x", pageCount: null,
       morePages: true, hasScreenshot: true, screenshotPath: "/api/v1/agent-builder/ab_1/screenshot" } }],
-    ["processing before the plan", { status: "processing", agentId: null, agentName: null, partial: false, plan: null, report: null }],
-    ["error", { status: "error", error: "Build failed." }],
+    ["processing before the plan", { status: "processing", agentId: null, agentName: null, partial: false, plan: null, report: null, ...card }],
+    ["error", { status: "error", error: "Build failed.", ...card, stage: "Failed", done: true }],
+    ["status read failed", { sessionId: "s", stage: "Checking", done: false, nextCheckSeconds: 45 }],
   ])("accepts the %s shape", (_name, value) => {
     expect(validate(value), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects a result without sessionId, stage or done", () => {
+    for (const key of ["sessionId", "stage", "done"]) {
+      const value: Record<string, unknown> = { status: "processing", ...card };
+      delete value[key];
+      expect(validate(value), key).toBe(false);
+    }
   });
 });

@@ -1,8 +1,3 @@
-{
-  "status": "error",
-  "agentId": null,
-  "agentName": null,
-  "error": "Build failed. Please review your prompt and try again.",
-  "agentElapsedSeconds": 12,
-  "browserIoSeconds": null
-}
+**Build failed** · after 12 s
+Build failed. Please review your prompt and try again.
+sessionId: "sess-0001". Nothing is running now.

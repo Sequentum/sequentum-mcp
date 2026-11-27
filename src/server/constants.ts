@@ -6,11 +6,15 @@
 // in handlers.ts, which imports tools.ts/prompts.ts — and those modules read
 // the constants at top level. That circular import left the constants in their
 // temporal dead zone during startup, crashing Node with
-// "Cannot access 'AGENT_BUILD_MAX_WAIT_LABEL' before initialization".
+// "Cannot access 'AGENT_BUILD_MAX_WAIT_LABEL' before initialization" (a constant since removed).
 
-export const AGENT_BUILD_MAX_WAIT_MS = 300_000;
-export const AGENT_BUILD_MAX_WAIT_LABEL = "5 minutes";
-export const AGENT_BUILD_MAX_WAIT_SHORT = "5m";
+/**
+ * How long one build tool call may hold before it returns a status card. Both stay under the
+ * shortest client tool-call limit we know of (ChatGPT, reported ~60 s; claude.ai and Claude
+ * Desktop cut at 240 s): a call the client gives up on shows the user nothing.
+ */
+export const BUILD_HOLD_DEFAULT_S = 45;
+export const BUILD_HOLD_MAX_S = 50;
 export const AGENT_BUILD_ERROR_MESSAGE = "Build failed. Please review your prompt and try again.";
 
 /**
