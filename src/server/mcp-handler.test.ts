@@ -18,7 +18,7 @@ vi.mock("../api/api-client.js", () => ({
 }));
 
 import { SequentumApiClient } from "../api/api-client.js";
-import { createSequentumMcpHandler, resolveTraceContext, traceContextFromMeta } from "./mcp-handler.js";
+import { createSequentumMcpHandler, declaredExtensions, resolveTraceContext, traceContextFromMeta } from "./mcp-handler.js";
 import { loadWorkflowSkills } from "./skills.js";
 
 const skills = await loadWorkflowSkills();
@@ -360,6 +360,74 @@ describe("progress notifications", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("declared extensions on the era line", () => {
+  // Kept as a literal (not the SDK constant) so the test pins the wire key.
+  const CAPS_KEY = "io.modelcontextprotocol/clientCapabilities";
+
+  /** Send a 2026-07-28 tools/list declaring the given client capabilities; return the era lines. */
+  async function eraLinesFor(clientCapabilities: Record<string, unknown>): Promise<string[]> {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const handler = createSequentumMcpHandler("https://api.example.test", "9.9.9", skills);
+    await call(handler, "tools/list", { _meta: { ...ENVELOPE, [CAPS_KEY]: clientCapabilities } });
+    const lines = spy.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith("[MCP] era="));
+    spy.mockRestore();
+    await handler.close();
+    return lines;
+  }
+
+  it("logs one ext= field per declared id, so any id greps as ext=<id> wherever it is declared", async () => {
+    const lines = await eraLinesFor({
+      extensions: { "io.modelcontextprotocol/skills": {}, "io.modelcontextprotocol/tasks": {} },
+    });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(" ext=io.modelcontextprotocol/skills ext=io.modelcontextprotocol/tasks");
+    expect(lines[0]).toContain(" ext=io.modelcontextprotocol/tasks");
+  });
+
+  it("omits ext= when nothing is declared", async () => {
+    for (const caps of [{}, { extensions: {} }]) {
+      const lines = await eraLinesFor(caps);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).not.toContain("ext=");
+    }
+  });
+
+  it("never logs more than 10 extension ids", async () => {
+    const extensions = Object.fromEntries(Array.from({ length: 15 }, (_, i) => [`vendor/ext-${i}`, {}]));
+    const lines = await eraLinesFor({ extensions });
+    expect(lines).toHaveLength(1);
+    expect(lines[0].match(/ ext=/g)).toHaveLength(10);
+  });
+
+  it("quotes a hostile id right after its own ext=, even when a plain id comes first", async () => {
+    const lines = await eraLinesFor({
+      extensions: { a: {}, "x auth=present y": {}, "a=b": {}, "a,b": {} },
+    });
+    expect(lines[0]).toContain(' ext=a ext="x auth=present y" ext="a=b" ext="a,b"');
+  });
+
+  it("logs a 200-character plain id bare and quotes and truncates a longer one", async () => {
+    const bare = await eraLinesFor({ extensions: { ["a".repeat(200)]: {} } });
+    expect(bare[0]).toContain(` ext=${"a".repeat(200)}`);
+    const long = await eraLinesFor({ extensions: { ["a".repeat(5000)]: {} } });
+    expect(long[0]).toContain(` ext="${"a".repeat(200)}"`);
+    expect(long[0]).not.toContain("a".repeat(201));
+  });
+
+  it("declaredExtensions returns the raw ids, and [] for anything that is not a body with object extensions", () => {
+    expect(declaredExtensions({ params: { _meta: { [CAPS_KEY]: { extensions: { "x y": {} } } } } })).toEqual([
+      "x y",
+    ]);
+    expect(declaredExtensions("nope")).toEqual([]);
+    expect(declaredExtensions(null)).toEqual([]);
+    expect(declaredExtensions([])).toEqual([]);
+    expect(declaredExtensions({ params: {} })).toEqual([]);
+    expect(declaredExtensions({ params: { _meta: {} } })).toEqual([]);
+    expect(declaredExtensions({ params: { _meta: { [CAPS_KEY]: { extensions: "tasks" } } } })).toEqual([]);
+    expect(declaredExtensions({ params: { _meta: { [CAPS_KEY]: { extensions: ["tasks"] } } } })).toEqual([]);
   });
 });
 
