@@ -22,6 +22,7 @@ import { prompts, getPromptMessages } from "./prompts.js";
 import type { WorkflowSkills } from "./skills.js";
 import { toolDispatch, type ProgressFn } from "./tools/index.js";
 import { RESOURCE_SCOPES, TOOL_SCOPES, scopeChallengeFor } from "./tool-scopes.js";
+import { TOOL_CONFIRMATIONS, confirmationGate } from "./confirmations.js";
 import { DEBUG, isPaginatedResponse, parseScheduleParams, validateScheduleStartTime } from "./tools/shared.js";
 
 // ==========================================
@@ -233,6 +234,12 @@ export function createMcpServer(
   // Tools
   // ==========================================
 
+  for (const name of Object.keys(TOOL_CONFIRMATIONS)) {
+    if (!tools.some((tool) => tool.name === name)) {
+      throw new Error(`Confirmation declared for unknown tool "${name}" in confirmations.ts`);
+    }
+  }
+
   // Registration is driven by iterating tools.ts so it remains the single source
   // of tool metadata (description, raw JSON Schema, annotations).
   for (const tool of tools) {
@@ -286,6 +293,11 @@ export function createMcpServer(
         };
 
         try {
+          // Destructive tools ask the user first when the client can show a form;
+          // see confirmations.ts for when that applies.
+          const gate = confirmationGate(tool.name, (args ?? {}) as Record<string, unknown>, ctx.mcpReq);
+          if (gate.kind === "respond") return gate.result;
+
           return await handler((args ?? {}) as Record<string, unknown>, {
             apiClient,
             sendProgress,

@@ -360,6 +360,8 @@ Force-terminate an agent when `stop_agent` is not working. **Only use this if yo
 
 This is a last-resort tool for unresponsive agents. In normal operation, use `stop_agent` instead.
 
+**Confirmation**: on MCP 2026-07-28, clients that support elicitation ask the user to confirm before this runs. Other clients run it directly.
+
 #### Parameters
 
 | Name | Type | Required | Description |
@@ -388,6 +390,8 @@ Delete a run and all its associated data, including files and storage. Primarily
 The run can be in either the active Runs table or the RunHistory table -- both are checked automatically.
 
 **Warning**: This operation is destructive and cannot be undone.
+
+**Confirmation**: on MCP 2026-07-28, clients that support elicitation ask the user to confirm before this runs. Other clients run it directly.
 
 #### Parameters
 
@@ -760,6 +764,8 @@ Disable that schedule
 Remove a schedule from an agent. The agent will no longer run automatically on this schedule.
 
 **Warning**: This permanently deletes the schedule.
+
+**Confirmation**: on MCP 2026-07-28, clients that support elicitation ask the user to confirm before this runs. Other clients run it directly.
 
 #### Parameters
 
